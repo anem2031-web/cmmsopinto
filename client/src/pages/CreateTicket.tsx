@@ -33,14 +33,15 @@ export default function CreateTicket() {
   const { t, language } = useTranslation();
   const { getPriorityLabel, getCategoryLabel } = useStaticLabels();
   const { data: sites } = trpc.sites.list.useQuery();
-  const { data: assets } = trpc.assets.list.useQuery(
-    form.sectionId ? { sectionId: Number(form.sectionId) } : {},
-  );
 
   const [form, setForm] = useState({
     title: "", description: "", priority: "medium",
     category: "general", siteId: "", sectionId: "", assetId: "", locationDetail: "", beforePhotoUrl: "",
   });
+
+  const { data: assets } = trpc.assets.list.useQuery(
+    form.sectionId ? { sectionId: Number(form.sectionId) } : {},
+  );
   // Pre-fill form from URL params (e.g. from NFC scan)
   useEffect(() => {
     const params = new URLSearchParams(search);
