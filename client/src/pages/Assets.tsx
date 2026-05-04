@@ -18,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Plus, Search, Edit, Trash2, Package, AlertTriangle,
-  CheckCircle, Wrench, XCircle, ShieldCheck, ShieldOff, History,
+  CheckCircle, Wrench, XCircle, ShieldCheck, ShieldOff, History, Eye,
 } from "lucide-react";
 import DropZone from "@/components/DropZone";
 
@@ -336,7 +336,7 @@ export default function Assets() {
             const StatusIcon = cfg.icon;
             const wExpired = isWarrantyExpired(asset.warrantyExpiry);
             return (
-              <Card key={asset.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/asset/${asset.id}`)}>
+              <Card key={asset.id} className="hover:shadow-md transition-shadow">
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
@@ -368,14 +368,15 @@ export default function Assets() {
                     </div>
                   )}
                   <div className="flex gap-2 pt-2">
-                    <Button size="sm" variant="outline" className="flex-1" onClick={() => openEdit(asset)}>
+                    <Button size="sm" variant="outline" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/asset/${asset.id}`); }}>
+                      <Eye className="h-3 w-3 ml-1" />
+                      استعراض
+                    </Button>
+                    <Button size="sm" variant="outline" className="flex-1" onClick={(e) => { e.stopPropagation(); openEdit(asset); }}>
                       <Edit className="h-3 w-3 ml-1" />
                       {t.common.edit}
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => window.location.href = `/assets/history?id=${asset.id}`}>
-                      <History className="h-3 w-3" />
-                    </Button>
-                    <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => setDeleteId(asset.id)}>
+                    <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={(e) => { e.stopPropagation(); setDeleteId(asset.id); }}>
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </div>
