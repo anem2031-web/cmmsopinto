@@ -33,7 +33,9 @@ export default function CreateTicket() {
   const { t, language } = useTranslation();
   const { getPriorityLabel, getCategoryLabel } = useStaticLabels();
   const { data: sites } = trpc.sites.list.useQuery();
-  const { data: assets } = trpc.assets.list.useQuery();
+  const { data: assets } = trpc.assets.list.useQuery(
+    form.sectionId ? { sectionId: Number(form.sectionId) } : {},
+  );
 
   const [form, setForm] = useState({
     title: "", description: "", priority: "medium",
