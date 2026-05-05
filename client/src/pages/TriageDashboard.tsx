@@ -79,7 +79,7 @@ export default function TriageDashboard() {
     trpc.tickets.list.useQuery({ status: "under_inspection" });
 
   const { data: users = [] } = trpc.users.list.useQuery();
-  const { data: techniciansList = [] } = trpc.technicians.list.useQuery(false);
+  const { data: techniciansList = [] } = trpc.technicians.list.useQuery(undefined);
   const { data: sites = [] } = trpc.sites.list.useQuery();
 
   // ── Active view (card click) ──────────────────────────────────────────────
