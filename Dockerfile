@@ -6,7 +6,6 @@ RUN npm install -g pnpm@10.15.1
 
 # Copy package files including patches
 COPY package.json pnpm-lock.yaml ./
-COPY patches ./patches
 
 # Install ALL dependencies (dev needed for build step)
 RUN pnpm install --frozen-lockfile
