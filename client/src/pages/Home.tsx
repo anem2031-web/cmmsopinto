@@ -336,15 +336,13 @@ export default function Home() {
   // ── Build role-based cards ──
   const cards = useMemo((): SmartCard[] => {
     const trend = stats?.trend7 || [];
-    
-    const r = role as string;
 
-    const isAdminOrOwner = ["admin", "owner", "senior_management"].includes(r);
-    const isManager = r === "maintenance_manager";
-    const isSupervisor = r === "supervisor";
-    const isTechnician = ["technician", "operator"].includes(r);
-    const isGate = r === "gate_security";
-    const isAccountant = r === "accountant";
+    const isAdminOrOwner = ["admin", "owner", "senior_management"].includes(role as string);
+    const isManager = (role as string) === "maintenance_manager";
+    const isSupervisor = (role as string) === "supervisor";
+    const isTechnician = ["technician", "operator"].includes(role as string);
+    const isGate = (role as string) === "gate_security";
+    const isAccountant = (role as string) === "accountant";
 
     if (isGate) {
       return [
