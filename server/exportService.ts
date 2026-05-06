@@ -2,11 +2,6 @@ import ExcelJS from "exceljs";
 import * as db from "./db";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-
-// ESM-compatible __dirname replacement
-const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
 
 // ============================================================
 // EXCEL EXPORT HELPERS
@@ -343,9 +338,10 @@ export async function exportPMWorkOrdersToExcel(): Promise<Buffer> {
 const DELEGATE_ACTIVE_STATUSES = new Set(["pending", "estimated", "approved", "purchased"]);
 
 // Amiri font path — bundled in server/fonts for Railway deployment
-// __dirname resolved via ESM-compatible import.meta.url (see top of file)
-const AMIRI_REGULAR = path.join(__dirname, "../fonts/Amiri-Regular.ttf");
-const AMIRI_BOLD    = path.join(__dirname, "../fonts/Amiri-Bold.ttf");
+// Uses process.cwd() which resolves to /app in Railway (WORKDIR),
+// ensuring the path is correct regardless of esbuild bundle location.
+const AMIRI_REGULAR = path.join(process.cwd(), "server", "fonts", "Amiri-Regular.ttf");
+const AMIRI_BOLD    = path.join(process.cwd(), "server", "fonts", "Amiri-Bold.ttf");
 
 export async function generateDelegateItemsPDF(delegateId: number): Promise<Buffer> {
   const PDFDocument = (await import("pdfkit")).default;
