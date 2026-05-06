@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ShoppingBag, Package, Clock, CheckCircle2, Camera,
-  Loader2, AlertCircle, DollarSign, FileText, Truck
+  Loader2, AlertCircle, DollarSign, FileText, Truck, FileDown
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
@@ -47,6 +47,28 @@ export default function MyItems() {
   const { data: myItems, isLoading, refetch } = trpc.purchaseOrders.myItems.useQuery(undefined, {
     enabled: user?.role === "delegate" || user?.role === "admin" || user?.role === "owner",
   });
+
+  const [exportingPdf, setExportingPdf] = useState(false);
+
+  const handleExportPdf = async () => {
+    setExportingPdf(true);
+    try {
+      const res = await fetch("/api/export/my-items-pdf", { credentials: "include" });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `my-items-${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(language === "ar" ? "تم تصدير PDF بنجاح" : "PDF exported successfully");
+    } catch {
+      toast.error(language === "ar" ? "فشل تصدير PDF" : "PDF export failed");
+    } finally {
+      setExportingPdf(false);
+    }
+  };
 
   const [activeTab, setActiveTab] = useState("pending_estimate");
   const [estimateDialog, setEstimateDialog] = useState<any>(null);
@@ -204,11 +226,23 @@ export default function MyItems() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <ShoppingBag className="w-6 h-6 text-primary" /> {t.nav.myItems}
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">{t.purchaseOrders.items}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <ShoppingBag className="w-6 h-6 text-primary" /> {t.nav.myItems}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">{t.purchaseOrders.items}</p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2 shrink-0"
+          onClick={handleExportPdf}
+          disabled={exportingPdf || !myItems || (myItems as any[]).length === 0}
+        >
+          {exportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+          {language === "ar" ? "تصدير PDF" : "Export PDF"}
+        </Button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

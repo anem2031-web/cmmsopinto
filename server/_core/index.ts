@@ -15,7 +15,7 @@ import multer from "multer";
 import { storagePut, storageGetStream } from "../storage";
 import { nanoid } from "nanoid";
 import sharp from "sharp";
-import { exportTicketsToExcel, exportPurchaseOrdersToExcel, exportTechnicianPerformanceToExcel, exportAuditLogToExcel, exportInventoryToExcel, exportPreventivePlansToExcel, exportPMWorkOrdersToExcel } from "../exportService";
+import { exportTicketsToExcel, exportPurchaseOrdersToExcel, exportTechnicianPerformanceToExcel, exportAuditLogToExcel, exportInventoryToExcel, exportPreventivePlansToExcel, exportPMWorkOrdersToExcel, generateDelegateItemsPDF } from "../exportService";
 import { generateWorkflowGuidePDF } from "../workflowPdfService";
 import { runTechnicianOverdueJob } from "../jobs/technician-overdue";
 import { runPMAutomationJob } from "../jobs/pm-automation";
@@ -381,6 +381,17 @@ async function startServer() {
       const buffer = await generatePMWorkOrderPDF(id);
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `inline; filename=work-order-${id}-${Date.now()}.pdf`);
+      res.send(buffer);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Delegate purchasing items — PDF export (auth only, no role restriction)
+  app.get("/api/export/my-items-pdf", requireAuthMiddleware, async (req: any, res: any) => {
+    try {
+      const user = req.authenticatedUser;
+      const buffer = await generateDelegateItemsPDF(user.id);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename=my-items-${Date.now()}.pdf`);
       res.send(buffer);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

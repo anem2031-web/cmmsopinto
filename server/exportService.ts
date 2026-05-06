@@ -326,3 +326,101 @@ export async function exportPMWorkOrdersToExcel(): Promise<Buffer> {
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
 }
+
+// ============================================================
+// DELEGATE PURCHASING ITEMS — PDF EXPORT
+// ============================================================
+export async function generateDelegateItemsPDF(delegateId: number): Promise<Buffer> {
+  const PDFDocument = (await import("pdfkit")).default;
+  const items = await db.getPOItemsByDelegate(delegateId);
+
+  // Enrich each item with PO number from the parent purchase order
+  const enriched = await Promise.all(
+    items.map(async (item: any) => {
+      const po = item.purchaseOrderId ? await db.getPurchaseOrderById(item.purchaseOrderId) : null;
+      return { ...item, poNumber: po?.poNumber ?? "-" };
+    })
+  );
+
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 40, info: { Title: "Delegate Purchasing Items", Author: "CMMS" } });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const W = doc.page.width - 80; // usable width
+
+    // ── Header ──────────────────────────────────────────────
+    doc.rect(40, 40, W, 50).fill("#1e40af");
+    doc.fillColor("#ffffff").fontSize(18).font("Helvetica-Bold")
+      .text("Purchasing Items Report", 50, 55, { align: "center", width: W });
+    doc.fillColor("#bfdbfe").fontSize(10).font("Helvetica")
+      .text(`Generated: ${new Date().toLocaleDateString("en-GB")}`, 50, 76, { align: "center", width: W });
+    doc.moveDown(3);
+
+    // ── Table header ─────────────────────────────────────────
+    const cols = { poNumber: 80, itemName: 170, qty: 50, unit: 50, cost: 90, total: 90 };
+    const headers = ["PO #", "Item Name", "Qty", "Unit", "Unit Cost (SAR)", "Total (SAR)"];
+    const colKeys = Object.keys(cols) as (keyof typeof cols)[];
+    const colWidths = Object.values(cols);
+
+    let x = 40;
+    const headerY = doc.y;
+    doc.rect(40, headerY, W, 20).fill("#1e40af");
+    colKeys.forEach((_, i) => {
+      doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold")
+        .text(headers[i], x + 3, headerY + 5, { width: colWidths[i] - 6, lineBreak: false });
+      x += colWidths[i];
+    });
+    doc.y = headerY + 22;
+
+    // ── Table rows ───────────────────────────────────────────
+    let grandTotal = 0;
+    enriched.forEach((item: any, idx: number) => {
+      const rowY = doc.y;
+      const shade = idx % 2 === 0;
+      if (shade) doc.rect(40, rowY, W, 18).fill("#f8fafc");
+
+      const unitCost = parseFloat(item.estimatedUnitCost || item.actualUnitCost || "0");
+      const qty = item.quantity || 1;
+      const rowTotal = unitCost * qty;
+      grandTotal += rowTotal;
+
+      const values = [
+        item.poNumber,
+        item.itemName || "-",
+        String(qty),
+        item.unit || "-",
+        unitCost > 0 ? unitCost.toLocaleString("en-SA", { minimumFractionDigits: 2 }) : "-",
+        rowTotal > 0 ? rowTotal.toLocaleString("en-SA", { minimumFractionDigits: 2 }) : "-",
+      ];
+
+      x = 40;
+      colKeys.forEach((_, i) => {
+        doc.fillColor("#1e293b").fontSize(8).font("Helvetica")
+          .text(values[i], x + 3, rowY + 4, { width: colWidths[i] - 6, lineBreak: false });
+        x += colWidths[i];
+      });
+
+      doc.y = rowY + 20;
+
+      // Page break guard
+      if (doc.y > doc.page.height - 80) {
+        doc.addPage();
+      }
+    });
+
+    // ── Total row ────────────────────────────────────────────
+    const totalY = doc.y + 4;
+    doc.rect(40, totalY, W, 22).fill("#1e40af");
+    doc.fillColor("#ffffff").fontSize(10).font("Helvetica-Bold")
+      .text(`Total: ${grandTotal.toLocaleString("en-SA", { minimumFractionDigits: 2 })} SAR`, 50, totalY + 6, { align: "right", width: W - 10 });
+
+    doc.moveDown(2);
+    doc.fillColor("#64748b").fontSize(8).font("Helvetica")
+      .text(`Total items: ${enriched.length}`, 40, doc.y, { align: "left" });
+
+    doc.end();
+  });
+}
