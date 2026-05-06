@@ -849,7 +849,7 @@ export async function deleteUser(id: number) {
   await db.delete(users).where(eq(users.id, id));
 }
 
-export async function updateUser(id: number, data: { name?: string; email?: string; role?: string; phone?: string; department?: string }) {
+export async function updateUser(id: number, data: { name?: string; email?: string; role?: string; phone?: string; department?: string; specialty?: string; specialtyEn?: string; specialtyUr?: string }) {
   const db = await getDb();
   if (!db) return;
   await db.update(users).set(data as any).where(eq(users.id, id));
