@@ -328,22 +328,37 @@ export async function exportPMWorkOrdersToExcel(): Promise<Buffer> {
 }
 
 // ============================================================
-// DELEGATE PURCHASING ITEMS — PDF EXPORT
+// DELEGATE PURCHASING ITEMS — PDF EXPORT (ACTIVE ITEMS ONLY)
+// Active statuses: pending, estimated, approved, purchased
+// Excluded: delivered_to_warehouse, delivered_to_requester, rejected, funded
+// Security: scoped strictly to the logged-in delegate's own items
 // ============================================================
+const DELEGATE_ACTIVE_STATUSES = new Set(["pending", "estimated", "approved", "purchased"]);
+
 export async function generateDelegateItemsPDF(delegateId: number): Promise<Buffer> {
   const PDFDocument = (await import("pdfkit")).default;
-  const items = await db.getPOItemsByDelegate(delegateId);
+  const allItems = await db.getPOItemsByDelegate(delegateId);
 
-  // Enrich each item with PO number from the parent purchase order
+  // STRICT FILTER: active items only for this delegate
+  const activeItems = (allItems as any[]).filter((item: any) =>
+    DELEGATE_ACTIVE_STATUSES.has(item.status)
+  );
+
+  // Enrich each item with PO number and requesting department
   const enriched = await Promise.all(
-    items.map(async (item: any) => {
+    activeItems.map(async (item: any) => {
       const po = item.purchaseOrderId ? await db.getPurchaseOrderById(item.purchaseOrderId) : null;
-      return { ...item, poNumber: po?.poNumber ?? "-" };
+      let department = "-";
+      if (po?.requestedById) {
+        const requester = await db.getUserById(po.requestedById);
+        department = requester?.department || "-";
+      }
+      return { ...item, poNumber: po?.poNumber ?? "-", department };
     })
   );
 
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 40, info: { Title: "Delegate Purchasing Items", Author: "CMMS" } });
+    const doc = new PDFDocument({ size: "A4", margin: 40, info: { Title: "Active Purchasing Items — Delegate", Author: "CMMS" } });
     const chunks: Buffer[] = [];
     doc.on("data", (c: Buffer) => chunks.push(c));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -352,16 +367,16 @@ export async function generateDelegateItemsPDF(delegateId: number): Promise<Buff
     const W = doc.page.width - 80; // usable width
 
     // ── Header ──────────────────────────────────────────────
-    doc.rect(40, 40, W, 50).fill("#1e40af");
-    doc.fillColor("#ffffff").fontSize(18).font("Helvetica-Bold")
-      .text("Purchasing Items Report", 50, 55, { align: "center", width: W });
-    doc.fillColor("#bfdbfe").fontSize(10).font("Helvetica")
-      .text(`Generated: ${new Date().toLocaleDateString("en-GB")}`, 50, 76, { align: "center", width: W });
+    doc.rect(40, 40, W, 56).fill("#1e40af");
+    doc.fillColor("#ffffff").fontSize(17).font("Helvetica-Bold")
+      .text("Active Purchasing Items Report", 50, 52, { align: "center", width: W });
+    doc.fillColor("#bfdbfe").fontSize(9).font("Helvetica")
+      .text(`Delegate ID: ${delegateId}  |  Active items only  |  Generated: ${new Date().toLocaleDateString("en-GB")}`, 50, 76, { align: "center", width: W });
     doc.moveDown(3);
 
     // ── Table header ─────────────────────────────────────────
-    const cols = { poNumber: 80, itemName: 170, qty: 50, unit: 50, cost: 90, total: 90 };
-    const headers = ["PO #", "Item Name", "Qty", "Unit", "Unit Cost (SAR)", "Total (SAR)"];
+    const cols = { poNumber: 65, itemName: 140, qty: 40, department: 100, cost: 85, total: 85 };
+    const headers = ["PO #", "Item Name", "Qty", "Department", "Unit Cost (SAR)", "Total (SAR)"];
     const colKeys = Object.keys(cols) as (keyof typeof cols)[];
     const colWidths = Object.values(cols);
 
@@ -369,8 +384,8 @@ export async function generateDelegateItemsPDF(delegateId: number): Promise<Buff
     const headerY = doc.y;
     doc.rect(40, headerY, W, 20).fill("#1e40af");
     colKeys.forEach((_, i) => {
-      doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold")
-        .text(headers[i], x + 3, headerY + 5, { width: colWidths[i] - 6, lineBreak: false });
+      doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold")
+        .text(headers[i], x + 3, headerY + 6, { width: colWidths[i] - 6, lineBreak: false });
       x += colWidths[i];
     });
     doc.y = headerY + 22;
@@ -391,7 +406,7 @@ export async function generateDelegateItemsPDF(delegateId: number): Promise<Buff
         item.poNumber,
         item.itemName || "-",
         String(qty),
-        item.unit || "-",
+        item.department,
         unitCost > 0 ? unitCost.toLocaleString("en-SA", { minimumFractionDigits: 2 }) : "-",
         rowTotal > 0 ? rowTotal.toLocaleString("en-SA", { minimumFractionDigits: 2 }) : "-",
       ];
@@ -419,7 +434,7 @@ export async function generateDelegateItemsPDF(delegateId: number): Promise<Buff
 
     doc.moveDown(2);
     doc.fillColor("#64748b").fontSize(8).font("Helvetica")
-      .text(`Total items: ${enriched.length}`, 40, doc.y, { align: "left" });
+      .text(`Active items exported: ${enriched.length}  |  Excluded: completed, delivered, rejected`, 40, doc.y, { align: "left" });
 
     doc.end();
   });
