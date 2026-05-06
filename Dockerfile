@@ -1,6 +1,19 @@
 FROM node:22-alpine
 WORKDIR /app
 
+# Install Chromium and required system dependencies for Puppeteer on Alpine Linux
+# Required for delegate purchasing items PDF export (Puppeteer rendering engine)
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+# Tell puppeteer-core where to find Chromium on Alpine Linux
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
 # Install pnpm
 RUN npm install -g pnpm@10.15.1
 

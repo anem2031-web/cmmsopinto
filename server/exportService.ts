@@ -1,7 +1,6 @@
 import ExcelJS from "exceljs";
 import * as db from "./db";
-import fs from "fs";
-import path from "path";
+import { htmlToPdf } from "./htmlToPdfService";
 
 // ============================================================
 // EXCEL EXPORT HELPERS
@@ -331,20 +330,14 @@ export async function exportPMWorkOrdersToExcel(): Promise<Buffer> {
 
 // ============================================================
 // DELEGATE PURCHASING ITEMS — PDF EXPORT (ACTIVE ITEMS ONLY)
+// Rendering engine: Puppeteer (Chromium) via htmlToPdfService
 // Active statuses: pending, estimated, approved, purchased
 // Excluded: delivered_to_warehouse, delivered_to_requester, rejected, funded
 // Security: scoped strictly to the logged-in delegate's own items
 // ============================================================
 const DELEGATE_ACTIVE_STATUSES = new Set(["pending", "estimated", "approved", "purchased"]);
 
-// Amiri font path — bundled in server/fonts for Railway deployment
-// Uses process.cwd() which resolves to /app in Railway (WORKDIR),
-// ensuring the path is correct regardless of esbuild bundle location.
-const AMIRI_REGULAR = path.join(process.cwd(), "server", "fonts", "Amiri-Regular.ttf");
-const AMIRI_BOLD    = path.join(process.cwd(), "server", "fonts", "Amiri-Bold.ttf");
-
 export async function generateDelegateItemsPDF(delegateId: number): Promise<Buffer> {
-  const PDFDocument = (await import("pdfkit")).default;
   const allItems = await db.getPOItemsByDelegate(delegateId);
 
   // STRICT FILTER: active items only for this delegate
@@ -365,97 +358,150 @@ export async function generateDelegateItemsPDF(delegateId: number): Promise<Buff
     })
   );
 
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 40, info: { Title: "Active Purchasing Items — Delegate", Author: "CMMS" } });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c: Buffer) => chunks.push(c));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    // Register Amiri font for Unicode-safe Arabic/English/mixed rendering
-    // Amiri supports full Arabic shaping, Latin characters, and mixed BiDi text
-    const amiriFontAvailable = fs.existsSync(AMIRI_REGULAR);
-    if (amiriFontAvailable) {
-      doc.registerFont("Amiri", AMIRI_REGULAR);
-      doc.registerFont("Amiri-Bold", AMIRI_BOLD);
-    }
-    const bodyFont  = amiriFontAvailable ? "Amiri"      : "Helvetica";
-    const boldFont  = amiriFontAvailable ? "Amiri-Bold" : "Helvetica-Bold";
-
-    const W = doc.page.width - 80; // usable width
-
-    // ── Header (Latin text only — safe with Helvetica) ────────────
-    doc.rect(40, 40, W, 56).fill("#1e40af");
-    doc.fillColor("#ffffff").fontSize(17).font("Helvetica-Bold")
-      .text("Active Purchasing Items Report", 50, 52, { align: "center", width: W });
-    doc.fillColor("#bfdbfe").fontSize(9).font("Helvetica")
-      .text(`Delegate ID: ${delegateId}  |  Active items only  |  Generated: ${new Date().toLocaleDateString("en-GB")}`, 50, 76, { align: "center", width: W });
-    doc.moveDown(3);
-
-    // ── Table header (Latin column labels — Helvetica-Bold) ───────
-    const cols = { poNumber: 65, itemName: 140, qty: 40, department: 100, cost: 85, total: 85 };
-    const headers = ["PO #", "Item Name", "Qty", "Department", "Unit Cost (SAR)", "Total (SAR)"];
-    const colKeys = Object.keys(cols) as (keyof typeof cols)[];
-    const colWidths = Object.values(cols);
-
-    let x = 40;
-    const headerY = doc.y;
-    doc.rect(40, headerY, W, 20).fill("#1e40af");
-    colKeys.forEach((_, i) => {
-      doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold")
-        .text(headers[i], x + 3, headerY + 6, { width: colWidths[i] - 6, lineBreak: false });
-      x += colWidths[i];
-    });
-    doc.y = headerY + 22;
-
-    // ── Table rows (data values use Amiri for Unicode safety) ─────
-    let grandTotal = 0;
-    enriched.forEach((item: any, idx: number) => {
-      const rowY = doc.y;
-      const shade = idx % 2 === 0;
-      if (shade) doc.rect(40, rowY, W, 18).fill("#f8fafc");
-
-      const unitCost = parseFloat(item.estimatedUnitCost || item.actualUnitCost || "0");
-      const qty = item.quantity || 1;
-      const rowTotal = unitCost * qty;
-      grandTotal += rowTotal;
-
-      // Preserve raw database values exactly — no translation, no reshaping
-      const values = [
-        item.poNumber,
-        item.itemName || "-",
-        String(qty),
-        item.department,
-        unitCost > 0 ? unitCost.toLocaleString("en-SA", { minimumFractionDigits: 2 }) : "-",
-        rowTotal > 0 ? rowTotal.toLocaleString("en-SA", { minimumFractionDigits: 2 }) : "-",
-      ];
-
-      x = 40;
-      colKeys.forEach((_, i) => {
-        // Use Amiri for all data cells — handles Arabic, English, and mixed text correctly
-        doc.fillColor("#1e293b").fontSize(8).font(bodyFont)
-          .text(values[i], x + 3, rowY + 4, { width: colWidths[i] - 6, lineBreak: false });
-        x += colWidths[i];
-      });
-
-      doc.y = rowY + 20;
-
-      // Page break guard
-      if (doc.y > doc.page.height - 80) {
-        doc.addPage();
-      }
-    });
-
-    // ── Total row ────────────────────────────────────────────
-    const totalY = doc.y + 4;
-    doc.rect(40, totalY, W, 22).fill("#1e40af");
-    doc.fillColor("#ffffff").fontSize(10).font(boldFont)
-      .text(`Total: ${grandTotal.toLocaleString("en-SA", { minimumFractionDigits: 2 })} SAR`, 50, totalY + 6, { align: "right", width: W - 10 });
-
-    doc.moveDown(2);
-    doc.fillColor("#64748b").fontSize(8).font("Helvetica")
-      .text(`Active items exported: ${enriched.length}  |  Excluded: completed, delivered, rejected`, 40, doc.y, { align: "left" });
-
-    doc.end();
+  // Calculate grand total
+  let grandTotal = 0;
+  const rows = enriched.map((item: any) => {
+    const unitCost = parseFloat(item.estimatedUnitCost || item.actualUnitCost || "0");
+    const qty = item.quantity || 1;
+    const rowTotal = unitCost * qty;
+    grandTotal += rowTotal;
+    return {
+      poNumber:   item.poNumber,
+      itemName:   item.itemName  || "-",
+      qty:        String(qty),
+      unit:       item.unit      || "-",
+      department: item.department,
+      unitCost:   unitCost > 0 ? unitCost.toLocaleString("en-SA", { minimumFractionDigits: 2 }) : "-",
+      rowTotal:   rowTotal > 0  ? rowTotal.toLocaleString("en-SA",  { minimumFractionDigits: 2 }) : "-",
+    };
   });
+
+  const generatedDate = new Date().toLocaleDateString("en-GB");
+  const totalFormatted = grandTotal.toLocaleString("en-SA", { minimumFractionDigits: 2 });
+
+  // Build HTML — Chromium handles Arabic, English, RTL/LTR, and mixed text natively
+  const rowsHtml = rows.map((r, i) => `
+    <tr class="${i % 2 === 0 ? "even" : "odd"}">
+      <td>${escapeHtml(r.poNumber)}</td>
+      <td class="item-name">${escapeHtml(r.itemName)}</td>
+      <td>${escapeHtml(r.qty)}</td>
+      <td class="item-name">${escapeHtml(r.unit)}</td>
+      <td class="item-name">${escapeHtml(r.department)}</td>
+      <td>${escapeHtml(r.unitCost)}</td>
+      <td>${escapeHtml(r.rowTotal)}</td>
+    </tr>
+  `).join("");
+
+  const html = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Active Purchasing Items</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;700&family=Noto+Sans:wght@400;700&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Noto Sans Arabic', 'Noto Sans', Arial, sans-serif;
+      font-size: 11px;
+      color: #1e293b;
+      background: #fff;
+      padding: 0;
+    }
+    .header {
+      background: #1e40af;
+      color: #fff;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    .header h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+    .header p  { font-size: 10px; color: #bfdbfe; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+    }
+    thead tr {
+      background: #1e40af;
+      color: #fff;
+    }
+    thead th {
+      padding: 7px 6px;
+      text-align: center;
+      font-weight: 700;
+      border: 1px solid #1e3a8a;
+    }
+    tbody tr.even { background: #f8fafc; }
+    tbody tr.odd  { background: #fff; }
+    tbody td {
+      padding: 6px 6px;
+      border: 1px solid #e2e8f0;
+      text-align: center;
+      vertical-align: middle;
+    }
+    /* Item name, unit, department: preserve unicode direction automatically */
+    .item-name {
+      text-align: start;
+      unicode-bidi: plaintext;
+      direction: auto;
+    }
+    .total-row {
+      background: #1e40af;
+      color: #fff;
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .total-row td {
+      padding: 8px 6px;
+      border: 1px solid #1e3a8a;
+    }
+    .footer {
+      margin-top: 12px;
+      font-size: 9px;
+      color: #64748b;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Active Purchasing Items Report</h1>
+    <p>Active items only &nbsp;|&nbsp; Generated: ${generatedDate} &nbsp;|&nbsp; Items: ${rows.length}</p>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>PO #</th>
+        <th>Item Name</th>
+        <th>Qty</th>
+        <th>Unit</th>
+        <th>Department</th>
+        <th>Unit Cost (SAR)</th>
+        <th>Total (SAR)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rowsHtml}
+      <tr class="total-row">
+        <td colspan="6" style="text-align:end; padding-inline-end:12px;">Total</td>
+        <td>${escapeHtml(totalFormatted)} SAR</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="footer">
+    Excluded: completed, delivered to warehouse, delivered to requester, rejected
+  </div>
+</body>
+</html>`;
+
+  return htmlToPdf(html);
+}
+
+/** Escape HTML special characters to prevent XSS in generated report */
+function escapeHtml(str: string): string {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
