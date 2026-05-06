@@ -42,24 +42,19 @@ export default function Tickets() {
 
   const { data: sites = [] } = trpc.sites.list.useQuery();
   const { data: allSections } = trpc.sections.list.useQuery(undefined);
-  // Phase 2: use users.listTechnicians as primary source; legacy technicians.list kept for compatibility
+  // Phase 4: use users.listTechnicians as the SOLE internal source for the technician filter dropdown.
+  // Legacy technicians.list is NOT used for filtering because the filter now targets assignedToId (internal users).
+  // External technicians remain accessible via the legacy path in TicketDetail reassignment.
   const { data: userTechniciansList = [] } = trpc.users.listTechnicians.useQuery();
-  const { data: legacyTechnicians = [] } = trpc.technicians.list.useQuery({ activeOnly: false });
-  // Merge: users-based technicians first, then any legacy-only entries
-  const userTechIds = new Set(userTechniciansList.map((u: any) => String(u.id)));
-  const allTechnicians = [
-    ...userTechniciansList.map((u: any) => ({ id: u.id, name: u.name || u.email, source: 'user' as const })),
-    ...legacyTechnicians
-      .filter((t: any) => !userTechIds.has(String(t.id)))
-      .map((t: any) => ({ id: t.id, name: t.name, source: 'legacy' as const })),
-  ];
+  const allTechnicians = userTechniciansList.map((u: any) => ({ id: u.id, name: u.name || u.email }));
   const { data: tickets, isLoading } = trpc.tickets.list.useQuery({
     status: statusFilter !== "all" ? statusFilter : undefined,
     priority: priorityFilter !== "all" ? priorityFilter : undefined,
     siteId: siteFilter !== "all" ? Number(siteFilter) : undefined,
     sectionId: sectionFilter !== "all" ? Number(sectionFilter) : undefined,
     search: search || undefined,
-    assignedTechnicianId: technicianFilter !== "all" ? Number(technicianFilter) : undefined,
+    // Phase 4: filter by assignedToId (internal user) — was incorrectly using assignedTechnicianId
+    assignedToId: technicianFilter !== "all" ? Number(technicianFilter) : undefined,
   });
 
   const updateMutation = trpc.tickets.update.useMutation({
@@ -217,10 +212,11 @@ export default function Tickets() {
                     <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground flex-wrap">
                       <span>{getCategoryLabel(ticket.category)}</span>
                       <span>{new Date(ticket.createdAt).toLocaleDateString(locale)}</span>
-                      {(ticket as any).assignedTechnicianName && (
+                      {/* Phase 4: show internal user name first (assignedToId), fallback to external technician name */}
+                      {((ticket as any).assignedToUserName || (ticket as any).assignedTechnicianName) && (
                         <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400 font-medium">
                           <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400" />
-                          {(ticket as any).assignedTechnicianName}
+                          {(ticket as any).assignedToUserName || (ticket as any).assignedTechnicianName}
                         </span>
                       )}
                     </div>

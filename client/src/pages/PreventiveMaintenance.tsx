@@ -107,7 +107,11 @@ export default function PreventiveMaintenance() {
   const { data: workOrders = [], isLoading: woLoading } = trpc.preventive.listWorkOrders.useQuery({});
   const { data: assets = [] } = trpc.assets.list.useQuery({});
   const { data: sites = [] } = trpc.sites.list.useQuery();
+  // Phase 4: use listTechnicians as primary source for PM assignee dropdown and display.
+  // users.list is still available if other parts of the page need it, but PM assignment
+  // should now resolve names through the technician-specific query.
   const { data: users = [] } = trpc.users.list.useQuery();
+  const { data: pmTechnicians = [] } = trpc.users.listTechnicians.useQuery();
 
   const createPlanMut = trpc.preventive.createPlan.useMutation({
     onSuccess: () => {
@@ -438,7 +442,9 @@ export default function PreventiveMaintenance() {
                 const isInactive = plan.isActive === false;
                 const assetName = assets.find((a: any) => a.id === plan.assetId)?.name;
                 const siteName = sites.find((s: any) => s.id === plan.siteId)?.name;
-                const assigneeName = users.find((u: any) => u.id === plan.assignedToId)?.name;
+                // Phase 4: resolve assignee name from pmTechnicians (users.listTechnicians) first
+                const assigneeName = (pmTechnicians.find((u: any) => u.id === plan.assignedToId) as any)?.name
+                  ?? users.find((u: any) => u.id === plan.assignedToId)?.name;
                 return (
                   <Card key={plan.id} className={`hover:shadow-md transition-shadow ${isOverdue ? "border-red-200 dark:border-red-800" : ""} ${isInactive ? "opacity-60" : ""}`}>
                     <CardHeader className="pb-2">
@@ -540,7 +546,8 @@ export default function PreventiveMaintenance() {
                   <SelectTrigger><SelectValue placeholder={t.common.technician || "الفني"} /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">{t.common.allTechnicians || "جميع الفنيين"}</SelectItem>
-                    {users.map((u: any) => <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>)}
+                    {/* Phase 4: use pmTechnicians (users.listTechnicians) for PM assignment dropdown */}
+                  {(pmTechnicians.length > 0 ? pmTechnicians : users).map((u: any) => <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <div>
@@ -574,7 +581,9 @@ export default function PreventiveMaintenance() {
             <div className="space-y-3">
               {filteredWorkOrders.map((wo: any) => {
                 const cfg = woStatusConfig[wo.status as WOStatus] ?? woStatusConfig.scheduled;
-                const assigneeName = users.find((u: any) => u.id === wo.assignedToId)?.name;
+                // Phase 4: resolve assignee name from pmTechnicians (users.listTechnicians) first
+                const assigneeName = (pmTechnicians.find((u: any) => u.id === wo.assignedToId) as any)?.name
+                  ?? users.find((u: any) => u.id === wo.assignedToId)?.name;
                 const doneCount = (wo.checklistResults as ChecklistResult[] | null)?.filter(c => c.done).length ?? 0;
                 const totalCount = (wo.checklistResults as ChecklistResult[] | null)?.length ?? 0;
                 return (
@@ -680,7 +689,8 @@ export default function PreventiveMaintenance() {
                 <SelectTrigger><SelectValue placeholder={t.common.none} /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">{t.common.none}</SelectItem>
-                  {users.map((u: any) => <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>)}
+                  {/* Phase 4: use pmTechnicians (users.listTechnicians) for PM assignment dropdown */}
+                  {(pmTechnicians.length > 0 ? pmTechnicians : users).map((u: any) => <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

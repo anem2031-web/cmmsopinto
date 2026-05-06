@@ -1,5 +1,6 @@
 import { eq, desc, asc, and, sql, count, sum, inArray, notInArray, like, or, gte, lte, lt, isNull, isNotNull, ne } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import { alias } from "drizzle-orm/mysql-core";
 import {
   InsertUser, users, tickets, purchaseOrders, purchaseOrderItems,
   inventory, inventoryTransactions, notifications, auditLogs,
@@ -254,13 +255,25 @@ export async function getTickets(filters?: { status?: string; priority?: string;
   if (filters?.search) conditions.push(or(like(tickets.title, `%${filters.search}%`), like(tickets.ticketNumber, `%${filters.search}%`)));
   if (filters?.category) conditions.push(eq(tickets.category, filters.category as any));
   const where = conditions.length > 0 ? and(...conditions) : undefined;
+  // Phase 4: join both external technicians table AND internal users table
+  // to resolve display names for both assignment paths.
+  const assignedUser = alias(users, "assignedUser");
   const rows = await db
-    .select({ ticket: tickets, technicianName: technicians.name })
+    .select({
+      ticket: tickets,
+      technicianName: technicians.name,           // external technician name
+      assignedUserName: assignedUser.name,         // internal user name
+    })
     .from(tickets)
     .leftJoin(technicians, eq(tickets.assignedTechnicianId, technicians.id))
+    .leftJoin(assignedUser, eq(tickets.assignedToId, assignedUser.id))
     .where(where)
     .orderBy(desc(tickets.createdAt));
-  return rows.map(r => ({ ...r.ticket, assignedTechnicianName: r.technicianName ?? null }));
+  return rows.map(r => ({
+    ...r.ticket,
+    assignedTechnicianName: r.technicianName ?? null,   // legacy external path
+    assignedToUserName: r.assignedUserName ?? null,     // Phase 4: internal path
+  }));
 }
 
 export async function getTicketById(id: number) {
