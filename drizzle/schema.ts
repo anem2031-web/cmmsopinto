@@ -20,6 +20,10 @@ export const users = mysqlTable("users", {
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin", ...userRoles]).default("user").notNull(),
   department: varchar("department", { length: 100 }),
+  // Phase 1: Technician preparation layer — specialty fields (additive, nullable, backward-compatible)
+  specialty: varchar("specialty", { length: 200 }),
+  specialtyEn: varchar("specialtyEn", { length: 200 }),
+  specialtyUr: varchar("specialtyUr", { length: 200 }),
   preferredLanguage: mysqlEnum("preferredLanguage", ["ar", "en", "ur"]).default("ar").notNull(),
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

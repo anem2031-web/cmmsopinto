@@ -215,6 +215,36 @@ export const appRouter = router({
       invalidateCache.users();
       return { success: true };
     }),
+
+    // ── Phase 1: Unified technician query (preparation layer) ────────────────
+    // Returns users with role='technician' including specialty fields.
+    // ADDITIVE — legacy technicians.list endpoint is NOT removed.
+    // Future phases can switch dropdowns to use this endpoint instead.
+    listTechnicians: protectedProcedure.query(async () => {
+      return cacheManager.getOrCompute(
+        cacheKeys.usersByRole("technician"),
+        () => db.getUsersByRole("technician"),
+        600 // 10 minutes
+      );
+    }),
+
+    // ── Phase 1: Update specialty fields on a user ───────────────────────
+    // Allows setting specialty/trade on users with role='technician'.
+    // ADDITIVE — does not affect any existing update logic.
+    updateSpecialty: protectedProcedure.input(z.object({
+      userId: z.number(),
+      specialty: z.string().optional(),
+      specialtyEn: z.string().optional(),
+      specialtyUr: z.string().optional(),
+    })).mutation(async ({ input, ctx }) => {
+      if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "فقط المالك يمكنه تعديل التخصص" });
+      }
+      const { userId, ...specialtyData } = input;
+      await db.updateUser(userId, specialtyData);
+      invalidateCache.users();
+      return { success: true };
+    }),
   }),
 
   // ============================================================
@@ -501,8 +531,21 @@ export const appRouter = router({
       const updateData: Record<string, any> = {
         assignedAt: new Date(),
       };
-      if (input.technicianId) updateData.assignedToId = input.technicianId;
-      if (input.externalTechnicianId) updateData.assignedTechnicianId = input.externalTechnicianId;
+      // ── Phase 1: Disambiguation guard ───────────────────────────────────────
+      // A ticket must not have both assignedToId (internal user) and
+      // assignedTechnicianId (external technician) set simultaneously.
+      // When assigning an internal user, clear the external technician slot.
+      // When assigning an external technician, clear the internal user slot.
+      // This is backward-compatible: existing single-assignment tickets are unaffected.
+      if (input.technicianId) {
+        updateData.assignedToId = input.technicianId;
+        updateData.assignedTechnicianId = null; // clear external slot
+      }
+      if (input.externalTechnicianId) {
+        updateData.assignedTechnicianId = input.externalTechnicianId;
+        updateData.assignedToId = null; // clear internal slot
+      }
+      // ──────────────────────────────────────────────────────────────────
       await db.updateTicket(input.id, updateData);
       await db.addTicketStatusHistory({ ticketId: input.id, fromStatus: ticket.status, toStatus: ticket.status, changedById: ctx.user.id, notes: "إعادة إسناد الفني" });
       if (input.technicianId) {
