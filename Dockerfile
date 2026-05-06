@@ -4,23 +4,24 @@ WORKDIR /app
 # Install pnpm
 RUN npm install -g pnpm@10.15.1
 
-# Copy package.json فقط
+# Copy package.json only (no lockfile)
 COPY package.json ./
+COPY patches ./patches
 
-# تثبيت بدون lockfile
-RUN pnpm install
+# Install ALL dependencies (dev needed for build step)
+RUN pnpm install --no-frozen-lockfile
 
-# نسخ باقي المشروع
+# Copy source files
 COPY . .
 
-# بناء المشروع
+# Build frontend (vite) + server (esbuild --packages=external) using project build script
 RUN pnpm build
 
-# حذف dev dependencies
+# Remove dev dependencies after build
 RUN pnpm prune --prod
 
-# فتح البورت
+# Expose port
 EXPOSE 8080
 
-# تشغيل السيرفر
+# Start the server
 CMD ["node", "dist/index.js"]
