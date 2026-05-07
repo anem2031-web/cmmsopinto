@@ -190,7 +190,7 @@ export default function PurchaseOrderDetail() {
         <div className="flex gap-2">
           {isDelegate && po.status === "pending_estimate" && (
             <Button variant="outline" className="border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => setIsRevisionDialogOpen(true)}>
-              <AlertCircle className="w-4 h-4 mr-1.5" /> طلب مراجعة
+              <AlertCircle className="w-4 h-4 mr-1.5" /> {t.purchaseOrders.returnForRevision}
             </Button>
           )}
           {po.status !== "closed" && (isAdminOrOwner || po.requestedById === userId) && (
@@ -207,15 +207,15 @@ export default function PurchaseOrderDetail() {
             <div className="flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
               <div>
-                <h3 className="text-sm font-bold text-rose-900">الطلب يحتاج إلى مراجعة وتعديل</h3>
+                <h3 className="text-sm font-bold text-rose-900">{t.purchaseOrders.resubmitDialogTitle}</h3>
                 <p className="text-xs text-rose-700 mt-1">
-                  قام المندوب بإعادة الطلب إليك للمراجعة. يرجى تعديل البيانات المطلوبة (الأصناف، الكميات، إلخ) ثم النقر على "إعادة التقديم".
+                  {t.purchaseOrders.resubmitDialogDesc}
                 </p>
               </div>
             </div>
-            {po.requestedById === userId && (
+            {(isAdminOrOwner || po.requestedById === userId) && (
               <div className="flex flex-col gap-2 border-t border-rose-200 pt-3">
-                <Label className="text-xs text-rose-800">ملاحظات إعادة التقديم (اختياري)</Label>
+                <Label className="text-xs text-rose-800">{t.purchaseOrders.resubmit} ({t.common.optionalNote})</Label>
                 <div className="flex gap-2">
                   <Input 
                     placeholder="مثال: تم تعديل الكميات كما هو مطلوب..." 
@@ -229,7 +229,7 @@ export default function PurchaseOrderDetail() {
                     className="bg-rose-600 hover:bg-rose-700"
                   >
                     {resubmitMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-1.5" />}
-                    إعادة التقديم
+                    {t.purchaseOrders.resubmit}
                   </Button>
                 </div>
               </div>
@@ -809,14 +809,14 @@ export default function PurchaseOrderDetail() {
       <Dialog open={isRevisionDialogOpen} onOpenChange={setIsRevisionDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>طلب مراجعة طلب الشراء</DialogTitle>
+            <DialogTitle>{t.purchaseOrders.revisionDialogTitle}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <p className="text-sm text-muted-foreground">
-              سيتم إعادة الطلب للمنشئ لتعديله. يرجى توضيح الأسباب أو التعديلات المطلوبة بدقة.
+              {t.purchaseOrders.revisionDialogDesc}
             </p>
             <div className="space-y-2">
-              <Label>سبب طلب المراجعة *</Label>
+              <Label>{t.purchaseOrders.revisionReason} *</Label>
               <Textarea 
                 placeholder="مثال: يرجى تعديل الكمية في الصنف الأول لتكون 5 بدلاً من 10..." 
                 value={revisionNote}
@@ -832,7 +832,7 @@ export default function PurchaseOrderDetail() {
               disabled={revisionNote.length < 5 || requestRevisionMut.isPending}
               onClick={() => requestRevisionMut.mutate({ id: po.id, note: revisionNote })}
             >
-              {requestRevisionMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "إرسال للمراجعة"}
+              {requestRevisionMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : t.purchaseOrders.returnForRevision}
             </Button>
           </DialogFooter>
         </DialogContent>

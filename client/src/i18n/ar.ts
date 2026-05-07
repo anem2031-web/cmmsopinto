@@ -335,6 +335,13 @@ const ar = {
     addItem: "إضافة صنف",
     removeItem: "حذف صنف",
     totalInWords: "المجموع كتابةً",
+    returnForRevision: "طلب مراجعة",
+    resubmit: "إعادة تقديم",
+    revisionReason: "سبب طلب المراجعة",
+    revisionDialogTitle: "طلب مراجعة طلب الشراء",
+    revisionDialogDesc: "سيتم إعادة الطلب للمنشئ لتعديله. يرجى توضيح الأسباب أو التعديلات المطلوبة بدقة.",
+    resubmitDialogTitle: "إعادة تقديم الطلب",
+    resubmitDialogDesc: "يرجى كتابة الملاحظات حول التعديلات التي تم إجراؤها.",
     // Purchase Cycle
     purchaseCycle: "دورة الشراء",
     step1Purchase: "الشراء",

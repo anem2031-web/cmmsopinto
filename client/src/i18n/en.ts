@@ -325,6 +325,13 @@ const en: TranslationKeys = {
     addItem: "Add Item",
     removeItem: "Remove Item",
     totalInWords: "Total in Words",
+    returnForRevision: "Return For Revision",
+    resubmit: "Resubmit",
+    revisionReason: "Revision Reason",
+    revisionDialogTitle: "Return Purchase Order for Revision",
+    revisionDialogDesc: "The request will be returned to the creator for modification. Please explain the reasons or required changes clearly.",
+    resubmitDialogTitle: "Resubmit Request",
+    resubmitDialogDesc: "Please provide notes regarding the modifications made.",
     // Purchase Cycle
     purchaseCycle: "Purchase Cycle",
     step1Purchase: "Purchase",
