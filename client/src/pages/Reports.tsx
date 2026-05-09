@@ -24,6 +24,9 @@ export default function Reports() {
   const { data: byPriority, isLoading: l3 } = trpc.reports.ticketsByPriority.useQuery();
   const { data: monthly, isLoading: l5 } = trpc.reports.monthlySummary.useQuery();
   const { data: byCategory } = trpc.reports.ticketsByCategory.useQuery();
+
+  // PHASE 5A: Cross-module operational awareness (Ticket-Procurement dependencies)
+  const { data: poList } = trpc.purchaseOrders.list.useQuery();
   
   // Phase 2A: Fetch only critical tickets for attention panel
   const { data: criticalList, isLoading: lCritical } = trpc.tickets.list.useQuery({ 
@@ -66,6 +69,15 @@ export default function Reports() {
   // PHASE 3B: Micro Operational Interpretation Logic
   const criticalAwaitingAssignment = criticalList?.filter(t => t.status === 'new').length || 0;
   const topCategory = byCategory?.sort((a, b) => b.count - a.count)[0];
+
+  // PHASE 5A: Dependency Logic (Outcome-Oriented)
+  const criticalBlockedByMaterials = criticalList?.filter(t => 
+    ['needs_purchase', 'purchase_pending_estimate', 'purchase_pending_accounting', 'purchase_pending_management', 'purchase_approved', 'partial_purchase'].includes(t.status)
+  ).length || 0;
+
+  const poAffectingMaintenance = poList?.filter(po => 
+    po.ticketId && !['received', 'closed', 'cancelled'].includes(po.status)
+  ).length || 0;
 
   // Components as variables for spatial reordering
   const ExecutiveSummary = (
@@ -132,6 +144,18 @@ export default function Reports() {
         {topCategory && (
           <p className="text-[11px] text-slate-400 leading-relaxed">
             أعلى عدد من البلاغات الجديدة حالياً في فئة {topCategory.category}.
+          </p>
+        )}
+
+        {/* PHASE 5A: Dependency Whispers (Informational Only) */}
+        {criticalBlockedByMaterials > 0 && (
+          <p className="text-[11px] text-slate-400/80 leading-relaxed italic">
+            {criticalBlockedByMaterials} بلاغات حرجة مرتبطة بمواد غير متوفرة حالياً.
+          </p>
+        )}
+        {poAffectingMaintenance > 0 && (
+          <p className="text-[11px] text-slate-400/80 leading-relaxed italic">
+            {poAffectingMaintenance > 1 ? `${poAffectingMaintenance} طلبات شراء تؤثر` : 'طلب شراء واحد يؤثر'} حالياً على أعمال صيانة مفتوحة.
           </p>
         )}
       </div>
