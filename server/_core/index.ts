@@ -24,6 +24,7 @@ import { runSlaOverduePushJob } from "../jobs/sla-overdue-push";
 import { runBackupCleanupJob } from "../jobs/backup-cleanup";
 import { getDb } from "../db";
 import { generatePMWorkOrderPDF } from "../pmWorkOrderPdfService";
+import { generateTicketPDF } from "../ticketPdfService";
 import { sdk } from "./sdk";
 
 // ============================================================
@@ -392,6 +393,18 @@ async function startServer() {
       const buffer = await generateDelegateItemsPDF(user.id);
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `attachment; filename=my-items-${Date.now()}.pdf`);
+      res.send(buffer);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Ticket PDF report — isolated Puppeteer-based PDF generation (auth required)
+  app.get("/api/tickets/:id/pdf", requireAuthMiddleware, async (req: any, res: any) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      if (isNaN(ticketId)) return res.status(400).json({ error: "رقم البلاغ غير صحيح" });
+      const buffer = await generateTicketPDF(ticketId);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename=ticket-${ticketId}-${Date.now()}.pdf`);
       res.send(buffer);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
