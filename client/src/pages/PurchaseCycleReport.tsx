@@ -231,7 +231,7 @@ function POCard({ po }: { po: any }) {
                 className="text-xs text-primary hover:underline flex items-center gap-1"
               >
                 <ExternalLink className="w-3 h-3" />
-                {tr.purchaseCycleReport?.ticket || "بلاغ"} #{po.ticketId}
+                {tr.purchaseCycleReport?.ticket || "بلاغ"} #{po.ticketNumber || po.ticketId}
               </button>
             )}
           </div>

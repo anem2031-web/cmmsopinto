@@ -2285,10 +2285,11 @@ export const appRouter = router({
       dateTo: z.string().optional(),
       poId: z.number().optional(),
     }).optional()).query(async ({ input }) => {
-      const [allPOs, allUsers, allItems] = await Promise.all([
+      const [allPOs, allUsers, allItems, allTickets] = await Promise.all([
         db.getPurchaseOrders(),
         db.getAllUsers(),
         db.getAllPOItems(),
+        db.getTickets(),
       ]);
 
       let pos = allPOs;
@@ -2309,6 +2310,7 @@ export const appRouter = router({
 
       const result = pos.map(po => {
         const items = allItems.filter(i => i.purchaseOrderId === po.id);
+        const ticket = po.ticketId ? allTickets.find(t => t.id === po.ticketId) : null;
         const requestedBy = allUsers.find(u => u.id === po.requestedById)?.name || "غير معروف";
         const accountingApprovedBy = allUsers.find(u => u.id === po.accountingApprovedById)?.name;
         const managementApprovedBy = allUsers.find(u => u.id === po.managementApprovedById)?.name;
@@ -2360,6 +2362,7 @@ export const appRouter = router({
         return {
           poId: po.id, poNumber: po.poNumber, status: po.status, requestedBy,
           createdAt: new Date(po.createdAt), ticketId: po.ticketId,
+          ticketNumber: ticket?.ticketNumber || null,
           custodyAmount: po.custodyAmount ? parseFloat(po.custodyAmount) : null,
           poPhases, items: itemsReport, totalPOHours, itemCount: items.length,
         };
