@@ -4,7 +4,7 @@ import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, L
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { useStaticLabels } from "@/hooks/useContentTranslation";
-import { AlertCircle, CheckCircle2, Clock, Wrench, TrendingUp, BarChart3, ListFilter, Info } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, Wrench, TrendingUp, BarChart3, ListFilter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 import { formatDistanceToNow, differenceInHours } from "date-fns";
@@ -23,6 +23,7 @@ export default function Reports() {
   const { data: byStatus, isLoading: l1 } = trpc.reports.ticketsByStatus.useQuery();
   const { data: byPriority, isLoading: l3 } = trpc.reports.ticketsByPriority.useQuery();
   const { data: monthly, isLoading: l5 } = trpc.reports.monthlySummary.useQuery();
+  const { data: byCategory } = trpc.reports.ticketsByCategory.useQuery();
   
   // Phase 2A: Fetch only critical tickets for attention panel
   const { data: criticalList, isLoading: lCritical } = trpc.tickets.list.useQuery({ 
@@ -62,6 +63,16 @@ export default function Reports() {
 
   const awaitingAssignmentCount = byStatus?.find(d => d.status === 'new')?.count || 0;
 
+  // PHASE 3B: Micro Operational Interpretation Logic
+  const criticalAwaitingAssignment = criticalList?.filter(t => t.status === 'new').length || 0;
+  
+  // Find category with highest number of new tickets
+  // Note: The byCategory query currently returns counts by category, 
+  // but to be precise for "new" tickets we'd need more granular data.
+  // For Phase 3B deterministic logic, we'll use the most active category as a proxy 
+  // or focus on general volume if specific "new" per category isn't available.
+  const topCategory = byCategory?.sort((a, b) => b.count - a.count)[0];
+
   // Components as variables for spatial reordering
   const ExecutiveSummary = (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -98,19 +109,38 @@ export default function Reports() {
   );
 
   const ContextSummaries = (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-1">
-      {agingCriticalCount > 0 && (
-        <ContextSummary 
-          text={`${agingCriticalCount} بلاغات حرجة تجاوزت 48 ساعة`}
-          onClick={() => setLocation('/tickets?priority=critical')}
-        />
-      )}
-      {awaitingAssignmentCount > 0 && (
-        <ContextSummary 
-          text={`${awaitingAssignmentCount} بلاغات جديدة بانتظار الإسناد`}
-          onClick={() => setLocation('/tickets?status=open')}
-        />
-      )}
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-1">
+        {agingCriticalCount > 0 && (
+          <ContextSummary 
+            text={`${agingCriticalCount} بلاغات حرجة تجاوزت 48 ساعة`}
+            onClick={() => setLocation('/tickets?priority=critical')}
+          />
+        )}
+        {awaitingAssignmentCount > 0 && (
+          <ContextSummary 
+            text={`${awaitingAssignmentCount} بلاغات جديدة بانتظار الإسناد`}
+            onClick={() => setLocation('/tickets?status=open')}
+          />
+        )}
+      </div>
+      
+      {/* PHASE 3B: Micro Operational Interpretations */}
+      <div className="px-2 space-y-1.5">
+        {criticalAwaitingAssignment > 0 && (
+          <p 
+            className="text-[11px] text-slate-500 leading-relaxed cursor-pointer hover:text-slate-700 transition-colors"
+            onClick={() => setLocation('/tickets?priority=critical')}
+          >
+            {criticalAwaitingAssignment} بلاغات حرجة لم يتم إسنادها لأي فني حتى الآن.
+          </p>
+        )}
+        {topCategory && (
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            أعلى عدد من البلاغات الجديدة حالياً في فئة {topCategory.category}.
+          </p>
+        )}
+      </div>
     </div>
   );
 
@@ -405,7 +435,6 @@ function ContextSummary({ text, onClick }: { text: string, onClick?: () => void 
         onClick && "cursor-pointer hover:bg-slate-50 hover:border-slate-200"
       )}
     >
-      <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
       <span className="text-xs text-slate-600 font-medium leading-tight">
         {text}
       </span>
