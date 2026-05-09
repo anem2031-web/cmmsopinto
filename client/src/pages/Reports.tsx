@@ -73,7 +73,7 @@ export default function Reports() {
       <SummaryCard 
         title="البلاغات المفتوحة" 
         value={openTickets} 
-        icon={<Wrench className="w-5 h-5 text-blue-500/80" />}
+        icon={<Wrench className="w-5 h-5 text-blue-500/70" />}
         loading={l1}
         onClick={() => setLocation('/tickets?status=open')}
         clickable
@@ -81,7 +81,7 @@ export default function Reports() {
       <SummaryCard 
         title="البلاغات الحرجة" 
         value={criticalCount} 
-        icon={<AlertCircle className="w-5 h-5 text-red-500/80" />}
+        icon={<AlertCircle className="w-5 h-5 text-red-500/70" />}
         loading={l3}
         highlight={criticalCount > 0}
         onClick={() => setLocation('/tickets?priority=critical')}
@@ -90,13 +90,13 @@ export default function Reports() {
       <SummaryCard 
         title="أنجز هذا الشهر" 
         value={completedThisMonth} 
-        icon={<CheckCircle2 className="w-5 h-5 text-emerald-500/80" />}
+        icon={<CheckCircle2 className="w-5 h-5 text-emerald-500/70" />}
         loading={l5}
       />
       <SummaryCard 
         title="بلاغات جديدة (شهر)" 
         value={createdThisMonth} 
-        icon={<Clock className="w-5 h-5 text-amber-500/80" />}
+        icon={<Clock className="w-5 h-5 text-amber-500/70" />}
         loading={l5}
       />
     </div>
@@ -119,11 +119,11 @@ export default function Reports() {
         )}
       </div>
       
-      {/* PHASE 3B & 4A: Micro Operational Interpretations with refined rhythm */}
+      {/* PHASE 3B, 4A & 4B: Micro Operational Interpretations with natural rhythm */}
       <div className="px-2 space-y-2">
         {criticalAwaitingAssignment > 0 && (
           <p 
-            className="text-[11px] text-slate-400 leading-relaxed cursor-pointer hover:text-slate-600 transition-colors"
+            className="text-[11px] text-slate-400 leading-relaxed cursor-pointer hover:text-slate-500 transition-colors"
             onClick={() => setLocation('/tickets?priority=critical')}
           >
             {criticalAwaitingAssignment} بلاغات حرجة لم يتم إسنادها لأي فني حتى الآن.
@@ -142,7 +142,7 @@ export default function Reports() {
     <Card className="border-slate-100/80 shadow-sm">
       <CardHeader className="pb-3 border-b border-slate-50 flex flex-row items-center justify-between space-y-0 px-5">
         <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-700">
-          <ListFilter className="w-4 h-4 text-red-400" />
+          <ListFilter className="w-4 h-4 text-red-400/80" />
           لوحة الانتباه التشغيلي: بلاغات حرجة
         </CardTitle>
         {criticalCount > 5 && (
@@ -341,7 +341,7 @@ export default function Reports() {
   );
 }
 
-// --- Sub-components with refined rhythm ---
+// --- Sub-components with natural operational rhythm ---
 
 function SummaryCard({ title, value, icon, loading, highlight, onClick, clickable }: any) {
   return (
@@ -358,7 +358,7 @@ function SummaryCard({ title, value, icon, loading, highlight, onClick, clickabl
           <div className="space-y-1">
             <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">{title}</p>
             {loading ? <Skeleton className="h-8 w-16" /> : (
-              <p className={cn("text-2xl font-bold text-slate-800 dark:text-slate-100", highlight && "text-red-500/90")}>
+              <p className={cn("text-2xl font-bold text-slate-800 dark:text-slate-100 tabular-nums", highlight && "text-red-500/90")}>
                 {value}
               </p>
             )}
@@ -412,7 +412,7 @@ function AttentionRow({ id, ticketNumber, title, createdAt, status, onClick }: a
         </div>
       </div>
       <div className="flex items-center gap-4 ml-4">
-        <span className="text-[9px] font-bold text-red-400/80 bg-red-50/50 px-2 py-0.5 rounded-full border border-red-100/30 uppercase tracking-tighter">
+        <span className="text-[9px] font-bold text-red-400/80 bg-red-50/50 px-2 py-0.5 rounded-full border border-red-100/30 uppercase tracking-tighter tabular-nums">
           {status}
         </span>
       </div>
