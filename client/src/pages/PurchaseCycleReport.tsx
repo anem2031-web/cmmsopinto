@@ -225,9 +225,9 @@ function POCard({ po }: { po: any }) {
             <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium", getPOStatusColor(po.status))}>
               {getPOStatusLabel(po.status, tr)}
             </span>
-            {po.ticketId && typeof po.ticketId === 'number' && po.ticketId > 0 && (
+            {po.ticketId && (
               <button
-                onClick={(e) => { e.stopPropagation(); setLocation(`/tickets/${po.ticketId}`); }}
+                onClick={(e) => { e.stopPropagation(); const id = typeof po.ticketId === 'string' ? parseInt(po.ticketId) : po.ticketId; if (id && id > 0) setLocation(`/tickets/${id}`); }}
                 className="text-xs text-primary hover:underline flex items-center gap-1"
               >
                 <ExternalLink className="w-3 h-3" />
