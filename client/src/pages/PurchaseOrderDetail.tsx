@@ -320,7 +320,7 @@ export default function PurchaseOrderDetail() {
                   </div>
                   {item.photoUrl && <img src={item.photoUrl} alt="" className="w-16 h-16 rounded-lg object-cover border shrink-0" />}
                   {/* Edit button - only for editable statuses */}
-                  {po && ['draft', 'pending_estimate', 'pending_accounting', 'revision_needed'].includes(po.status) && ['pending', 'estimated'].includes(item.status) && (
+                  {po && role !== "delegate" && ['draft', 'pending_estimate', 'pending_accounting', 'revision_needed'].includes(po.status) && ['pending', 'estimated'].includes(item.status) && (
                     <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={() => {
                       setEditingItem(item);
                       setEditForm({ itemName: item.itemName, description: item.description || "", quantity: item.quantity, estimatedUnitCost: item.estimatedUnitCost || "", unit: item.unit || "", photoUrl: item.photoUrl || "", notes: item.notes || "" });
