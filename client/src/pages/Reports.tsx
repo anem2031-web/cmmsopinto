@@ -4,10 +4,10 @@ import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, L
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { useStaticLabels } from "@/hooks/useContentTranslation";
-import { AlertCircle, CheckCircle2, Clock, Wrench, TrendingUp, BarChart3, ListFilter } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, Wrench, TrendingUp, BarChart3, ListFilter, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, differenceInHours } from "date-fns";
 import { ar } from "date-fns/locale";
 
 export default function Reports() {
@@ -50,6 +50,13 @@ export default function Reports() {
 
   // Limit critical tickets to 5 max
   const topCriticalTickets = criticalList?.slice(0, 5) || [];
+
+  // PHASE 2B: Operational Context Logic (Deterministic)
+  const agingCriticalCount = criticalList?.filter(ticket => 
+    differenceInHours(new Date(), new Date(ticket.createdAt)) > 48
+  ).length || 0;
+
+  const awaitingAssignmentCount = byStatus?.find(d => d.status === 'new')?.count || 0;
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto pb-10">
@@ -238,6 +245,22 @@ export default function Reports() {
           )}
         </CardContent>
       </Card>
+
+      {/* PHASE 2B: OPERATIONAL CONTEXT SUMMARIES */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-1">
+        {agingCriticalCount > 0 && (
+          <ContextSummary 
+            text={`${agingCriticalCount} بلاغات حرجة تجاوزت 48 ساعة`}
+            onClick={() => setLocation('/tickets?priority=critical')}
+          />
+        )}
+        {awaitingAssignmentCount > 0 && (
+          <ContextSummary 
+            text={`${awaitingAssignmentCount} بلاغات جديدة بانتظار الإسناد`}
+            onClick={() => setLocation('/tickets?status=open')}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -317,6 +340,23 @@ function AttentionRow({ id, ticketNumber, title, createdAt, status, onClick }: a
           {status}
         </span>
       </div>
+    </div>
+  );
+}
+
+function ContextSummary({ text, onClick }: { text: string, onClick?: () => void }) {
+  return (
+    <div 
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-2 py-2 px-3 rounded-lg border border-slate-100 bg-slate-50/30 transition-all duration-150",
+        onClick && "cursor-pointer hover:bg-slate-50 hover:border-slate-200"
+      )}
+    >
+      <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+      <span className="text-xs text-slate-600 font-medium leading-tight">
+        {text}
+      </span>
     </div>
   );
 }
