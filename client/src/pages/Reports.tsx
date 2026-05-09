@@ -9,11 +9,15 @@ import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 import { formatDistanceToNow, differenceInHours } from "date-fns";
 import { ar } from "date-fns/locale";
+import { useState } from "react";
+
+type FocusMode = 'general' | 'maintenance';
 
 export default function Reports() {
   const { t } = useTranslation();
   const { getStatusLabel, getPriorityLabel } = useStaticLabels();
   const [, setLocation] = useLocation();
+  const [focusMode, setFocusMode] = useState<FocusMode>('general');
   
   // Data Queries
   const { data: byStatus, isLoading: l1 } = trpc.reports.ticketsByStatus.useQuery();
@@ -58,6 +62,205 @@ export default function Reports() {
 
   const awaitingAssignmentCount = byStatus?.find(d => d.status === 'new')?.count || 0;
 
+  // Components as variables for spatial reordering
+  const ExecutiveSummary = (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <SummaryCard 
+        title="البلاغات المفتوحة" 
+        value={openTickets} 
+        icon={<Wrench className="w-5 h-5 text-blue-500" />}
+        loading={l1}
+        onClick={() => setLocation('/tickets?status=open')}
+        clickable
+      />
+      <SummaryCard 
+        title="البلاغات الحرجة" 
+        value={criticalCount} 
+        icon={<AlertCircle className="w-5 h-5 text-red-500" />}
+        loading={l3}
+        highlight={criticalCount > 0}
+        onClick={() => setLocation('/tickets?priority=critical')}
+        clickable
+      />
+      <SummaryCard 
+        title="أنجز هذا الشهر" 
+        value={completedThisMonth} 
+        icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+        loading={l5}
+      />
+      <SummaryCard 
+        title="بلاغات جديدة (شهر)" 
+        value={createdThisMonth} 
+        icon={<Clock className="w-5 h-5 text-amber-500" />}
+        loading={l5}
+      />
+    </div>
+  );
+
+  const ContextSummaries = (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-1">
+      {agingCriticalCount > 0 && (
+        <ContextSummary 
+          text={`${agingCriticalCount} بلاغات حرجة تجاوزت 48 ساعة`}
+          onClick={() => setLocation('/tickets?priority=critical')}
+        />
+      )}
+      {awaitingAssignmentCount > 0 && (
+        <ContextSummary 
+          text={`${awaitingAssignmentCount} بلاغات جديدة بانتظار الإسناد`}
+          onClick={() => setLocation('/tickets?status=open')}
+        />
+      )}
+    </div>
+  );
+
+  const OperationalAttentionPanel = (
+    <Card className="border-slate-200/60 shadow-sm">
+      <CardHeader className="pb-3 border-b border-slate-50 flex flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-800">
+          <ListFilter className="w-4 h-4 text-red-500" />
+          لوحة الانتباه التشغيلي: بلاغات حرجة
+        </CardTitle>
+        {criticalCount > 5 && (
+          <button 
+            onClick={() => setLocation('/tickets?priority=critical')}
+            className="text-[10px] font-medium text-slate-400 hover:text-slate-600 uppercase tracking-tighter"
+          >
+            عرض الكل ({criticalCount})
+          </button>
+        )}
+      </CardHeader>
+      <CardContent className="pt-2 px-0">
+        {lCritical ? (
+          <div className="p-4 space-y-3">
+            {[1, 2, 3].map(i => <Skeleton key={i} className="h-10 w-full" />)}
+          </div>
+        ) : topCriticalTickets.length > 0 ? (
+          <div className="divide-y divide-slate-50">
+            {topCriticalTickets.map((ticket) => (
+              <AttentionRow 
+                key={ticket.id}
+                id={ticket.id}
+                ticketNumber={ticket.ticketNumber}
+                title={ticket.title}
+                createdAt={ticket.createdAt}
+                status={getStatusLabel(ticket.status)}
+                onClick={() => setLocation(`/tickets/${ticket.id}`)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="py-10 text-center">
+            <p className="text-xs text-muted-foreground italic opacity-60">لا توجد بلاغات حرجة حالياً</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+
+  const OperationalPanels = (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Status Distribution Table */}
+      <Card className="lg:col-span-1 border-slate-200/60 shadow-sm">
+        <CardHeader className="pb-3 border-b border-slate-50">
+          <CardTitle className="text-sm font-medium flex items-center gap-2 text-slate-700">
+            <BarChart3 className="w-4 h-4 text-slate-400" />
+            {t.reports.ticketsByStatus}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4">
+          {l1 ? <SkeletonList /> : (
+            <div className="space-y-1">
+              {statusData.length > 0 ? statusData.map((item, i) => (
+                <OperationalRow 
+                  key={i} 
+                  label={item.label} 
+                  value={item.value} 
+                  clickable={item.key === 'new' || item.key === 'assigned' || item.key === 'in_progress'}
+                  onClick={item.key === 'new' || item.key === 'assigned' || item.key === 'in_progress' ? () => setLocation('/tickets?status=open') : undefined}
+                />
+              )) : <EmptyState />}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Priority Distribution Table */}
+      <Card className="lg:col-span-1 border-slate-200/60 shadow-sm">
+        <CardHeader className="pb-3 border-b border-slate-50">
+          <CardTitle className="text-sm font-medium flex items-center gap-2 text-slate-700">
+            <AlertCircle className="w-4 h-4 text-slate-400" />
+            {t.reports.ticketsByPriority}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4">
+          {l3 ? <SkeletonList /> : (
+            <div className="space-y-1">
+              {priorityData.length > 0 ? priorityData.map((item, i) => (
+                <OperationalRow 
+                  key={i} 
+                  label={item.label} 
+                  value={item.value} 
+                  clickable={item.key === 'critical'}
+                  onClick={item.key === 'critical' ? () => setLocation('/tickets?priority=critical') : undefined}
+                />
+              )) : <EmptyState />}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 3. SIMPLIFIED VISUAL HIERARCHY - Monthly Operational Trend */}
+      <Card className="lg:col-span-1 border-slate-200/60 shadow-sm">
+        <CardHeader className="pb-3 border-b border-slate-50">
+          <CardTitle className="text-sm font-medium flex items-center gap-2 text-slate-700">
+            <TrendingUp className="w-4 h-4 text-slate-400" />
+            {t.reports.monthlyTrend}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-6">
+          {l5 ? <Skeleton className="h-40 w-full" /> : monthly && monthly.length > 0 ? (
+            <div className="h-40 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={monthly} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis 
+                    dataKey="month" 
+                    hide={false} 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fontSize: 10, fill: '#94a3b8' }}
+                    dy={10}
+                  />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', fontSize: '12px' }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="created" 
+                    stroke="#94a3b8" 
+                    strokeWidth={1.5} 
+                    dot={false} 
+                    activeDot={{ r: 4, strokeWidth: 0 }} 
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="closed" 
+                    stroke="#10b981" 
+                    strokeWidth={2} 
+                    dot={false} 
+                    activeDot={{ r: 4, strokeWidth: 0 }} 
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : <EmptyState />}
+        </CardContent>
+      </Card>
+    </div>
+  );
+
   return (
     <div className="space-y-8 max-w-7xl mx-auto pb-10">
       {/* Page Header */}
@@ -66,201 +269,50 @@ export default function Reports() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{t.reports.title}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t.reports.overview}</p>
         </div>
-      </div>
 
-      {/* 1. EXECUTIVE SUMMARY STRIP */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <SummaryCard 
-          title="البلاغات المفتوحة" 
-          value={openTickets} 
-          icon={<Wrench className="w-5 h-5 text-blue-500" />}
-          loading={l1}
-          onClick={() => setLocation('/tickets?status=open')}
-          clickable
-        />
-        <SummaryCard 
-          title="البلاغات الحرجة" 
-          value={criticalCount} 
-          icon={<AlertCircle className="w-5 h-5 text-red-500" />}
-          loading={l3}
-          highlight={criticalCount > 0}
-          onClick={() => setLocation('/tickets?priority=critical')}
-          clickable
-        />
-        <SummaryCard 
-          title="أنجز هذا الشهر" 
-          value={completedThisMonth} 
-          icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}
-          loading={l5}
-        />
-        <SummaryCard 
-          title="بلاغات جديدة (شهر)" 
-          value={createdThisMonth} 
-          icon={<Clock className="w-5 h-5 text-amber-500" />}
-          loading={l5}
-        />
-      </div>
-
-      {/* 2. CALM OPERATIONAL PANELS */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Status Distribution Table */}
-        <Card className="lg:col-span-1 border-slate-200/60 shadow-sm">
-          <CardHeader className="pb-3 border-b border-slate-50">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-slate-700">
-              <BarChart3 className="w-4 h-4 text-slate-400" />
-              {t.reports.ticketsByStatus}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4">
-            {l1 ? <SkeletonList /> : (
-              <div className="space-y-1">
-                {statusData.length > 0 ? statusData.map((item, i) => (
-                  <OperationalRow 
-                    key={i} 
-                    label={item.label} 
-                    value={item.value} 
-                    clickable={item.key === 'new' || item.key === 'assigned' || item.key === 'in_progress'}
-                    onClick={item.key === 'new' || item.key === 'assigned' || item.key === 'in_progress' ? () => setLocation('/tickets?status=open') : undefined}
-                  />
-                )) : <EmptyState />}
-              </div>
+        {/* PHASE 3A: Minimalist Focus Selector */}
+        <div className="flex items-center gap-4 bg-slate-50/50 dark:bg-slate-900/50 p-1 rounded-lg border border-slate-100/50">
+          <button 
+            onClick={() => setFocusMode('general')}
+            className={cn(
+              "text-[11px] font-medium px-3 py-1.5 rounded-md transition-all duration-200",
+              focusMode === 'general' 
+                ? "text-slate-900 bg-white shadow-sm border border-slate-200/50" 
+                : "text-slate-400 hover:text-slate-600"
             )}
-          </CardContent>
-        </Card>
-
-        {/* Priority Distribution Table */}
-        <Card className="lg:col-span-1 border-slate-200/60 shadow-sm">
-          <CardHeader className="pb-3 border-b border-slate-50">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-slate-700">
-              <AlertCircle className="w-4 h-4 text-slate-400" />
-              {t.reports.ticketsByPriority}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4">
-            {l3 ? <SkeletonList /> : (
-              <div className="space-y-1">
-                {priorityData.length > 0 ? priorityData.map((item, i) => (
-                  <OperationalRow 
-                    key={i} 
-                    label={item.label} 
-                    value={item.value} 
-                    clickable={item.key === 'critical'}
-                    onClick={item.key === 'critical' ? () => setLocation('/tickets?priority=critical') : undefined}
-                  />
-                )) : <EmptyState />}
-              </div>
+          >
+            عمليات عامة
+          </button>
+          <button 
+            onClick={() => setFocusMode('maintenance')}
+            className={cn(
+              "text-[11px] font-medium px-3 py-1.5 rounded-md transition-all duration-200",
+              focusMode === 'maintenance' 
+                ? "text-slate-900 bg-white shadow-sm border border-slate-200/50" 
+                : "text-slate-400 hover:text-slate-600"
             )}
-          </CardContent>
-        </Card>
-
-        {/* 3. SIMPLIFIED VISUAL HIERARCHY - Monthly Operational Trend */}
-        <Card className="lg:col-span-1 border-slate-200/60 shadow-sm">
-          <CardHeader className="pb-3 border-b border-slate-50">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-slate-700">
-              <TrendingUp className="w-4 h-4 text-slate-400" />
-              {t.reports.monthlyTrend}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-6">
-            {l5 ? <Skeleton className="h-40 w-full" /> : monthly && monthly.length > 0 ? (
-              <div className="h-40 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={monthly} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis 
-                      dataKey="month" 
-                      hide={false} 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{ fontSize: 10, fill: '#94a3b8' }}
-                      dy={10}
-                    />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                    <Tooltip 
-                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', fontSize: '12px' }}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="created" 
-                      stroke="#94a3b8" 
-                      strokeWidth={1.5} 
-                      dot={false} 
-                      activeDot={{ r: 4, strokeWidth: 0 }} 
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="closed" 
-                      stroke="#10b981" 
-                      strokeWidth={2} 
-                      dot={false} 
-                      activeDot={{ r: 4, strokeWidth: 0 }} 
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            ) : <EmptyState />}
-          </CardContent>
-        </Card>
+          >
+            تركيز الصيانة
+          </button>
+        </div>
       </div>
 
-      {/* PHASE 2A: OPERATIONAL ATTENTION PANEL - Critical Tickets Only */}
-      <Card className="border-slate-200/60 shadow-sm">
-        <CardHeader className="pb-3 border-b border-slate-50 flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-800">
-            <ListFilter className="w-4 h-4 text-red-500" />
-            لوحة الانتباه التشغيلي: بلاغات حرجة
-          </CardTitle>
-          {criticalCount > 5 && (
-            <button 
-              onClick={() => setLocation('/tickets?priority=critical')}
-              className="text-[10px] font-medium text-slate-400 hover:text-slate-600 uppercase tracking-tighter"
-            >
-              عرض الكل ({criticalCount})
-            </button>
-          )}
-        </CardHeader>
-        <CardContent className="pt-2 px-0">
-          {lCritical ? (
-            <div className="p-4 space-y-3">
-              {[1, 2, 3].map(i => <Skeleton key={i} className="h-10 w-full" />)}
-            </div>
-          ) : topCriticalTickets.length > 0 ? (
-            <div className="divide-y divide-slate-50">
-              {topCriticalTickets.map((ticket) => (
-                <AttentionRow 
-                  key={ticket.id}
-                  id={ticket.id}
-                  ticketNumber={ticket.ticketNumber}
-                  title={ticket.title}
-                  createdAt={ticket.createdAt}
-                  status={getStatusLabel(ticket.status)}
-                  onClick={() => setLocation(`/tickets/${ticket.id}`)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="py-10 text-center">
-              <p className="text-xs text-muted-foreground italic opacity-60">لا توجد بلاغات حرجة حالياً</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* PHASE 2B: OPERATIONAL CONTEXT SUMMARIES */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-1">
-        {agingCriticalCount > 0 && (
-          <ContextSummary 
-            text={`${agingCriticalCount} بلاغات حرجة تجاوزت 48 ساعة`}
-            onClick={() => setLocation('/tickets?priority=critical')}
-          />
-        )}
-        {awaitingAssignmentCount > 0 && (
-          <ContextSummary 
-            text={`${awaitingAssignmentCount} بلاغات جديدة بانتظار الإسناد`}
-            onClick={() => setLocation('/tickets?status=open')}
-          />
-        )}
-      </div>
+      {/* SPATIAL PRIORITIZATION LOGIC */}
+      {focusMode === 'maintenance' ? (
+        <>
+          {ExecutiveSummary}
+          {ContextSummaries}
+          {OperationalAttentionPanel}
+          {OperationalPanels}
+        </>
+      ) : (
+        <>
+          {ExecutiveSummary}
+          {OperationalPanels}
+          {OperationalAttentionPanel}
+          {ContextSummaries}
+        </>
+      )}
     </div>
   );
 }
