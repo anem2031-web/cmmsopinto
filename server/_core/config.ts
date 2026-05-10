@@ -5,7 +5,7 @@ const serverEnvSchema = z.object({
   JWT_SECRET: z.string().min(1, "JWT_SECRET is required"),
   OAUTH_SERVER_URL: z.string().min(1, "OAUTH_SERVER_URL is required"),
   OWNER_OPEN_ID: z.string().min(1, "OWNER_OPEN_ID is required"),
-  REDIS_URL: z.string().min(1, "REDIS_URL is required for production rate limiting").optional(),
+  REDIS_URL: z.string().optional(),
   VAPID_PUBLIC_KEY: z.string().min(1, "VAPID_PUBLIC_KEY is required for push notifications").optional(),
   VAPID_PRIVATE_KEY: z.string().min(1, "VAPID_PRIVATE_KEY is required for push notifications").optional(),
   VAPID_SUBJECT_EMAIL: z.string().email("VAPID_SUBJECT_EMAIL must be a valid email").optional(),
@@ -19,10 +19,7 @@ export const validateEnv = () => {
   try {
     const parsed = serverEnvSchema.parse(process.env);
     if (parsed.NODE_ENV === "production") {
-      // Enforce REDIS_URL in production
-      if (!parsed.REDIS_URL) {
-        throw new Error("REDIS_URL is required in production for rate limiting");
-      }
+
       // Enforce VAPID keys in production if push notifications are enabled
       // For now, keep them optional, but warn if not present
       if (!parsed.VAPID_PUBLIC_KEY || !parsed.VAPID_PRIVATE_KEY) {
