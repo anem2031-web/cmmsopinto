@@ -111,8 +111,15 @@ async function _runPMAutomationJobCore() {
         content: `تم إنشاء ${createdCount} أمر عمل تلقائياً للخطط المستحقة، وتم إشعار ${notifiedCount} فني`,
       });
     } catch (ownerErr) {
-      console.error("[PM Automation] Failed to notify owner about created PMs:", ownerErr);
-      errors.push(`Owner notification failed: ${String(ownerErr)}`);
+      // notifyOwner already logs a concise warning if service is unavailable.
+      // We only log here if notifyOwner throws an unexpected error.
+      if (ownerErr instanceof Error) {
+        console.error("[PM Automation] Unexpected error notifying owner about created PMs:", ownerErr.message);
+        errors.push(`Owner notification failed: ${ownerErr.message}`);
+      } else {
+        console.error("[PM Automation] Unexpected error notifying owner about created PMs:", String(ownerErr));
+        errors.push(`Owner notification failed: ${String(ownerErr)}`);
+      }
     }
   }
 

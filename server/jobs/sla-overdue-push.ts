@@ -78,7 +78,13 @@ async function _runSlaOverduePushJobCore() {
       content: `الأوامر التالية تجاوزت الوقت المعياري (48 ساعة) دون إغلاق:\n\n${orderList}\n\nيرجى المراجعة الفورية.`,
     });
   } catch (ownerErr) {
-    console.error("[SlaOverduePush] Failed to notify owner about overdue SLAs:", ownerErr);
+    // notifyOwner already logs a concise warning if service is unavailable.
+    // We only log here if notifyOwner throws an unexpected error.
+    if (ownerErr instanceof Error) {
+      console.error("[SlaOverduePush] Unexpected error notifying owner about overdue SLAs:", ownerErr.message);
+    } else {
+      console.error("[SlaOverduePush] Unexpected error notifying owner about overdue SLAs:", String(ownerErr));
+    }
   }
 
   console.log(`[SlaOverduePush] Notified about ${overdueOrders.length} overdue orders, ${notifiedCount} push sent.`);

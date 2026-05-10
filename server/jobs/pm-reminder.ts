@@ -87,7 +87,13 @@ async function _runPMWorkOrderReminderJobCore() {
         content: `الأوامر التالية تجاوزت ${REMINDER_THRESHOLD_HOURS} ساعة بدون تحديث من الفني:\n\n${ownerLines.join("\n")}\n\nتم إشعار ${notifiedCount} فني`,
       });
     } catch (ownerErr) {
-      console.error("[PM Reminder] Failed to notify owner about overdue PMs:", ownerErr);
+      // notifyOwner already logs a concise warning if service is unavailable.
+      // We only log here if notifyOwner throws an unexpected error.
+      if (ownerErr instanceof Error) {
+        console.error("[PM Reminder] Unexpected error notifying owner about overdue PMs:", ownerErr.message);
+      } else {
+        console.error("[PM Reminder] Unexpected error notifying owner about overdue PMs:", String(ownerErr));
+      }
     }
   }
 

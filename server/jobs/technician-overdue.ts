@@ -81,7 +81,13 @@ async function _runTechnicianOverdueJobCore() {
       content: `البلاغات التالية تجاوزت وقت SLA المحدد حسب الأولوية:\n\n${lines}\n\n---\nمعايير SLA: عاجل=4h | مرتفع=8h | متوسط=24h | منخفض=72h`,
     });
   } catch (ownerErr) {
-    console.error("[TechnicianOverdue] Failed to notify owner about overdue tickets:", ownerErr);
+    // notifyOwner already logs a concise warning if service is unavailable.
+    // We only log here if notifyOwner throws an unexpected error.
+    if (ownerErr instanceof Error) {
+      console.error("[TechnicianOverdue] Unexpected error notifying owner about overdue tickets:", ownerErr.message);
+    } else {
+      console.error("[TechnicianOverdue] Unexpected error notifying owner about overdue tickets:", String(ownerErr));
+    }
   }
 
   console.log(`[TechnicianOverdue] Notified about ${overdueTickets.length} overdue tickets (SLA-based)`);
