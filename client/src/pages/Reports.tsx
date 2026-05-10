@@ -138,7 +138,10 @@ export default function Reports() {
           </p>
         )}
         {needsPurchaseTickets && needsPurchaseTickets.length > 0 && (
-          <p className="text-[11px] text-slate-400 leading-relaxed">
+          <p 
+            className="text-[11px] text-slate-400 leading-relaxed cursor-pointer hover:text-slate-500 transition-colors"
+            onClick={() => setLocation('/tickets?status=needs_purchase')}
+          >
             {needsPurchaseTickets.length} عمل ينتظر مواد.
           </p>
         )}
