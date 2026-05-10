@@ -3,6 +3,7 @@ import { getAllPushSubscriptions, deletePushSubscription, getPushSubscriptionsBy
 import { env } from "./_core/config";
 
 let initialized = false;
+let vapidWarningLogged = false;
 
 function ensureInit() {
   if (initialized) return;
@@ -11,7 +12,10 @@ function ensureInit() {
   if (!publicKey || !privateKey) {
     // Validation is now handled by config.ts, so this warning is less critical
     // but still useful if VAPID keys are optional in dev/test
-    console.warn("[WebPush] VAPID keys not configured, push notifications disabled");
+    if (!vapidWarningLogged) {
+      console.warn("[WebPush] VAPID keys not configured, push notifications disabled");
+      vapidWarningLogged = true;
+    }
     return;
   }
   webpush.setVapidDetails(
@@ -89,6 +93,8 @@ async function sendToSubscriptions(
         // Remove expired/invalid subscriptions
         if (err.statusCode === 404 || err.statusCode === 410) {
           await deletePushSubscription(sub.endpoint).catch(() => {});
+        } else {
+          console.error("[WebPush] Failed to send notification:", err);
         }
       }
     })
