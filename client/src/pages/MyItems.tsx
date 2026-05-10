@@ -70,6 +70,29 @@ export default function MyItems() {
     }
   };
 
+  const handleExportPricingPdf = async () => {
+    if (!pricingExportPoId) return;
+    setExportingPricingPdf(true);
+    try {
+      const res = await fetch(`/api/export/po/${pricingExportPoId}/pdf`, { credentials: "include" });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pricing-${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(language === "ar" ? "تم تصدير PDF بنجاح" : "PDF exported successfully");
+      setShowPricingExportButton(false);
+      setPricingExportPoId(null);
+    } catch (err) {
+      toast.error(language === "ar" ? "فشل تصدير PDF" : "PDF export failed");
+    } finally {
+      setExportingPricingPdf(false);
+    }
+  };
+
   const [activeTab, setActiveTab] = useState("pending_estimate");
   const [estimateDialog, setEstimateDialog] = useState<any>(null);
   const [estimateCost, setEstimateCost] = useState("");
@@ -77,10 +100,15 @@ export default function MyItems() {
   const [uploadingField, setUploadingField] = useState<string | null>(null);
   const [invoiceUrl, setInvoiceUrl] = useState("");
   const [purchasedUrl, setPurchasedUrl] = useState("");
+  const [showPricingExportButton, setShowPricingExportButton] = useState(false);
+  const [pricingExportPoId, setPricingExportPoId] = useState<number | null>(null);
+  const [exportingPricingPdf, setExportingPricingPdf] = useState(false);
 
   const estimateMut = trpc.purchaseOrders.estimateCost.useMutation({
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       toast.success(t.common.save);
+      setShowPricingExportButton(true);
+      setPricingExportPoId(variables.purchaseOrderId);
       setEstimateDialog(null);
       setEstimateCost("");
       refetch();
@@ -233,16 +261,30 @@ export default function MyItems() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">{t.purchaseOrders.items}</p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-2 shrink-0"
-          onClick={handleExportPdf}
-          disabled={exportingPdf || !myItems || (myItems as any[]).length === 0}
-        >
-          {exportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-          {language === "ar" ? "تصدير PDF" : "Export PDF"}
-        </Button>
+        <div className="flex gap-2">
+          {showPricingExportButton && (
+            <Button
+              variant="default"
+              size="sm"
+              className="gap-2 shrink-0 bg-emerald-600 hover:bg-emerald-700"
+              onClick={handleExportPricingPdf}
+              disabled={exportingPricingPdf}
+            >
+              {exportingPricingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+              {language === "ar" ? "تصدير التسعير" : "Export Pricing"}
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2 shrink-0"
+            onClick={handleExportPdf}
+            disabled={exportingPdf || !myItems || (myItems as any[]).length === 0}
+          >
+            {exportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+            {language === "ar" ? "تصدير PDF" : "Export PDF"}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

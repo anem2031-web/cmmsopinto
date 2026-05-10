@@ -16,7 +16,7 @@ import multer from "multer";
 import { storagePut, storageGetStream } from "../storage";
 import { nanoid } from "nanoid";
 import sharp from "sharp";
-import { exportTicketsToExcel, exportPurchaseOrdersToExcel, exportTechnicianPerformanceToExcel, exportAuditLogToExcel, exportInventoryToExcel, exportPreventivePlansToExcel, exportPMWorkOrdersToExcel, generateDelegateItemsPDF } from "../exportService";
+import { exportTicketsToExcel, exportPurchaseOrdersToExcel, exportTechnicianPerformanceToExcel, exportAuditLogToExcel, exportInventoryToExcel, exportPreventivePlansToExcel, exportPMWorkOrdersToExcel, generateDelegateItemsPDF, generatePurchaseRequestPDF } from "../exportService";
 import { generateWorkflowGuidePDF } from "../workflowPdfService";
 import { runTechnicianOverdueJob } from "../jobs/technician-overdue";
 import { runPMAutomationJob } from "../jobs/pm-automation";
@@ -129,7 +129,7 @@ async function startServer() {
         enableOfflineQueue: false,
         lazyConnect: true,
       });
-      await redisClient.connect().catch(() => { /* handled below */ });
+      await redisClient.connect().catch((connectErr) => { console.warn("[RateLimit] Redis connection failed:", (connectErr as Error).message); });
       if (redisClient.status === "ready") {
         redisStoreForApi = new RedisStore({
           // @ts-expect-error - Known issue: the `call` function is not present in @types/ioredis
@@ -406,6 +406,22 @@ async function startServer() {
       const buffer = await generateTicketPDF(ticketId);
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `inline; filename=ticket-${ticketId}-${Date.now()}.pdf`);
+      res.send(buffer);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Purchase Request PDF export — delegate pricing workflow (auth required)
+  app.get("/api/export/po/:id/pdf", requireAuthMiddleware, async (req: any, res: any) => {
+    try {
+      const poId = parseInt(req.params.id);
+      if (isNaN(poId)) return res.status(400).json({ error: "Invalid purchase request ID" });
+      const user = req.authenticatedUser;
+      const buffer = await generatePurchaseRequestPDF(poId, user.id);
+      const { getPurchaseOrderById } = await import("../db");
+      const po = await getPurchaseOrderById(poId);
+      const filename = po?.poNumber ? `${po.poNumber}.pdf` : `po-${poId}.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
       res.send(buffer);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

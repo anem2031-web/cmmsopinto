@@ -505,3 +505,161 @@ function escapeHtml(str: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+
+// ============================================================
+// PURCHASE REQUEST PDF EXPORT (SINGLE REQUEST)
+// Rendering engine: Puppeteer (Chromium) via htmlToPdfService
+// Security: scoped to authenticated delegate's own request
+// ============================================================
+
+export async function generatePurchaseRequestPDF(
+  purchaseOrderId: number,
+  delegateId: number
+): Promise<Buffer> {
+  // Fetch PO and items
+  const po = await db.getPurchaseOrderById(purchaseOrderId);
+  if (!po) throw new Error("Purchase Request not found");
+
+  const allItems = await db.getPOItems(purchaseOrderId);
+  if (!allItems || allItems.length === 0) throw new Error("No items found for this request");
+
+  // Verify delegate owns at least one item in this PO
+  const delegateItems = (allItems as any[]).filter((item: any) => item.delegateId === delegateId);
+  if (delegateItems.length === 0) throw new Error("Access denied: not your request");
+
+  // Get delegate user info
+  const delegate = await db.getUserById(delegateId);
+  const delegateUsername = delegate?.username || delegate?.name || "Unknown";
+
+  // Calculate totals for all items in the PO
+  let grandTotal = 0;
+  const rows = (allItems as any[]).map((item: any) => {
+    const unitCost = parseFloat(item.estimatedUnitCost || item.actualUnitCost || "0");
+    const qty = item.quantity || 1;
+    const rowTotal = unitCost * qty;
+    grandTotal += rowTotal;
+    return {
+      itemName: item.itemName || "-",
+      qty: String(qty),
+      unit: item.unit || "-",
+      unitCost: unitCost > 0 ? unitCost.toLocaleString("en-SA", { minimumFractionDigits: 2 }) : "-",
+      rowTotal: rowTotal > 0 ? rowTotal.toLocaleString("en-SA", { minimumFractionDigits: 2 }) : "-",
+    };
+  });
+
+  const generatedDate = new Date().toLocaleDateString("en-GB");
+  const totalFormatted = grandTotal.toLocaleString("en-SA", { minimumFractionDigits: 2 });
+
+  // Build HTML — reuse existing delegate PDF style
+  const rowsHtml = rows.map((r, i) => `
+    <tr class="${i % 2 === 0 ? "even" : "odd"}">
+      <td class="item-name">${escapeHtml(r.itemName)}</td>
+      <td>${escapeHtml(r.qty)}</td>
+      <td class="item-name">${escapeHtml(r.unit)}</td>
+      <td>${escapeHtml(r.unitCost)}</td>
+      <td>${escapeHtml(r.rowTotal)}</td>
+    </tr>
+  `).join("");
+
+  const html = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Purchase Request ${po.poNumber}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;700&family=Noto+Sans:wght@400;700&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Noto Sans Arabic', 'Noto Sans', Arial, sans-serif;
+      font-size: 11px;
+      color: #1e293b;
+      background: #fff;
+      padding: 0;
+    }
+    .header {
+      background: #1e40af;
+      color: #fff;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    .header h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+    .header p  { font-size: 10px; color: #bfdbfe; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+    }
+    thead tr {
+      background: #1e40af;
+      color: #fff;
+    }
+    thead th {
+      padding: 7px 6px;
+      text-align: center;
+      font-weight: 700;
+      border: 1px solid #1e3a8a;
+    }
+    tbody tr.even { background: #f8fafc; }
+    tbody tr.odd  { background: #fff; }
+    tbody td {
+      padding: 6px 6px;
+      border: 1px solid #e2e8f0;
+      text-align: center;
+      vertical-align: middle;
+    }
+    .item-name {
+      text-align: start;
+      unicode-bidi: plaintext;
+      direction: auto;
+    }
+    .total-row {
+      background: #1e40af;
+      color: #fff;
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .total-row td {
+      padding: 8px 6px;
+      border: 1px solid #1e3a8a;
+    }
+    .footer {
+      margin-top: 12px;
+      font-size: 9px;
+      color: #64748b;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Purchase Request ${escapeHtml(po.poNumber)}</h1>
+    <p>Generated: ${generatedDate} &nbsp;|&nbsp; Items: ${rows.length}</p>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Item Name</th>
+        <th>Qty</th>
+        <th>Unit</th>
+        <th>Unit Price (SAR)</th>
+        <th>Total (SAR)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rowsHtml}
+      <tr class="total-row">
+        <td colspan="4" style="text-align:end; padding-inline-end:12px;">Total</td>
+        <td>${escapeHtml(totalFormatted)} SAR</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="footer">
+    Prepared by: ${escapeHtml(delegateUsername)}
+  </div>
+</body>
+</html>`;
+
+  return htmlToPdf(html);
+}
