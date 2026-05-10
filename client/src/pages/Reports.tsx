@@ -308,7 +308,6 @@ export default function Reports() {
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-slate-100 pb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{t.reports.title}</h1>
-          <p className="text-slate-500 text-sm mt-1"></p>
         </div>
         
         <div className="flex bg-slate-100/50 p-1 rounded-lg self-start md:self-auto">
