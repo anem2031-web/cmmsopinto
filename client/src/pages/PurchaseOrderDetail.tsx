@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowRight, ShoppingCart, CheckCircle2, Clock, DollarSign, Loader2,
-  Camera, Package, User, FileText, AlertCircle, ExternalLink, XCircle, Pencil, Upload
+  Camera, Package, User, FileText, AlertCircle, ExternalLink, XCircle, Pencil, Upload, FileDown
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
@@ -127,6 +127,30 @@ export default function PurchaseOrderDetail() {
       setReviewDecisions(newReviewDecisions);
     }
   };
+  const [exportingPdf, setExportingPdf] = useState(false);
+
+  const handleExportPdf = async () => {
+    if (!po?.id) return;
+    setExportingPdf(true);
+    try {
+      const res = await fetch(`/api/export/po/${po.id}/pdf`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("فشل تحميل الملف");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${po.poNumber || `po-${po.id}`}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(language === "ar" ? "حدث خطأ أثناء تصدير الملف" : "Failed to export PDF");
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   const [revisionNote, setRevisionNote] = useState("");
   const [isRevisionDialogOpen, setIsRevisionDialogOpen] = useState(false);
   const [resubmitNote, setResubmitNote] = useState("");
@@ -213,6 +237,18 @@ export default function PurchaseOrderDetail() {
           <h1 className="text-xl font-bold mt-1">{t.purchaseOrders.title}</h1>
         </div>
         <div className="flex gap-2">
+          {(isDelegate || isAdminOrOwner) && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={handleExportPdf}
+              disabled={exportingPdf}
+            >
+              {exportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+              {language === "ar" ? "تصدير PDF" : "Export PDF"}
+            </Button>
+          )}
           {isDelegate && po.status === "pending_estimate" && (
             <Button variant="outline" className="border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => setIsRevisionDialogOpen(true)}>
               <AlertCircle className="w-4 h-4 mr-1.5" /> {t.purchaseOrders.returnForRevision}
