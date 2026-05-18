@@ -1260,6 +1260,13 @@ export const appRouter = router({
     list: protectedProcedure.input(z.object({ status: z.string().optional() }).optional()).query(async ({ input, ctx }) => {
       const role = ctx.user.role;
       let filters: any = input || {};
+      
+      if (role === "purchase_requester") {
+        // Purchase requesters only see their own requests
+        filters.requestedById = ctx.user.id;
+        return db.getPurchaseOrders(filters);
+      }
+      
       if (role === "delegate") {
         // Delegates see POs that have items assigned to them
         const items = await db.getPOItemsByDelegate(ctx.user.id);

@@ -96,7 +96,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "logistics",
     labelKey: "nav.sections.logistics",
     icon: ShoppingCart,
-    roles: ["delegate","warehouse","accountant","senior_management","maintenance_manager","owner","admin"],
+    roles: ["delegate","warehouse","accountant","senior_management","maintenance_manager","purchase_requester","owner","admin"],
     items: [
       { icon: ShoppingCart, labelKey: "nav.purchaseOrders", path: "/purchase-orders" },
       { icon: ShoppingBag,  labelKey: "nav.myItems",        path: "/my-items",

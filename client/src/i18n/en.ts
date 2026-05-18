@@ -144,6 +144,7 @@ const en: TranslationKeys = {
     technician: "Technician",
     maintenance_manager: "Maintenance Manager",
     purchase_manager: "Purchase Request Manager",
+    purchase_requester: "Purchase Requester",
     delegate: "Purchasing Delegate",
     accountant: "Accounting",
     senior_management: "Senior Management",

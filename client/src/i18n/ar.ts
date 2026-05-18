@@ -146,6 +146,7 @@ const ar = {
     technician: "فني صيانة",
     maintenance_manager: "مدير صيانة",
     purchase_manager: "مسؤول طلبات شراء",
+    purchase_requester: "مقدم طلب شراء",
     delegate: "مندوب مشتريات",
     accountant: "حسابات",
     senior_management: "إدارة عليا",
