@@ -1422,6 +1422,19 @@ export const appRouter = router({
           await db.addTicketStatusHistory({ ticketId: input.ticketId, fromStatus: ticket.status, toStatus: "needs_purchase", changedById: ctx.user.id });
         }
       }
+      // Notify maintenance managers, owners, and admins about the new PO
+      const managers = await db.getManagerUsers();
+      for (const mgr of managers) {
+        if (mgr.id !== ctx.user.id) {
+          await db.createNotification({
+            userId: mgr.id,
+            title: `🛒 طلب شراء جديد #${poNumber}`,
+            message: `قام ${ctx.user.name} بإنشاء طلب شراء جديد يحتوي على ${input.items.length} صنف. بانتظار المراجعة.`,
+            type: "warning",
+            relatedPOId: poId!,
+          });
+        }
+      }
       // Delegate notifications are sent in reviewItems after delegates are assigned
       await db.createAuditLog({ userId: ctx.user.id, action: "create_po", entityType: "purchase_order", entityId: poId! });
       return { id: poId, poNumber };
