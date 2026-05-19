@@ -43,6 +43,7 @@ const ITEM_STATUS_COLORS: Record<string, string> = {
   rejected: "bg-red-100 text-red-700",
   purchased: "bg-emerald-100 text-emerald-700",
   received: "bg-green-100 text-green-700",
+  cancelled: "bg-gray-200 text-gray-500",
 };
 
 function numberToArabicWords(num: number): string {
@@ -88,6 +89,7 @@ export default function PurchaseOrderDetail() {
   const confirmPurchaseMut = trpc.purchaseOrders.confirmItemPurchase.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); }, onError: (e) => toast.error(e.message) });
   const receiveItemMut = trpc.purchaseOrders.confirmDeliveryToWarehouse.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); }, onError: (e: any) => toast.error(e.message) });
   const editItemMut = trpc.purchaseOrders.editItem.useMutation({ onSuccess: () => { toast.success(t.common.savedSuccessfully); setEditingItem(null); refetch(); }, onError: (e: any) => toast.error(e.message) });
+  const cancelItemMut = trpc.purchaseOrders.cancelItem.useMutation({ onSuccess: () => { toast.success(language === "ar" ? "تم إلغاء الصنف" : "Item cancelled"); refetch(); }, onError: (e: any) => toast.error(e.message) });
 
   const role = user?.role || "";
   const userId = user?.id;
@@ -176,6 +178,7 @@ export default function PurchaseOrderDetail() {
   const isManagement = role === "senior_management" || isAdminOrOwner;
   const isWarehouse = role === "warehouse" || isAdminOrOwner;
   const isManager = role === "maintenance_manager" || role === "purchase_manager" || isAdminOrOwner;
+  const canCancelItem = role === "senior_management" || role === "maintenance_manager" || isAdminOrOwner;
   const visibleItems = useMemo(() => {
     if (!po?.items) return [];
     // Admin/owner see all items; delegate sees only their own
@@ -183,8 +186,8 @@ export default function PurchaseOrderDetail() {
     if (role === "delegate") return po.items.filter((item: any) => item.delegateId === userId);
     return po.items;
   }, [po?.items, isAdminOrOwner, role, userId]);
-  const totalEstimated = useMemo(() => visibleItems.reduce((sum: number, item: any) => sum + (parseFloat(item.estimatedTotalCost || "0")), 0), [visibleItems]);
-  const totalActual = useMemo(() => visibleItems.reduce((sum: number, item: any) => sum + (parseFloat(item.actualTotalCost || "0")), 0), [visibleItems]);
+  const totalEstimated = useMemo(() => visibleItems.filter((item: any) => item.status !== "rejected" && item.status !== "cancelled").reduce((sum: number, item: any) => sum + (parseFloat(item.estimatedTotalCost || "0")), 0), [visibleItems]);
+  const totalActual = useMemo(() => visibleItems.filter((item: any) => item.status !== "rejected" && item.status !== "cancelled").reduce((sum: number, item: any) => sum + (parseFloat(item.actualTotalCost || "0")), 0), [visibleItems]);
 
   const handleUpload = async (file: File, itemId: number, type: "invoice" | "purchased" | "warehouse"): Promise<string | null> => {
     setUploadingItem(`${itemId}-${type}`);
@@ -362,24 +365,28 @@ export default function PurchaseOrderDetail() {
             // Admin/owner can act on all items; delegate only sees their own
             const isMyItem = isAdminOrOwner || (isDelegate && item.delegateId === userId);
 
+            const isCancelled = item.status === "cancelled";
             return (
-              <div key={item.id} className="border rounded-xl p-4 space-y-3 hover:border-primary/20 transition-colors">
+              <div key={item.id} className={`border rounded-xl p-4 space-y-3 transition-colors ${isCancelled ? "opacity-60 bg-gray-50 border-gray-200" : "hover:border-primary/20"}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <h4 className="font-medium text-sm">{item.itemName}</h4>
+                      <h4 className={`font-medium text-sm ${isCancelled ? "line-through text-gray-400" : ""}`}>{item.itemName}</h4>
                       <Badge className={`text-[10px] ${ITEM_STATUS_COLORS[item.status] || "bg-gray-100 text-gray-700"}`}>
                         {getPOItemStatusLabel(item.status)}
                       </Badge>
                     </div>
-                    {item.description && <p className="text-xs text-muted-foreground">{item.description}</p>}
+                    {item.description && <p className={`text-xs ${isCancelled ? "text-gray-400 line-through" : "text-muted-foreground"}`}>{item.description}</p>}
                     <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground flex-wrap">
-                      <span>{t.purchaseOrders.quantity}: <strong>{item.quantity} {item.unit || ""}</strong></span>
+                      <span className={isCancelled ? "line-through" : ""}>{t.purchaseOrders.quantity}: <strong>{item.quantity} {item.unit || ""}</strong></span>
                       {delegate && <span>{t.purchaseOrders.delegate}: <strong>{delegate.name}</strong></span>}
                     </div>
                     {item.notes && <p className="text-xs text-muted-foreground mt-1.5 bg-muted/50 rounded-lg p-2">{item.notes}</p>}
+                    {isCancelled && item.managementRejectionReason && (
+                      <p className="text-xs text-gray-400 mt-1">{language === "ar" ? "سبب الإلغاء: " : "Cancel reason: "}{item.managementRejectionReason}</p>
+                    )}
                   </div>
-                  {item.photoUrl && <img src={item.photoUrl} alt="" className="w-16 h-16 rounded-lg object-cover border shrink-0" />}
+                  {item.photoUrl && <img src={item.photoUrl} alt="" className={`w-16 h-16 rounded-lg object-cover border shrink-0 ${isCancelled ? "opacity-40 grayscale" : ""}`} />}
                   {/* Edit button - only for editable statuses */}
                   {po && role !== "delegate" && ['draft', 'pending_estimate', 'pending_accounting', 'revision_needed'].includes(po.status) && ['pending', 'estimated'].includes(item.status) && (
                     <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={() => {
@@ -387,6 +394,23 @@ export default function PurchaseOrderDetail() {
                       setEditForm({ itemName: item.itemName, description: item.description || "", quantity: item.quantity, estimatedUnitCost: item.estimatedUnitCost || "", unit: item.unit || "", photoUrl: item.photoUrl || "", notes: item.notes || "" });
                     }}>
                       <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                    </Button>
+                  )}
+                  {/* Cancel button - for authorised roles, non-cancelled items */}
+                  {canCancelItem && !isCancelled && item.status !== "delivered_to_requester" && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0 h-8 w-8 text-gray-400 hover:text-red-500 hover:bg-red-50"
+                      title={language === "ar" ? "إلغاء الصنف" : "Cancel item"}
+                      onClick={() => {
+                        if (confirm(language === "ar" ? `هل أنت متأكد من إلغاء الصنف "${item.itemName}"?` : `Cancel item "${item.itemName}"?`)) {
+                          cancelItemMut.mutate({ itemId: item.id });
+                        }
+                      }}
+                      disabled={cancelItemMut.isPending}
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
                     </Button>
                   )}
                 </div>

@@ -201,6 +201,7 @@ const en: TranslationKeys = {
     rejected: "Rejected",
     purchased: "Purchased",
     received: "Received",
+    cancelled: "Cancelled",
   },
 
   priority: {

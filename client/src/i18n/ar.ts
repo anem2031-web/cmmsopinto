@@ -206,6 +206,7 @@ const ar = {
     rejected: "مرفوض",
     purchased: "تم الشراء",
     received: "تم الاستلام",
+    cancelled: "ملغي",
   },
 
   // Priorities

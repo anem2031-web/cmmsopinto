@@ -195,7 +195,7 @@ export const purchaseOrders = mysqlTable("purchase_orders", {
 // ============================================================
 // 5. PURCHASE ORDER ITEMS (per-item tracking)
 // ============================================================
-export const poItemStatuses = ["pending", "estimated", "approved", "rejected", "funded", "purchased", "delivered_to_warehouse", "delivered_to_requester"] as const;
+export const poItemStatuses = ["pending", "estimated", "approved", "rejected", "funded", "purchased", "delivered_to_warehouse", "delivered_to_requester", "cancelled"] as const;
 
 export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   id: int("id").autoincrement().primaryKey(),

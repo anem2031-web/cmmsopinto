@@ -186,6 +186,7 @@ const ur: any = {
     partial_purchase: "جزوی خریداری",
     purchased: "مکمل خریداری",
     received: "موصول",
+    cancelled: "منسوخ",
     closed: "بند",
     rejected: "مسترد",
   },
@@ -197,6 +198,7 @@ const ur: any = {
     rejected: "مسترد",
     purchased: "خریدا گیا",
     received: "موصول",
+    cancelled: "منسوخ",
   },
 
   priority: {

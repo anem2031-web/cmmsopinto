@@ -1548,12 +1548,12 @@ export const appRouter = router({
         totalEstimated += totalCost;
         await db.updatePOItem(item.id, { estimatedUnitCost: item.estimatedUnitCost, estimatedTotalCost: String(totalCost), status: "estimated" });
       }
-      // Check if all items are estimated (excluding rejected items)
+      // Check if all items are estimated (excluding rejected/cancelled items)
       const allItems = await db.getPOItems(input.purchaseOrderId);
-      const allEstimated = allItems.every(i => i.status === "estimated" || i.status === "rejected");
+      const allEstimated = allItems.every(i => i.status === "estimated" || i.status === "rejected" || i.status === "cancelled");
       if (allEstimated) {
-        // Recalculate total estimated cost to ensure we only sum non-rejected items
-        const finalTotalEstimated = allItems.filter(i => i.status !== "rejected").reduce((sum, i) => sum + parseFloat(i.estimatedTotalCost || "0"), 0);
+        // Recalculate total estimated cost to ensure we only sum non-rejected/non-cancelled items
+        const finalTotalEstimated = allItems.filter(i => i.status !== "rejected" && i.status !== "cancelled").reduce((sum, i) => sum + parseFloat(i.estimatedTotalCost || "0"), 0);
         await db.updatePurchaseOrder(input.purchaseOrderId, { status: "pending_accounting", totalEstimatedCost: String(finalTotalEstimated) });
         // Notify accountants
         const accountants = await db.getUsersByRole("accountant");
@@ -1595,12 +1595,11 @@ export const appRouter = router({
         }
       }
 
-      // Check if all items are now rejected
+            // Check if all items are now rejected or cancelled
       const updatedItems = await db.getPOItems(input.id);
-      const allRejected = updatedItems.every(i => i.status === "rejected");
-
+      const allRejected = updatedItems.every(i => i.status === "rejected" || i.status === "cancelled");
       if (allRejected) {
-        // If all items are rejected, reject the entire PO
+        // If all items are rejected/cancelled, reject the entire PO
         await db.updatePurchaseOrder(input.id, { 
           status: "rejected", 
           rejectedById: ctx.user.id, 
@@ -1661,12 +1660,12 @@ export const appRouter = router({
         }
       }
 
-      // Check if all items are now rejected
+      // Check if all items are now rejected or cancelled
       const updatedItems = await db.getPOItems(input.id);
-      const allRejected = updatedItems.every(i => i.status === "rejected");
+      const allRejected = updatedItems.every(i => i.status === "rejected" || i.status === "cancelled");
 
       if (allRejected) {
-        // If all items are rejected, reject the entire PO
+        // If all items are rejected/cancelled, reject the entire PO
         await db.updatePurchaseOrder(input.id, { 
           status: "rejected", 
           rejectedById: ctx.user.id, 
@@ -1686,15 +1685,15 @@ export const appRouter = router({
       // Normal flow: PO is approved (partially or fully)
       await db.updatePurchaseOrder(input.id, { status: "approved", managementApprovedById: ctx.user.id, managementApprovedAt: new Date(), managementNotes: input.notes });
       
-      // Update non-rejected items to approved
+      // Update non-rejected/non-cancelled items to approved
       for (const item of updatedItems) {
-        if (item.status !== "rejected") {
+        if (item.status !== "rejected" && item.status !== "cancelled") {
           await db.updatePOItem(item.id, { status: "approved" });
         }
       }
       
-      // Notify delegates — only for non-rejected items
-      const approvedItemsForNotif = updatedItems.filter(i => i.status !== "rejected");
+      // Notify delegates — only for non-rejected/non-cancelled items
+      const approvedItemsForNotif = updatedItems.filter(i => i.status !== "rejected" && i.status !== "cancelled");
       const delegateIds = Array.from(new Set(approvedItemsForNotif.filter(i => i.delegateId).map(i => i.delegateId!)));
       for (const dId of delegateIds) {
         const delegateItems = items.filter(i => i.delegateId === dId);
@@ -1821,7 +1820,7 @@ export const appRouter = router({
       // Determine new PO status
       const allItems = await db.getPOItems(input.poId);
       const hasApproved = allItems.some(i => i.status === "pending");
-      const allRejected = allItems.every(i => i.status === "rejected");
+      const allRejected = allItems.every(i => i.status === "rejected" || i.status === "cancelled");
       if (allRejected) {
         await db.updatePurchaseOrder(input.poId, { status: "rejected", rejectedById: ctx.user.id, rejectedAt: new Date(), rejectionReason: "تم رفض جميع الأصناف" });
         // Notify PO creator
@@ -1877,7 +1876,7 @@ export const appRouter = router({
       });
       // Update PO status (Path C: do not change ticket status — gate security controls it)
       const poItems = await db.getPOItems(item.purchaseOrderId);
-      const activeItemsPurch = poItems.filter(i => i.status !== "rejected");
+      const activeItemsPurch = poItems.filter(i => i.status !== "rejected" && i.status !== "cancelled");
       const purchasedOrLater = activeItemsPurch.filter(i => ["purchased", "delivered_to_warehouse", "delivered_to_requester"].includes(i.status));
       const poForPath = await db.getPurchaseOrderById(item.purchaseOrderId);
       const ticketForPath = poForPath?.ticketId ? await db.getTicketById(poForPath.ticketId) : null;
@@ -1948,7 +1947,7 @@ export const appRouter = router({
       });
       // Update PO status (Path C: do not change ticket status — gate security controls it)
       const allItems = await db.getPOItems(item.purchaseOrderId);
-      const activeItemsWH = allItems.filter(i => i.status !== "rejected");
+      const activeItemsWH = allItems.filter(i => i.status !== "rejected" && i.status !== "cancelled");
       const allInWarehouse = activeItemsWH.length > 0 && activeItemsWH.every(i => ["delivered_to_warehouse", "delivered_to_requester"].includes(i.status));
       if (allInWarehouse) {
         const totalActual = activeItemsWH.reduce((sum, i) => sum + parseFloat(i.actualTotalCost || "0"), 0);
@@ -1996,7 +1995,7 @@ export const appRouter = router({
       // Check if all items delivered to requester (Path C: do not change ticket status)
       const allItems = await db.getPOItems(item.purchaseOrderId);
       // Exclude rejected items from auto-close check
-      const activeItems = allItems.filter(i => i.status !== "rejected");
+      const activeItems = allItems.filter(i => i.status !== "rejected" && i.status !== "cancelled");
       const allDelivered = activeItems.length > 0 && activeItems.every(i => i.status === "delivered_to_requester");
       if (allDelivered) {
         await db.updatePurchaseOrder(item.purchaseOrderId, { status: "received" });
@@ -2074,6 +2073,47 @@ export const appRouter = router({
       }
       if (ctx.user.role !== "delegate") return [];
       return db.getPOItemsByDelegate(ctx.user.id);
+    }),
+    // ============ إلغاء صنف (soft-cancel) ============
+    cancelItem: protectedProcedure.input(z.object({
+      itemId: z.number(),
+      reason: z.string().optional(),
+    })).mutation(async ({ input, ctx }) => {
+      // Only senior_management, owner, admin, maintenance_manager can cancel items
+      const canCancel = ["senior_management", "owner", "admin", "maintenance_manager"].includes(ctx.user.role);
+      if (!canCancel) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية إلغاء هذا الصنف" });
+      }
+      const item = await db.getPOItemById(input.itemId);
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "الصنف غير موجود" });
+      // Cannot cancel already delivered items
+      if (item.status === "delivered_to_requester") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن إلغاء صنف تم تسليمه بالفعل" });
+      }
+      if (item.status === "cancelled") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "الصنف ملغى بالفعل" });
+      }
+      await db.updatePOItem(input.itemId, {
+        status: "cancelled",
+        managementRejectionReason: input.reason || "تم الإلغاء من قبل الإدارة",
+      });
+      // Check if all items are now terminal (rejected or cancelled) — auto-close PO if so
+      const allItems = await db.getPOItems(item.purchaseOrderId);
+      const allTerminal = allItems.every(i => i.status === "rejected" || i.status === "cancelled");
+      if (allTerminal) {
+        const po = await db.getPurchaseOrderById(item.purchaseOrderId);
+        await db.updatePurchaseOrder(item.purchaseOrderId, {
+          status: "rejected",
+          rejectedById: ctx.user.id,
+          rejectedAt: new Date(),
+          rejectionReason: "تم إلغاء جميع أصناف طلب الشراء",
+        });
+        if (po) {
+          await db.createNotification({ userId: po.requestedById, title: "⚠️ تم إلغاء جميع أصناف طلب الشراء", message: `تم إلغاء جميع أصناف طلب الشراء رقم ${po.poNumber}.`, type: "warning", relatedPOId: item.purchaseOrderId });
+        }
+      }
+      await db.createAuditLog({ userId: ctx.user.id, action: "cancel_po_item", entityType: "purchase_order_item", entityId: input.itemId, newValues: { reason: input.reason } });
+      return { success: true };
     }),
   }),
 
