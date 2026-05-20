@@ -42,6 +42,7 @@ import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { trpc } from "@/lib/trpc";
 import { useTranslation } from "@/contexts/LanguageContext";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type MenuItemDef = {
@@ -382,6 +383,9 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
     const saved = localStorage.getItem("notif-sound-enabled");
     return saved === null ? true : saved === "true";
   });
+
+  // ── Push Notifications (mobile/desktop OS-level) ──
+  const { isSupported: pushSupported, isSubscribed: pushSubscribed, subscribe: pushSubscribe, unsubscribe: pushUnsubscribe } = usePushNotifications();
 
   // ── Play notification sound ──
   const playNotifSound = useCallback(() => {
@@ -966,13 +970,22 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
         {/* Sound toggle button */}
         {popupNotifs.length === 0 && (
           <button
-            onClick={() => {
+            onClick={async () => {
               const next = !soundEnabled;
               setSoundEnabled(next);
               localStorage.setItem("notif-sound-enabled", String(next));
+              // عند التفعيل: اطلب إذن إشعارات الهاتف أيضاً
+              if (next && pushSupported && !pushSubscribed) {
+                const ok = await pushSubscribe();
+                if (ok) toast.success("تم تفعيل إشعارات الجوال بنجاح! ستصلك التنبيهات حتى عند إغلاق التطبيق.");
+              }
+              // عند الإيقاف: ألغِ اشتراك إشعارات الهاتف أيضاً
+              if (!next && pushSupported && pushSubscribed) {
+                await pushUnsubscribe();
+              }
             }}
             className="self-end text-[10px] text-muted-foreground hover:text-foreground bg-background/80 border border-border rounded-full px-2 py-0.5 backdrop-blur transition-colors"
-            title={soundEnabled ? "إيقاف صوت التنبيه" : "تفعيل صوت التنبيه"}
+            title={soundEnabled ? "إيقاف صوت التنبيه وإشعارات الجوال" : "تفعيل صوت التنبيه وإشعارات الجوال"}
           >
             {soundEnabled ? "🔔" : "🔕"}
           </button>
