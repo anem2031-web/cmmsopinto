@@ -78,27 +78,35 @@ async function sendToSubscriptions(
   let failed = 0;
 
   const payloadStr = JSON.stringify(payload);
+  console.log(`[WebPush] Attempting to send to ${subscriptions.length} subscriptions. Payload: ${payload.title}`);
 
   await Promise.allSettled(
     subscriptions.map(async (sub) => {
       try {
-        await webpush.sendNotification(
+        const response = await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           payloadStr,
           { TTL: 3600 }
         );
+        console.log(`[WebPush] Successfully sent to ${sub.endpoint.substring(0, 30)}... Status: ${response.statusCode}`);
         sent++;
       } catch (err: any) {
         failed++;
+        console.error(`[WebPush] Error sending to ${sub.endpoint.substring(0, 30)}... Status: ${err.statusCode}`);
+        
         // Remove expired/invalid subscriptions
         if (err.statusCode === 404 || err.statusCode === 410) {
-          await deletePushSubscription(sub.endpoint).catch(() => {});
+          console.log(`[WebPush] Subscription expired or not found (404/410), deleting endpoint: ${sub.endpoint.substring(0, 30)}...`);
+          await deletePushSubscription(sub.endpoint).catch((delErr) => {
+            console.error("[WebPush] Failed to delete expired subscription:", delErr);
+          });
         } else {
-          console.error("[WebPush] Failed to send notification:", err);
+          console.error("[WebPush] Detailed error:", err.body || err.message || err);
         }
       }
     })
   );
 
+  console.log(`[WebPush] Send complete. Sent: ${sent}, Failed: ${failed}`);
   return { sent, failed };
 }
