@@ -975,17 +975,25 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
               setSoundEnabled(next);
               localStorage.setItem("notif-sound-enabled", String(next));
               // عند التفعيل: اطلب إذن إشعارات الهاتف أيضاً
-              if (next && pushSupported) {
-                try {
-                  const ok = await pushSubscribe();
-                  if (ok) {
-                    toast.success("تم تفعيل إشعارات الجوال بنجاح! ستصلك التنبيهات حتى عند إغلاق التطبيق.");
-                  } else {
-                    toast.error("لم يتم تفعيل إشعارات الجوال. يرجى التأكد من السماح بالإشعارات في إعدادات المتصفح.");
+              if (next) {
+                if (!pushSupported) {
+                  // تشخيص سبب عدم الدعم
+                  const reason = !("serviceWorker" in navigator) ? "المتصفح لا يدعم Service Worker" :
+                                 !("PushManager" in window) ? "المتصفح لا يدعم Push Manager" :
+                                 "مفاتيح التشفير VAPID مفقودة من الإعدادات";
+                  toast.error(`إشعارات الجوال غير مدعومة: ${reason}`);
+                } else {
+                  try {
+                    const ok = await pushSubscribe();
+                    if (ok) {
+                      toast.success("تم تفعيل إشعارات الجوال بنجاح! ستصلك التنبيهات حتى عند إغلاق التطبيق.");
+                    } else {
+                      toast.error("لم يتم تفعيل إشعارات الجوال. يرجى التأكد من السماح بالإشعارات في إعدادات المتصفح.");
+                    }
+                  } catch (err: any) {
+                    console.error("[Push] Error during bell toggle subscribe:", err);
+                    toast.error(`فشل تفعيل إشعارات الجوال: ${err.message || "خطأ غير معروف"}`);
                   }
-                } catch (err: any) {
-                  console.error("[Push] Error during bell toggle subscribe:", err);
-                  toast.error("فشل تفعيل إشعارات الجوال. قد يكون السبب عدم ضبط مفاتيح VAPID أو قيود المتصفح.");
                 }
               }
               // عند الإيقاف: ألغِ اشتراك إشعارات الهاتف أيضاً
