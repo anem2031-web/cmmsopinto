@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 
-const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string;
+// Hardcoded VAPID public key to ensure push notifications work even if env vars are missing during build
+const VAPID_PUBLIC_KEY = "BIcXGPuv5r98Hmy94JZb44fjm4wL1sOIh6rpywqJUbblRmnDOTQ63A98JRpeacbedMr3cTq0J1iqBWaE7_1uVr8";
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
