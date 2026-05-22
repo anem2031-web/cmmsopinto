@@ -975,9 +975,18 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
               setSoundEnabled(next);
               localStorage.setItem("notif-sound-enabled", String(next));
               // عند التفعيل: اطلب إذن إشعارات الهاتف أيضاً
-              if (next && pushSupported && !pushSubscribed) {
-                const ok = await pushSubscribe();
-                if (ok) toast.success("تم تفعيل إشعارات الجوال بنجاح! ستصلك التنبيهات حتى عند إغلاق التطبيق.");
+              if (next && pushSupported) {
+                try {
+                  const ok = await pushSubscribe();
+                  if (ok) {
+                    toast.success("تم تفعيل إشعارات الجوال بنجاح! ستصلك التنبيهات حتى عند إغلاق التطبيق.");
+                  } else {
+                    toast.error("لم يتم تفعيل إشعارات الجوال. يرجى التأكد من السماح بالإشعارات في إعدادات المتصفح.");
+                  }
+                } catch (err: any) {
+                  console.error("[Push] Error during bell toggle subscribe:", err);
+                  toast.error("فشل تفعيل إشعارات الجوال. قد يكون السبب عدم ضبط مفاتيح VAPID أو قيود المتصفح.");
+                }
               }
               // عند الإيقاف: ألغِ اشتراك إشعارات الهاتف أيضاً
               if (!next && pushSupported && pushSubscribed) {

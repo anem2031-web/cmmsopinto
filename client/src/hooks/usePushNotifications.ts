@@ -21,6 +21,12 @@ export function usePushNotifications() {
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
+  useEffect(() => {
+    if (!VAPID_PUBLIC_KEY) {
+      console.error("[Push] VAPID Public Key is missing from environment variables!");
+    }
+  }, []);
+
   const subscribeMut = trpc.push.subscribe.useMutation();
   const unsubscribeMut = trpc.push.unsubscribe.useMutation();
 
@@ -85,12 +91,14 @@ export function usePushNotifications() {
       }
 
       // Subscribe to push
+      console.log("[Push] Subscribing with key:", VAPID_PUBLIC_KEY);
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       });
 
       const subJson = sub.toJSON();
+      console.log("[Push] Subscription successful:", subJson.endpoint);
       await subscribeMut.mutateAsync({
         endpoint: subJson.endpoint!,
         p256dh: (subJson.keys as any)?.p256dh || "",
