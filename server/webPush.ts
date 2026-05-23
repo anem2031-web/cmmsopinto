@@ -7,23 +7,19 @@ let vapidWarningLogged = false;
 
 function ensureInit() {
   if (initialized) return;
-  const publicKey = env.VAPID_PUBLIC_KEY;
-  const privateKey = env.VAPID_PRIVATE_KEY;
-  if (!publicKey || !privateKey) {
-    // Validation is now handled by config.ts, so this warning is less critical
-    // but still useful if VAPID keys are optional in dev/test
-    if (!vapidWarningLogged) {
-      console.warn("[WebPush] VAPID keys not configured, push notifications disabled");
-      vapidWarningLogged = true;
-    }
-    return;
+  
+  // Hardcoded VAPID keys to ensure reliability across all environments
+  const publicKey = "BIcXGPuv5r98Hmy94JZb44fjm4wL1sOIh6rpywqJUbblRmnDOTQ63A98JRpeacbedMr3cTq0J1iqBWaE7_1uVr8";
+  const privateKey = "WAJwNwUcuqH7Nsdg2HouM2LCdwAKiX6ibIJURKUCTEs";
+  const subject = "mailto:admin@cmms.local";
+
+  try {
+    webpush.setVapidDetails(subject, publicKey, privateKey);
+    initialized = true;
+    console.log("[WebPush] Initialized successfully with hardcoded keys");
+  } catch (err) {
+    console.error("[WebPush] Initialization failed:", err);
   }
-  webpush.setVapidDetails(
-    "mailto:" + (env.VAPID_SUBJECT_EMAIL || "admin@cmms.local"),
-    publicKey,
-    privateKey
-  );
-  initialized = true;
 }
 
 export interface PushPayload {
