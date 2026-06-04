@@ -13,6 +13,8 @@ const en: TranslationKeys = {
     purchaseOrders: "Purchase Orders",
     myItems: "My Items",
     inventory: "Warehouse",
+    warehouseReceive: "Warehouse Receive",
+    warehouseReturn: "Warehouse Return",
     reports: "Reports",
     technicianReport: "Technician Performance",
     costReport: "Cost Report",
@@ -48,7 +50,9 @@ const en: TranslationKeys = {
       aiUnit: "AI Analysis Unit",
       adminTools: "Admin Tools",
       notificationsSection: "Notifications",
+      catalog: "Catalog",
     },
+    catalog: "Catalog",
   },
 
   common: {
@@ -1060,6 +1064,75 @@ const en: TranslationKeys = {
   myItems: {
     empty: "No items found",
     confirmReceipt: "Confirm Receipt",
+  },
+  catalog: {
+    title: "Catalog",
+    description: "Manage items, categories, and suppliers",
+    tabs: {
+      overview: "Overview",
+      taxonomy: "Categories",
+      items: "Items",
+      settings: "Settings",
+    },
+    stats: {
+      categories: "Categories",
+      items: "Items",
+      suppliers: "Suppliers",
+      lastUpdated: "Last Updated",
+    },
+    overview: {
+      recentItems: "Recent Items",
+      noItems: "No items yet",
+    },
+    taxonomy: {
+      title: "Category Management",
+      addNew: "Add Category",
+      addRoot: "Add Root Category",
+      empty: "No categories found",
+      details: "Category Details",
+      selectNode: "Select a category",
+    },
+    items: {
+      title: "Items Management",
+      addNew: "Add Item",
+      empty: "No items found",
+    },
+    search: {
+      title: "Smart Search",
+      placeholder: "Search for an item...",
+      searching: "Searching...",
+      noResults: "No results found",
+      categories: "Categories",
+      code: "Code",
+    },
+    fields: {
+      nameAr: "Name in Arabic",
+      nameEn: "Name in English",
+      nameUr: "Name in Urdu",
+      itemCode: "Item Code",
+      unit: "Unit",
+      manufacturer: "Manufacturer",
+      level: "Level",
+    },
+    settings: {
+      system: "System Settings",
+      dataEntry: "Data Entry Settings",
+      autoCode: "Auto Generate Code",
+      requireImage: "Require Image",
+      requireSupplier: "Require Supplier",
+      maxImageSize: "Max Image Size",
+      bulkImport: "Bulk Import",
+      dangerZone: "Danger Zone",
+      resetCatalog: "Reset Catalog",
+    },
+    validation: {
+      requiredFields: "Required fields: Code and Name",
+      allFieldsRequired: "All fields are required",
+    },
+    confirm: {
+      deleteItem: "Are you sure you want to delete this item?",
+      deleteNode: "Are you sure you want to delete this category?",
+    },
   },
 } as const;
 

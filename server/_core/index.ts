@@ -5,7 +5,7 @@ import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
-import { appRouter } from "../routers";
+import { appRouter } from "../routers/index";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import helmet from "helmet";
@@ -13,7 +13,7 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { RedisStore } from "rate-limit-redis";
 import IORedis from "ioredis";
 import multer from "multer";
-import { storagePut, storageGetStream } from "../storage";
+import { storagePut, storageGetStream, storagePresignedPut } from "../storage";
 import { nanoid } from "nanoid";
 import sharp from "sharp";
 import { exportTicketsToExcel, exportPurchaseOrdersToExcel, exportTechnicianPerformanceToExcel, exportAuditLogToExcel, exportInventoryToExcel, exportPreventivePlansToExcel, exportPMWorkOrdersToExcel, generateDelegateItemsPDF, generatePurchaseRequestPDF } from "../exportService";
@@ -264,6 +264,33 @@ async function startServer() {
     }
   });
 
+  // ── Presigned Upload URL ─────────────────────────────────────────────────
+  // المتصفح يطلب رابط مؤقت ثم يرفع الصورة مباشرة لـ S3 بدون المرور بالسيرفر
+  app.post("/api/upload-url", requireAuthMiddleware, async (req: any, res: any) => {
+    try {
+      const { contentType } = req.body;
+      const ALLOWED = new Set([
+        "image/jpeg", "image/png", "image/webp", "image/gif",
+        "image/heic", "image/heif", "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ]);
+      const mime = ALLOWED.has(contentType) ? contentType : "image/jpeg";
+      const ext  = mime === "image/jpeg" ? "jpg"
+                 : mime === "image/png"  ? "png"
+                 : mime === "image/webp" ? "webp"
+                 : mime === "application/pdf" ? "pdf" : "jpg";
+      const fileKey = `cmms/uploads/${Date.now()}-${nanoid(8)}.${ext}`;
+      const { uploadUrl, proxyUrl } = await storagePresignedPut(fileKey, mime);
+      res.json({ uploadUrl, proxyUrl, fileKey });
+    } catch (e: any) {
+      console.error("[Presigned URL] Error:", e.message);
+      res.status(500).json({ error: "فشل إنشاء رابط الرفع" });
+    }
+  });
+
   app.post("/api/upload", requireAuthMiddleware, upload.single("file"), async (req: any, res: any) => {
     try {
       if (!req.file) return res.status(400).json({ error: "No file provided" });
@@ -423,7 +450,7 @@ async function startServer() {
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
       res.send(buffer);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+} catch (e: any) { console.error("[PDF Export Error]", e.message); res.status(500).json({ error: e.message }); }
   });
 
   // OAuth callback under /api/oauth/callback

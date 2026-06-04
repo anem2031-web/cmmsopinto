@@ -5,23 +5,310 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { ArrowRight, Plus, Trash2, Loader2, ShoppingCart, Camera, Link2, Upload } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ArrowRight, Plus, Trash2, Loader2, ShoppingCart, Camera, Link2, Upload, BookOpen, FilePlus, Search, ChevronDown, ChevronRight, FolderOpen } from "lucide-react";
 import DropZone, { type UploadedFile } from "@/components/DropZone";
-import { useState } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { useTranslation } from "@/contexts/LanguageContext";
+import { cn } from "@/lib/utils";
 
 type ItemForm = {
+  sourceType: "catalog" | "manual";
+
   itemName: string;
   description: string;
+
   quantity: number;
   unit: string;
+
   photoUrl: string;
   notes: string;
 };
 
-const emptyItem = (): ItemForm => ({ itemName: "", description: "", quantity: 1, unit: "قطعة", photoUrl: "", notes: "" });
+const emptyItem = (): ItemForm => ({
+  sourceType: "manual",
 
+  itemName: "",
+  description: "",
+
+  quantity: 1,
+  unit: "قطعة",
+
+  photoUrl: "",
+  notes: ""
+});
+
+// ── Catalog Item Picker Dialog ─────────────────────────────────────────────
+interface CatalogNode {
+  id: number;
+  code: string | null;
+  nameAr: string;
+  nameEn: string;
+  level: number;
+  parentId: number | null;
+}
+
+function CatalogPickerDialog({
+  open,
+  onClose,
+  onSelect,
+}: {
+  open: boolean;
+  onClose: () => void;
+onSelect: (item: {
+  nameAr: string;
+  nameEn: string;
+  primaryImageUrl?: string;
+}) => void;
+}) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const { data: allNodes } = trpc.catalog.nodes.list.useQuery(
+    { isActive: true },
+    { enabled: open }
+  );
+
+  const { data: allItems } = trpc.catalog.items.list.useQuery(
+    { isActive: true, limit: 500 },
+    { enabled: open }
+  );
+
+  // focus on open
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => inputRef.current?.focus(), 100);
+      setSearchQuery("");
+      setSelectedNodeId(null);
+    }
+  }, [open]);
+
+  const roots = useMemo(
+    () => (allNodes || []).filter((n: CatalogNode) => !n.parentId),
+    [allNodes]
+  );
+
+  const getChildren = (parentId: number) =>
+    (allNodes || []).filter((n: CatalogNode) => n.parentId === parentId);
+
+  const toggle = (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  // فلترة الأصناف
+  const filteredItems = useMemo(() => {
+    if (!allItems) return [];
+    const q = searchQuery.trim().toLowerCase();
+    return allItems.filter((item: any) => {
+      const matchNode = selectedNodeId ? item.nodeId === selectedNodeId : true;
+      const matchSearch = !q ||
+        item.nameAr?.toLowerCase().includes(q) ||
+        item.nameEn?.toLowerCase().includes(q) ||
+        item.code?.toLowerCase().includes(q) ||
+        item.manufacturer?.toLowerCase().includes(q);
+      return matchNode && matchSearch;
+    });
+  }, [allItems, searchQuery, selectedNodeId]);
+
+  const renderNode = (node: CatalogNode, depth = 0): React.ReactNode => {
+    const children = getChildren(node.id);
+    const hasChildren = children.length > 0;
+    const isExpanded = expandedIds.has(node.id);
+    const isSelected = selectedNodeId === node.id;
+
+    return (
+      <div key={node.id}>
+        <div
+          className={cn(
+            "flex items-center gap-1.5 py-1.5 px-2 rounded cursor-pointer hover:bg-muted/60 transition-colors text-sm",
+            isSelected && "bg-primary/10 text-primary font-medium"
+          )}
+          style={{ paddingRight: `${depth * 14 + 8}px` }}
+          onClick={() => setSelectedNodeId(isSelected ? null : node.id)}
+        >
+          <button
+            onClick={e => toggle(node.id, e)}
+            className={cn("w-4 h-4 shrink-0 text-muted-foreground", !hasChildren && "invisible")}
+          >
+            {isExpanded
+              ? <ChevronDown className="w-3.5 h-3.5" />
+              : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+          {node.code && (
+            <span className="text-xs font-mono bg-muted px-1 py-0.5 rounded text-muted-foreground shrink-0">
+              {node.code}
+            </span>
+          )}
+          <span className="truncate">{node.nameAr}</span>
+        </div>
+        {isExpanded && hasChildren && (
+          <div>{children.map(child => renderNode(child, depth + 1))}</div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-0">
+        <DialogHeader className="px-5 pt-5 pb-3 border-b">
+          <DialogTitle className="flex items-center gap-2">
+            <BookOpen className="w-4 h-4 text-primary" />
+            اختر صنفاً من الكاتلوج
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex flex-1 overflow-hidden">
+
+          {/* Sidebar — شجرة التصنيفات */}
+          <div className="w-48 shrink-0 border-l overflow-y-auto p-2 bg-muted/20">
+            <p className="text-xs text-muted-foreground px-2 pb-2 font-medium">التصنيفات</p>
+            <button
+              onClick={() => setSelectedNodeId(null)}
+              className={cn(
+                "w-full text-right text-sm px-2 py-1.5 rounded hover:bg-muted/60 transition-colors",
+                !selectedNodeId && "bg-primary/10 text-primary font-medium"
+              )}
+            >
+              الكل
+            </button>
+            {roots.map(node => renderNode(node))}
+          </div>
+
+          {/* Main — البحث والنتائج */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Search */}
+            <div className="p-3 border-b">
+              <div className="relative">
+                <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  ref={inputRef}
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="ابحث بالاسم أو الكود..."
+                  className="pr-9"
+                  dir="rtl"
+                />
+              </div>
+              {filteredItems.length > 0 && (
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  {filteredItems.length} صنف
+                </p>
+              )}
+            </div>
+
+            {/* Results */}
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {filteredItems.length === 0 ? (
+                <div className="text-center py-10 text-sm text-muted-foreground">
+                  {searchQuery || selectedNodeId
+                    ? "لا توجد نتائج"
+                    : "اختر تصنيفاً أو ابحث عن صنف"}
+                </div>
+              ) : (
+                filteredItems.map((item: any) => (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                        onSelect({
+                          nameAr: item.nameAr,
+                          nameEn: item.nameEn,
+                          primaryImageUrl: item.primaryImageUrl || "",
+                        });
+
+                      onClose();
+                    }}
+
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-primary/5 hover:border-primary/20 border border-transparent transition-colors text-right"
+                  >
+                    {/* صورة */}
+                    <div className="w-10 h-10 rounded-md bg-muted shrink-0 overflow-hidden flex items-center justify-center">
+                      {item.primaryImageUrl ? (
+                        <img src={item.primaryImageUrl} alt={item.nameAr} className="w-full h-full object-cover" />
+                      ) : (
+                        <FolderOpen className="w-4 h-4 text-muted-foreground/40" />
+                      )}
+                    </div>
+                    {/* Info */}
+                    <div className="flex-1 min-w-0 text-right">
+                      <p className="text-sm font-medium truncate">{item.nameAr}</p>
+                      <p className="text-xs text-muted-foreground truncate">{item.nameEn}</p>
+                    </div>
+                    {/* Code */}
+                    {item.code && (
+                      <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground shrink-0">
+                        {item.code}
+                      </span>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Add Item Choice Dialog ─────────────────────────────────────────────────
+function AddItemChoiceDialog({
+  open,
+  onClose,
+  onChooseCatalog,
+  onChooseNew,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onChooseCatalog: () => void;
+  onChooseNew: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="text-center">إضافة صنف</DialogTitle>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3 pt-2">
+          <button
+            onClick={() => { onClose(); onChooseCatalog(); }}
+            className="flex flex-col items-center gap-3 p-5 rounded-xl border-2 border-primary/20 hover:border-primary hover:bg-primary/5 transition-all"
+          >
+            <div className="p-3 rounded-full bg-primary/10">
+              <BookOpen className="w-6 h-6 text-primary" />
+            </div>
+            <div className="text-center">
+              <p className="font-semibold text-sm">من الكاتلوج</p>
+              <p className="text-xs text-muted-foreground mt-0.5">اختر من الأصناف المسجلة</p>
+            </div>
+          </button>
+          <button
+            onClick={() => { onClose(); onChooseNew(); }}
+            className="flex flex-col items-center gap-3 p-5 rounded-xl border-2 border-muted hover:border-muted-foreground/40 hover:bg-muted/30 transition-all"
+          >
+            <div className="p-3 rounded-full bg-muted">
+              <FilePlus className="w-6 h-6 text-muted-foreground" />
+            </div>
+            <div className="text-center">
+              <p className="font-semibold text-sm">صنف جديد</p>
+              <p className="text-xs text-muted-foreground mt-0.5">أدخل البيانات يدوياً</p>
+            </div>
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Main Component ─────────────────────────────────────────────────────────
 export default function CreatePurchaseOrder() {
   const [, setLocation] = useLocation();
   const { t } = useTranslation();
@@ -33,8 +320,12 @@ export default function CreatePurchaseOrder() {
     { id: ticketId || 0 },
     { enabled: !!ticketId }
   );
+
   const createMut = trpc.purchaseOrders.create.useMutation({
-    onSuccess: (data) => { toast.success(`${t.purchaseOrders.createNew} ${data.poNumber}`); setLocation(`/purchase-orders/${data.id}`); },
+    onSuccess: (data) => {
+      toast.success(`${t.purchaseOrders.createNew} ${data.poNumber}`);
+      setLocation(`/purchase-orders/${data.id}`);
+    },
     onError: (err) => toast.error(err.message),
   });
 
@@ -42,6 +333,11 @@ export default function CreatePurchaseOrder() {
   const [notes, setNotes] = useState("");
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
   const [showDropZoneIdx, setShowDropZoneIdx] = useState<number | null>(null);
+
+  // ── Dialog States ──────────────────────────────────────────
+  const [showChoiceDialog, setShowChoiceDialog] = useState(true);
+  const [showCatalogPicker, setShowCatalogPicker] = useState(false);
+  const [catalogTargetIndex, setCatalogTargetIndex] = useState<number | null>(null);
 
   const updateItem = (idx: number, field: keyof ItemForm, value: any) => {
     setItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: value } : item));
@@ -59,6 +355,27 @@ export default function CreatePurchaseOrder() {
     setUploadingIdx(null);
   };
 
+  // عند اختيار صنف من الكاتلوج
+const handleCatalogSelect = (catalogItem: any) => {
+  if (catalogTargetIndex === null) return;
+
+  setItems(prev =>
+    prev.map((item, i) =>
+      i === catalogTargetIndex
+        ? {
+            ...item,
+            sourceType: "catalog",
+
+            itemName: catalogItem.nameAr || "",
+            description: catalogItem.nameEn || "",
+
+            photoUrl: catalogItem.primaryImageUrl || "",
+          }
+        : item
+    )
+  );
+};
+
   const handleSubmit = () => {
     const validItems = items.filter(i => i.itemName.trim());
     if (validItems.length === 0) { toast.error(t.purchaseOrders.items); return; }
@@ -66,12 +383,12 @@ export default function CreatePurchaseOrder() {
       ticketId,
       notes: notes || undefined,
       items: validItems.map(i => ({
-        itemName: i.itemName,
+        itemName:    i.itemName,
         description: i.description || undefined,
-        quantity: i.quantity,
-        unit: i.unit || undefined,
-        photoUrl: i.photoUrl || undefined,
-        notes: i.notes || undefined,
+        quantity:    i.quantity,
+        unit:        i.unit || undefined,
+        photoUrl:    i.photoUrl || undefined,
+        notes:       i.notes || undefined,
       })),
     });
   };
@@ -103,101 +420,279 @@ export default function CreatePurchaseOrder() {
         </Card>
       )}
 
-      {items.map((item, idx) => (
-        <Card key={idx}>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm">{t.purchaseOrders.itemName} #{idx + 1}</CardTitle>
-              {items.length > 1 && (
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setItems(prev => prev.filter((_, i) => i !== idx))}>
-                  <Trash2 className="w-3.5 h-3.5" />
-                </Button>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>{t.purchaseOrders.itemName} *</Label>
-              <Input value={item.itemName} onChange={e => updateItem(idx, "itemName", e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>{t.tickets.description}</Label>
-              <Textarea value={item.description} onChange={e => updateItem(idx, "description", e.target.value)} rows={2} />
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label>{t.purchaseOrders.quantity} *</Label>
-                <Input type="number" min={1} value={item.quantity} onChange={e => updateItem(idx, "quantity", parseInt(e.target.value) || 1)} />
-              </div>
-              <div className="space-y-2">
-                <Label>{t.purchaseOrders.unit}</Label>
-                <Input value={item.unit} onChange={e => updateItem(idx, "unit", e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>{t.tickets.photos}</Label>
-                {item.photoUrl ? (
-                  <div className="relative">
-                    <img src={item.photoUrl} alt="" className="w-full h-20 rounded-lg object-cover border" />
-                    <Button variant="destructive" size="icon" className="absolute top-1 left-1 h-6 w-6" onClick={() => { updateItem(idx, "photoUrl", ""); setShowDropZoneIdx(null); }}>
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  </div>
-                ) : showDropZoneIdx === idx ? (
-                  <DropZone
-                    maxFiles={1}
-                    accept="image/*"
-                    label="اسحب صورة الصنف"
-                    sublabel="صورة واحدة فقط"
-                    onFilesUploaded={(files: UploadedFile[]) => {
-                      const done = files.find(f => f.status === "done" && f.url);
-                      if (done?.url) { updateItem(idx, "photoUrl", done.url); setShowDropZoneIdx(null); }
-                    }}
-                  />
-                ) : (
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" className="flex-1 h-20 border-dashed gap-1" onClick={() => {
-                      const input = document.createElement("input");
-                      input.type = "file"; input.accept = "image/*";
-                      input.onchange = (e: any) => { if (e.target.files[0]) handleUpload(idx, e.target.files[0]); };
-                      input.click();
-                    }} disabled={uploadingIdx === idx}>
-                      {uploadingIdx === idx ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                      {uploadingIdx === idx ? "..." : t.common.upload}
-                    </Button>
-                    <Button variant="outline" size="sm" className="h-20 px-3 border-dashed" onClick={() => setShowDropZoneIdx(idx)} title="سحب وإفلات">
-                      <Upload className="w-4 h-4" />
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>{t.purchaseOrders.justification}</Label>
-              <Input value={item.notes} onChange={e => updateItem(idx, "notes", e.target.value)} />
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+{items.map((item, idx) => (
+  <Card key={idx}>
+    <CardHeader className="pb-3">
+      <div className="flex items-center justify-between">
+        <CardTitle className="text-sm">
+          {t.purchaseOrders.itemName} #{idx + 1}
+        </CardTitle>
 
-      <Button variant="outline" onClick={() => setItems(prev => [...prev, emptyItem()])} className="w-full gap-2 border-dashed h-12">
-        <Plus className="w-4 h-4" /> {t.common.add}
-      </Button>
+        {items.length > 1 && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-destructive hover:text-destructive"
+            onClick={() =>
+              setItems(prev => prev.filter((_, i) => i !== idx))
+            }
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </Button>
+        )}
+      </div>
+    </CardHeader>
+
+    <CardContent className="space-y-4">
+
+      {/* نوع الصنف */}
+      <div className="space-y-2">
+        <Label>نوع الصنف</Label>
+
+        <select
+          value={item.sourceType}
+          onChange={(e) => {
+            const value = e.target.value as "catalog" | "manual";
+
+            updateItem(idx, "sourceType", value);
+
+            if (value === "catalog") {
+              setCatalogTargetIndex(idx);
+              setShowCatalogPicker(true);
+            }
+          }}
+          className="w-full h-10 rounded-md border bg-background px-3 text-sm"
+        >
+          <option value="manual">صنف جديد</option>
+          <option value="catalog">من الكتالوج</option>
+        </select>
+      </div>
+
+      {/* اسم الصنف */}
+      <div className="space-y-2">
+        <Label>{t.purchaseOrders.itemName} *</Label>
+
+        <Input
+          value={item.itemName}
+          readOnly={item.sourceType === "catalog"}
+          onClick={() => {
+            if (item.sourceType === "catalog") {
+              setCatalogTargetIndex(idx);
+              setShowCatalogPicker(true);
+            }
+          }}
+          onChange={e =>
+            updateItem(idx, "itemName", e.target.value)
+          }
+        />
+      </div>
+
+      {/* الوصف */}
+      <div className="space-y-2">
+        <Label>{t.tickets.description}</Label>
+
+        <Textarea
+          value={item.description}
+          onChange={e =>
+            updateItem(idx, "description", e.target.value)
+          }
+          rows={2}
+        />
+      </div>
+
+      {/* الكمية والوحدة والصورة */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+
+        {/* الكمية */}
+        <div className="space-y-2">
+          <Label>{t.purchaseOrders.quantity} *</Label>
+
+          <Input
+            type="number"
+            min={1}
+            value={item.quantity}
+            onChange={e =>
+              updateItem(
+                idx,
+                "quantity",
+                parseInt(e.target.value) || 1
+              )
+            }
+          />
+        </div>
+
+        {/* الوحدة */}
+        <div className="space-y-2">
+          <Label>{t.purchaseOrders.unit}</Label>
+
+          <Input
+            value={item.unit}
+            onChange={e =>
+              updateItem(idx, "unit", e.target.value)
+            }
+          />
+        </div>
+
+        {/* الصورة */}
+        <div className="space-y-2">
+          <Label>{t.tickets.photos}</Label>
+
+          {item.photoUrl ? (
+            <div className="relative">
+              <img
+                src={item.photoUrl}
+                alt=""
+                className="w-full h-20 rounded-lg object-cover border"
+              />
+
+              <Button
+                variant="destructive"
+                size="icon"
+                className="absolute top-1 left-1 h-6 w-6"
+                onClick={() => {
+                  updateItem(idx, "photoUrl", "");
+                  setShowDropZoneIdx(null);
+                }}
+              >
+                <Trash2 className="w-3 h-3" />
+              </Button>
+            </div>
+          ) : showDropZoneIdx === idx ? (
+
+            <DropZone
+              maxFiles={1}
+              accept="image/*"
+              label="اسحب صورة الصنف"
+              sublabel="صورة واحدة فقط"
+              onFilesUploaded={(files: UploadedFile[]) => {
+                const done = files.find(
+                  f => f.status === "done" && f.url
+                );
+
+                if (done?.url) {
+                  updateItem(idx, "photoUrl", done.url);
+                  setShowDropZoneIdx(null);
+                }
+              }}
+            />
+
+          ) : (
+
+            <div className="flex gap-2">
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1 h-20 border-dashed gap-1"
+                onClick={() => {
+                  const input =
+                    document.createElement("input");
+
+                  input.type = "file";
+                  input.accept = "image/*";
+
+                  input.onchange = (e: any) => {
+                    if (e.target.files[0]) {
+                      handleUpload(idx, e.target.files[0]);
+                    }
+                  };
+
+                  input.click();
+                }}
+                disabled={uploadingIdx === idx}
+              >
+                {uploadingIdx === idx ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Camera className="w-4 h-4" />
+                )}
+
+                {uploadingIdx === idx
+                  ? "..."
+                  : t.common.upload}
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-20 px-3 border-dashed"
+                onClick={() => setShowDropZoneIdx(idx)}
+                title="سحب وإفلات"
+              >
+                <Upload className="w-4 h-4" />
+              </Button>
+
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* الملاحظات */}
+      <div className="space-y-2">
+        <Label>{t.purchaseOrders.justification}</Label>
+
+        <Input
+          value={item.notes}
+          onChange={e =>
+            updateItem(idx, "notes", e.target.value)
+          }
+        />
+      </div>
+
+    </CardContent>
+  </Card>
+))}
+
+{/* زر إضافة صنف */}
+<Button
+  variant="outline"
+  onClick={() => setItems(prev => [...prev, emptyItem()])}
+  className="w-full gap-2 border-dashed h-12"
+>
+  <Plus className="w-4 h-4" /> {t.common.add}
+</Button>
 
       <div className="space-y-3">
-        <Textarea placeholder={t.purchaseOrders.justification} value={notes} onChange={e => setNotes(e.target.value)} />
+        <Textarea
+          placeholder={t.purchaseOrders.justification}
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+        />
         <Card className="border-primary/20 bg-primary/5">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3 text-sm">
-              <span className="text-muted-foreground">{items.filter(i => i.itemName.trim()).length} {t.purchaseOrders.items}</span>
-              {ticket && <span className="text-xs text-muted-foreground">{t.purchaseOrders.relatedTicket}: {ticket.ticketNumber}</span>}
+              <span className="text-muted-foreground">
+                {items.filter(i => i.itemName.trim()).length} {t.purchaseOrders.items}
+              </span>
+              {ticket && (
+                <span className="text-xs text-muted-foreground">
+                  {t.purchaseOrders.relatedTicket}: {ticket.ticketNumber}
+                </span>
+              )}
             </div>
-            <Button onClick={handleSubmit} disabled={createMut.isPending} className="w-full gap-2" size="lg">
-              {createMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShoppingCart className="w-4 h-4" />}
+            <Button
+              onClick={handleSubmit}
+              disabled={createMut.isPending}
+              className="w-full gap-2"
+              size="lg"
+            >
+              {createMut.isPending
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <ShoppingCart className="w-4 h-4" />}
               {t.common.submit}
             </Button>
           </CardContent>
         </Card>
       </div>
+
+      {/* Dialog اختيار طريقة الإضافة */}
+
+      {/* Dialog الكاتلوج */}
+      <CatalogPickerDialog
+        open={showCatalogPicker}
+        onClose={() => setShowCatalogPicker(false)}
+        onSelect={handleCatalogSelect}
+      />
     </div>
   );
 }

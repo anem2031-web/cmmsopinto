@@ -12,7 +12,9 @@ import {
   ShoppingBag, Package, Clock, CheckCircle2, Camera,
   Loader2, AlertCircle, DollarSign, FileText, Truck, FileDown
 } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useOfflineUpload } from "@/hooks/useOfflineUpload";
+import { Wifi, WifiOff, CloudUpload } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { useTranslation, useLanguage } from "@/contexts/LanguageContext";
@@ -100,6 +102,28 @@ export default function MyItems() {
   const [uploadingField, setUploadingField] = useState<string | null>(null);
   const [invoiceUrl, setInvoiceUrl] = useState("");
   const [purchasedUrl, setPurchasedUrl] = useState("");
+
+  // ── Offline-first upload ─────────────────────────────────────────────────
+  const { uploadImage, isOnline, pendingCount, isSyncing, syncPending } = useOfflineUpload();
+
+  // استمع لحدث المزامنة من Service Worker
+  useEffect(() => {
+    const handleSynced = (e: CustomEvent) => {
+      const { field, url } = e.detail;
+      if (field === "invoice") setInvoiceUrl(url);
+      if (field === "purchased") setPurchasedUrl(url);
+      refetch();
+    };
+    const handleSwMessage = (e: MessageEvent) => {
+      if (e.data?.type === "CMMS_SYNC_UPLOADS") syncPending();
+    };
+    window.addEventListener("cmms:upload:synced", handleSynced as EventListener);
+    navigator.serviceWorker?.addEventListener("message", handleSwMessage);
+    return () => {
+      window.removeEventListener("cmms:upload:synced", handleSynced as EventListener);
+      navigator.serviceWorker?.removeEventListener("message", handleSwMessage);
+    };
+  }, [syncPending]);
   const [showPricingExportButton, setShowPricingExportButton] = useState(false);
   const [pricingExportPoId, setPricingExportPoId] = useState<number | null>(null);
   const [exportingPricingPdf, setExportingPricingPdf] = useState(false);
@@ -130,16 +154,25 @@ export default function MyItems() {
   const handleUpload = async (field: "invoice" | "purchased", file: File) => {
     setUploadingField(field);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.url) {
-        if (field === "invoice") setInvoiceUrl(data.url);
-        else setPurchasedUrl(data.url);
-        toast.success(t.common.save);
+      const result = await uploadImage(file, { field, itemId: purchaseDialog?.id });
+
+      if (result.uploaded && result.url) {
+        // رُفع مباشرة — حدّث الـ URL فوراً
+        if (field === "invoice") setInvoiceUrl(result.url);
+        else setPurchasedUrl(result.url);
+        toast.success("✅ تم رفع الصورة");
+      } else {
+        // حُفظ offline — أعطِ المستخدم تأكيداً فورياً
+        const placeholder = `__offline__${field}__${Date.now()}`;
+        if (field === "invoice") setInvoiceUrl(placeholder);
+        else setPurchasedUrl(placeholder);
+        toast.success("💾 تم حفظ الصورة — ستُرفع تلقائياً عند عودة الإنترنت", {
+          duration: 5000,
+        });
       }
-    } catch { toast.error(t.common.close); }
+    } catch {
+      toast.error("فشل حفظ الصورة، حاول مجدداً");
+    }
     setUploadingField(null);
   };
 
@@ -260,6 +293,31 @@ export default function MyItems() {
             <ShoppingBag className="w-6 h-6 text-primary" /> {t.nav.myItems}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">{t.purchaseOrders.items}</p>
+
+          {/* ── مؤشر الاتصال ── */}
+          <div className="flex items-center gap-2 mt-2">
+            {isOnline ? (
+              <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-0.5">
+                <Wifi className="w-3 h-3" />
+                متصل
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-0.5">
+                <WifiOff className="w-3 h-3" />
+                غير متصل — يعمل بوضع عدم الاتصال
+              </span>
+            )}
+            {pendingCount > 0 && (
+              <span
+                className="inline-flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2.5 py-0.5 cursor-pointer hover:bg-blue-100 transition-colors"
+                onClick={() => isOnline && syncPending()}
+                title="اضغط للمزامنة الآن"
+              >
+                <CloudUpload className="w-3 h-3" />
+                {isSyncing ? "جاري الرفع..." : `${pendingCount} صورة بانتظار الرفع`}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex gap-2">
           {showPricingExportButton && (
@@ -460,7 +518,14 @@ export default function MyItems() {
                 <Label>{t.purchaseOrders.accountingNotes} *</Label>
                 {invoiceUrl ? (
                   <div className="relative">
-                    <img src={invoiceUrl} alt="" className="w-full h-32 object-cover rounded-lg border" />
+                    {invoiceUrl.startsWith("__offline__") ? (
+                      <div className="w-full h-32 rounded-lg border bg-amber-50 border-amber-200 flex flex-col items-center justify-center gap-1">
+                        <CloudUpload className="w-6 h-6 text-amber-600" />
+                        <span className="text-xs text-amber-700 font-medium">محفوظة — ستُرفع عند الاتصال</span>
+                      </div>
+                    ) : (
+                      <img src={invoiceUrl} alt="" className="w-full h-32 object-cover rounded-lg border" />
+                    )}
                     <Button variant="destructive" size="icon" className="absolute top-1 left-1 h-6 w-6" onClick={() => setInvoiceUrl("")}>
                       <span className="text-xs">×</span>
                     </Button>
@@ -468,12 +533,12 @@ export default function MyItems() {
                 ) : (
                   <Button variant="outline" className="w-full h-24 border-dashed gap-2" onClick={() => {
                     const input = document.createElement("input");
-                    input.type = "file"; input.accept = "image/*";
+                    input.type = "file"; input.accept = "image/*"; input.capture = "environment";
                     input.onchange = (e: any) => { if (e.target.files[0]) handleUpload("invoice", e.target.files[0]); };
                     input.click();
                   }} disabled={uploadingField === "invoice"}>
                     {uploadingField === "invoice" ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
-                    {uploadingField === "invoice" ? t.common.loading : t.common.upload}
+                    {uploadingField === "invoice" ? "جاري الضغط والحفظ..." : t.common.upload}
                   </Button>
                 )}
               </div>
@@ -482,7 +547,14 @@ export default function MyItems() {
                 <Label>{t.tickets.photos} *</Label>
                 {purchasedUrl ? (
                   <div className="relative">
-                    <img src={purchasedUrl} alt="" className="w-full h-32 object-cover rounded-lg border" />
+                    {purchasedUrl.startsWith("__offline__") ? (
+                      <div className="w-full h-32 rounded-lg border bg-amber-50 border-amber-200 flex flex-col items-center justify-center gap-1">
+                        <CloudUpload className="w-6 h-6 text-amber-600" />
+                        <span className="text-xs text-amber-700 font-medium">محفوظة — ستُرفع عند الاتصال</span>
+                      </div>
+                    ) : (
+                      <img src={purchasedUrl} alt="" className="w-full h-32 object-cover rounded-lg border" />
+                    )}
                     <Button variant="destructive" size="icon" className="absolute top-1 left-1 h-6 w-6" onClick={() => setPurchasedUrl("")}>
                       <span className="text-xs">×</span>
                     </Button>
@@ -490,21 +562,35 @@ export default function MyItems() {
                 ) : (
                   <Button variant="outline" className="w-full h-24 border-dashed gap-2" onClick={() => {
                     const input = document.createElement("input");
-                    input.type = "file"; input.accept = "image/*";
+                    input.type = "file"; input.accept = "image/*"; input.capture = "environment";
                     input.onchange = (e: any) => { if (e.target.files[0]) handleUpload("purchased", e.target.files[0]); };
                     input.click();
                   }} disabled={uploadingField === "purchased"}>
                     {uploadingField === "purchased" ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
-                    {uploadingField === "purchased" ? t.common.loading : t.common.upload}
+                    {uploadingField === "purchased" ? "جاري الضغط والحفظ..." : t.common.upload}
                   </Button>
                 )}
               </div>
+
+              {/* تحذير: الصور معلقة ولا يمكن إرسال الطلب حتى تُرفع */}
+              {(invoiceUrl.startsWith("__offline__") || purchasedUrl.startsWith("__offline__")) && (
+                <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <WifiOff className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>الصور محفوظة محلياً. سيُرسل تأكيد الشراء تلقائياً بمجرد عودة الإنترنت.</span>
+                </div>
+              )}
 
               <Button
                 className="w-full gap-2"
                 onClick={() => {
                   if (!invoiceUrl) { toast.error(t.common.upload); return; }
                   if (!purchasedUrl) { toast.error(t.common.upload); return; }
+                  // إذا كانت الصور offline — لا ترسل الطلب الآن، المزامنة ستكمل
+                  if (invoiceUrl.startsWith("__offline__") || purchasedUrl.startsWith("__offline__")) {
+                    toast.info("سيُرسل تأكيد الشراء تلقائياً عند عودة الإنترنت");
+                    setPurchaseDialog(null);
+                    return;
+                  }
                   confirmPurchaseMut.mutate({
                     itemId: purchaseDialog.id,
                     invoicePhotoUrl: invoiceUrl,
@@ -514,7 +600,9 @@ export default function MyItems() {
                 disabled={confirmPurchaseMut.isPending}
               >
                 {confirmPurchaseMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                {t.purchaseOrders.confirmPurchase}
+                {(invoiceUrl.startsWith("__offline__") || purchasedUrl.startsWith("__offline__"))
+                  ? "حفظ وإرسال لاحقاً"
+                  : t.purchaseOrders.confirmPurchase}
               </Button>
             </div>
           )}

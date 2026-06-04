@@ -592,6 +592,17 @@ export default function PurchaseOrderDetail() {
                 )}
 
                 {isWarehouse && item.status === "purchased" && (
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                    <p className="text-xs font-medium text-green-800 flex items-center gap-1.5 mb-2">
+                      <Package className="w-3.5 h-3.5" /> استلام من المشتريات وإضافة للمخزون
+                    </p>
+                    <Button size="sm" className="w-full gap-1.5 bg-green-600 hover:bg-green-700" onClick={() => setLocation(`/warehouse/receive?poId=${po.id}`)}>
+                      <Package className="w-3.5 h-3.5" />
+                      فتح صفحة الاستلام
+                    </Button>
+                  </div>
+                )}
+                {false && item.status === "purchased_DISABLED" && (
                   <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-3">
                     <p className="text-xs font-medium text-green-800 flex items-center gap-1.5">
                       <Package className="w-3.5 h-3.5" /> {t.purchaseOrders.receiveItem}:
@@ -947,7 +958,7 @@ export default function PurchaseOrderDetail() {
         </Card>
       )}
 
-      {po.custodyAmount && !isWarehouse && (
+{po.custodyAmount && (role === "senior_management" || role === "admin" || role === "owner") && (
         <Card className="border-amber-200 bg-amber-50/50">
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">

@@ -13,6 +13,8 @@ const ar = {
     purchaseOrders: "طلبات الشراء",
     myItems: "أصنافي",
     inventory: "المستودع",
+    warehouseReceive: "استلام المستودع",
+    warehouseReturn: "مرتجع المستودع",
     reports: "التقارير",
     technicianReport: "أداء الفنيين",
     costReport: "تقرير التكاليف",
@@ -48,7 +50,9 @@ const ar = {
       aiUnit: "وحدة التحليل AI",
       adminTools: "أدوات المسؤول",
       notificationsSection: "الإشعارات",
+      catalog: "الكتالوج",
     },
+    catalog: "الكتالوج",
   },
 
   // Common
@@ -1088,6 +1092,75 @@ const ar = {
   myItems: {
     empty: "لا توجد أصناف",
     confirmReceipt: "تأكيد الاستلام",
+  },
+  catalog: {
+    title: "وحدة الكتالوجات",
+    description: "إدارة الأصناف والتصنيفات والموردين",
+    tabs: {
+      overview: "نظرة عامة",
+      taxonomy: "التصنيفات",
+      items: "الأصناف",
+      settings: "الإعدادات",
+    },
+    stats: {
+      categories: "التصنيفات",
+      items: "الأصناف",
+      suppliers: "الموردين",
+      lastUpdated: "آخر تحديث",
+    },
+    overview: {
+      recentItems: "أحدث الأصناف",
+      noItems: "لا توجد أصناف بعد",
+    },
+    taxonomy: {
+      title: "إدارة التصنيفات",
+      addNew: "إضافة تصنيف",
+      addRoot: "إضافة تصنيف رئيسي",
+      empty: "لا توجد تصنيفات",
+      details: "تفاصيل التصنيف",
+      selectNode: "اختر تصنيفاً",
+    },
+    items: {
+      title: "إدارة الأصناف",
+      addNew: "إضافة صنف",
+      empty: "لا توجد أصناف",
+    },
+    search: {
+      title: "البحث الذكي",
+      placeholder: "ابحث عن صنف...",
+      searching: "جاري البحث...",
+      noResults: "لا توجد نتائج",
+      categories: "التصنيفات",
+      code: "الكود",
+    },
+    fields: {
+      nameAr: "الاسم بالعربية",
+      nameEn: "الاسم بالإنجليزية",
+      nameUr: "الاسم بالأردية",
+      itemCode: "كود الصنف",
+      unit: "وحدة القياس",
+      manufacturer: "الشركة المصنعة",
+      level: "المستوى",
+    },
+    settings: {
+      system: "إعدادات النظام",
+      dataEntry: "إعدادات إدخال البيانات",
+      autoCode: "توليد الكود تلقائياً",
+      requireImage: "إلزامية الصورة",
+      requireSupplier: "إلزامية المورد",
+      maxImageSize: "الحد الأقصى لحجم الصورة",
+      bulkImport: "استيراد جماعي",
+      dangerZone: "منطقة الخطر",
+      resetCatalog: "إعادة ضبط الكتالوج",
+    },
+    validation: {
+      requiredFields: "الحقول المطلوبة: الكود والاسم",
+      allFieldsRequired: "جميع الحقول مطلوبة",
+    },
+    confirm: {
+      deleteItem: "هل أنت متأكد من حذف هذا الصنف؟",
+      deleteNode: "هل أنت متأكد من حذف هذا التصنيف؟",
+    },
   },
 } as const;
 

@@ -46,7 +46,7 @@ export function getSessionCookieOptions(
 
   // في بيئة التطوير المحلية: sameSite=none للسماح بالـ cross-origin
   // في الإنتاج: sameSite=strict لمنع CSRF
-  const sameSite: CookieOptions["sameSite"] = isLocal ? "none" : "strict";
+const sameSite: CookieOptions["sameSite"] = isLocal ? "lax" : "strict";
 
   // تحديد domain فقط إذا كان النطاق خاصاً (وليس نطاقاً عاماً مشتركاً)
   let domain: string | undefined = undefined;

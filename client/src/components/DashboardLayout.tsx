@@ -27,7 +27,8 @@ import {
   Package, BarChart3, Users, Bell, MapPin, Wrench, Shield,
   Brain, ShoppingBag, Truck, Languages, Database,
   HardDrive, CalendarClock, ScanSearch, DoorOpen, Nfc, Tag,
-  ChevronDown, Search, X, Building2, UserCog, Download, Smartphone, DollarSign
+  ChevronDown, Search, X, Building2, UserCog, Download, Smartphone, DollarSign,
+  RotateCcw, BookOpen
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
@@ -104,6 +105,10 @@ const NAV_SECTIONS: NavSection[] = [
         roles: ["delegate","owner","admin"] },
       { icon: Package,      labelKey: "nav.inventory",      path: "/inventory",
         roles: ["warehouse","maintenance_manager","owner","admin"] },
+      { icon: Package,      labelKey: "nav.warehouseReceive", path: "/warehouse/receive",
+        roles: ["warehouse","owner","admin"] },
+      { icon: RotateCcw,    labelKey: "nav.warehouseReturn",  path: "/warehouse/return",
+        roles: ["warehouse","owner","admin"] },
       { icon: Truck,        labelKey: "nav.purchaseCycle",  path: "/purchase-cycle",
         roles: ["delegate","warehouse","owner","admin"] },
     ],
@@ -152,7 +157,18 @@ const NAV_SECTIONS: NavSection[] = [
         roles: ["owner","admin","senior_management","maintenance_manager"] },
     ],
   },
-  // 6. وحدة التحليل AI
+  // 6. وحدة الكتالوج
+  {
+    id: "catalog",
+    labelKey: "nav.sections.catalog",
+    icon: BookOpen,
+    roles: ["owner", "admin", "maintenance_manager", "purchase_manager", "purchase_requester", "warehouse"],
+    items: [
+      { icon: BookOpen, labelKey: "nav.catalog", path: "/catalog",
+        roles: ["owner", "admin", "maintenance_manager", "purchase_manager", "purchase_requester", "warehouse"] },
+    ],
+  },
+  // 7. وحدة التحليل AI
   {
     id: "ai",
     labelKey: "nav.sections.aiUnit",

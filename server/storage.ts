@@ -119,3 +119,43 @@ export async function storageDelete(relKey: string): Promise<void> {
     })
   );
 }
+
+/**
+ * Presigned URL للرفع المباشر من المتصفح إلى S3
+ * صالح 5 دقائق فقط، مقيّد بنوع الملف
+ */
+export async function storagePresignedPut(
+  relKey: string,
+  contentType: string,
+  expiresIn = 300
+): Promise<{ uploadUrl: string; key: string; proxyUrl: string }> {
+  const key = normalizeKey(relKey);
+  const uploadUrl = await getSignedUrl(
+    s3,
+    new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: key,
+      ContentType: contentType,
+      ACL: "public-read",
+    }),
+    { expiresIn }
+  );
+  const proxyUrl = `/api/media?key=${encodeURIComponent(key)}`;
+  return { uploadUrl, key, proxyUrl };
+}
+
+/**
+ * Presigned URL للقراءة المباشرة من S3
+ * صالح ساعة واحدة
+ */
+export async function storagePresignedGet(
+  relKey: string,
+  expiresIn = 3600
+): Promise<string> {
+  const key = normalizeKey(relKey);
+  return getSignedUrl(
+    s3,
+    new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }),
+    { expiresIn }
+  );
+}

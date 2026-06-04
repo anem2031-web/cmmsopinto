@@ -62,7 +62,7 @@ export type Section = typeof sections.$inferSelect;
 export type InsertSection = typeof sections.$inferInsert;
 
 // ============================================================
-// 2c. TECHNICIANS (External technicians without system accounts)
+// 2c. TECHNICIANS
 // ============================================================
 export const technicianStatuses = ["active", "inactive"] as const;
 export const technicians = mysqlTable("technicians", {
@@ -85,18 +85,13 @@ export type InsertTechnician = typeof technicians.$inferInsert;
 // ============================================================
 export const ticketStatuses = [
   "new",
-  // New Workflow statuses
   "pending_triage", "under_inspection", "work_approved",
-  // Path A (Internal Direct)
   "ready_for_closure",
-  // Path B (Internal with Procurement)
   "approved", "assigned", "in_progress",
   "needs_purchase", "purchase_pending_estimate", "purchase_pending_accounting",
   "purchase_pending_management", "purchase_approved", "partial_purchase",
   "purchased", "received_warehouse",
-  // Path C (External)
   "out_for_repair",
-  // Final
   "repaired", "verified", "closed"
 ] as const;
 export type TicketStatus = typeof ticketStatuses[number];
@@ -118,17 +113,15 @@ export const tickets = mysqlTable("tickets", {
   locationDetail: varchar("locationDetail", { length: 300 }),
   reportedById: int("reportedById").notNull(),
   assignedToId: int("assignedToId"),
-  assignedTechnicianId: int("assignedTechnicianId"),  // External technician (no system account)
-  assignedAt: timestamp("assignedAt"),  // When technician was assigned
+  assignedTechnicianId: int("assignedTechnicianId"),
+  assignedAt: timestamp("assignedAt"),
   approvedById: int("approvedById"),
-  // Workflow fields
-  maintenancePath: mysqlEnum("maintenancePath", ["A", "B", "C"]),  // A=Internal Direct, B=Internal+Procurement, C=External
+  maintenancePath: mysqlEnum("maintenancePath", ["A", "B", "C"]),
   ticketType: mysqlEnum("ticketType", ["internal", "external", "procurement"]),
-  supervisorId: int("supervisorId"),  // Eng. Khaled
+  supervisorId: int("supervisorId"),
   inspectionNotes: text("inspectionNotes"),
-  justification: text("justification"),  // Required for Path C
+  justification: text("justification"),
   triageNotes: text("triageNotes"),
-  // Gate/Security fields (Path C)
   gateExitApprovedById: int("gateExitApprovedById"),
   gateExitApprovedAt: timestamp("gateExitApprovedAt"),
   gateEntryApprovedById: int("gateEntryApprovedById"),
@@ -142,7 +135,6 @@ export const tickets = mysqlTable("tickets", {
   estimatedCost: decimal("estimatedCost", { precision: 12, scale: 2 }),
   actualCost: decimal("actualCost", { precision: 12, scale: 2 }),
   originalLanguage: mysqlEnum("originalLanguage", ["ar", "en", "ur"]).default("ar").notNull(),
-  // Auto-translation fields
   title_ar: text("title_ar"),
   title_en: text("title_en"),
   title_ur: text("title_ur"),
@@ -193,7 +185,7 @@ export const purchaseOrders = mysqlTable("purchase_orders", {
 });
 
 // ============================================================
-// 5. PURCHASE ORDER ITEMS (per-item tracking)
+// 5. PURCHASE ORDER ITEMS
 // ============================================================
 export const poItemStatuses = ["pending", "estimated", "approved", "rejected", "funded", "purchased", "delivered_to_warehouse", "delivered_to_requester", "cancelled"] as const;
 
@@ -205,6 +197,7 @@ export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   quantity: int("quantity").default(1).notNull(),
   unit: varchar("unit", { length: 50 }),
   photoUrl: text("photoUrl"),
+  photoUrls: json("photoUrls").$type<string[]>(),
   notes: text("notes"),
   delegateId: int("delegateId"),
   managementRejectionReason: text("managementRejectionReason"),
@@ -218,22 +211,25 @@ export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   status: mysqlEnum("status", [...poItemStatuses]).default("pending").notNull(),
   purchasedAt: timestamp("purchasedAt"),
   purchasedById: int("purchasedById"),
-  // Warehouse receiving (delivery to company)
   supplierItemName: varchar("supplierItemName", { length: 300 }),
   warehousePhotoUrl: text("warehousePhotoUrl"),
   receivedAt: timestamp("receivedAt"),
   receivedById: int("receivedById"),
-  // Final delivery to requester/technician
+  receivedQuantity: int("receivedQuantity"),
+  deliveredQuantity: int("deliveredQuantity"),
   deliveredAt: timestamp("deliveredAt"),
   deliveredById: int("deliveredById"),
   deliveredToId: int("deliveredToId"),
   originalLanguage: mysqlEnum("originalLanguage", ["ar", "en", "ur"]).default("ar").notNull(),
+  returnedQuantity: int("returnedQuantity").default(0),
+  returnReason: text("returnReason"),
+  returnedAt: timestamp("returnedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 // ============================================================
-// 5b. PROCUREMENT COMMENTS (Immutable Revision Notes)
+// 5b. PROCUREMENT COMMENTS
 // ============================================================
 export const procurementComments = mysqlTable("procurement_comments", {
   id: int("id").autoincrement().primaryKey(),
@@ -241,11 +237,10 @@ export const procurementComments = mysqlTable("procurement_comments", {
   userId: int("userId").notNull(),
   userName: text("userName").notNull(),
   userRole: varchar("userRole", { length: 50 }).notNull(),
-  actionType: varchar("actionType", { length: 50 }).notNull(), // "return_for_revision", "resubmitted", "comment"
+  actionType: varchar("actionType", { length: 50 }).notNull(),
   note: text("note").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
-
 export type ProcurementComment = typeof procurementComments.$inferSelect;
 export type InsertProcurementComment = typeof procurementComments.$inferInsert;
 
@@ -262,6 +257,9 @@ export const inventory = mysqlTable("inventory", {
   location: varchar("location", { length: 200 }),
   siteId: int("siteId"),
   lastRestockedAt: timestamp("lastRestockedAt"),
+  internalCode: varchar("internalCode", { length: 20 }),
+  manufacturerBarcode: varchar("manufacturerBarcode", { length: 200 }),
+  receiptId: int("receiptId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -278,6 +276,9 @@ export const inventoryTransactions = mysqlTable("inventory_transactions", {
   ticketId: int("ticketId"),
   purchaseOrderItemId: int("purchaseOrderItemId"),
   performedById: int("performedById").notNull(),
+  transactionType: mysqlEnum("transactionType", ["purchase", "return", "delivery", "adjustment"]).default("adjustment"),
+  receiptId: int("receiptId"),
+  returnId: int("returnId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -326,7 +327,7 @@ export const ticketStatusHistory = mysqlTable("ticket_status_history", {
 });
 
 // ============================================================
-// 11. ATTACHMENTS (generic file storage)
+// 11. ATTACHMENTS
 // ============================================================
 export const attachments = mysqlTable("attachments", {
   id: int("id").autoincrement().primaryKey(),
@@ -358,16 +359,16 @@ export const backups = mysqlTable("backups", {
 });
 
 // ============================================================
-// 13. ENTITY TRANSLATIONS (Central Multilingual Engine)
+// 13. ENTITY TRANSLATIONS
 // ============================================================
 export const translationStatuses = ["pending", "processing", "completed", "failed", "approved"] as const;
 export type TranslationStatus = typeof translationStatuses[number];
 
 export const entityTranslations = mysqlTable("entity_translations", {
   id: int("id").autoincrement().primaryKey(),
-  entityType: varchar("entityType", { length: 50 }).notNull(), // TICKET, PO, PO_ITEM, INVENTORY, etc
+  entityType: varchar("entityType", { length: 50 }).notNull(),
   entityId: int("entityId").notNull(),
-  fieldName: varchar("fieldName", { length: 100 }).notNull(), // title, description, notes, etc
+  fieldName: varchar("fieldName", { length: 100 }).notNull(),
   languageCode: mysqlEnum("languageCode", ["ar", "en", "ur"]).notNull(),
   translatedText: text("translatedText"),
   translationStatus: mysqlEnum("translationStatus", [...translationStatuses]).default("pending").notNull(),
@@ -380,11 +381,6 @@ export const entityTranslations = mysqlTable("entity_translations", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
-// ============================================================
-// 13. TRANSLATION JOBS (Async Queue)
-// ============================================================
-export const translationJobStatuses = ["pending", "processing", "completed", "failed"] as const;
 
 export const translationJobs = mysqlTable("translation_jobs", {
   id: int("id").autoincrement().primaryKey(),
@@ -405,9 +401,6 @@ export const translationJobs = mysqlTable("translation_jobs", {
   completedAt: timestamp("completedAt"),
 });
 
-// ============================================================
-// 14. TRANSLATION VERSIONS (History)
-// ============================================================
 export const translationVersions = mysqlTable("translation_versions", {
   id: int("id").autoincrement().primaryKey(),
   entityTranslationId: int("entityTranslationId").notNull(),
@@ -415,12 +408,12 @@ export const translationVersions = mysqlTable("translation_versions", {
   translatedText: text("translatedText"),
   translationStatus: varchar("translationStatus", { length: 20 }).notNull(),
   changedById: int("changedById"),
-  changeReason: varchar("changeReason", { length: 50 }), // auto_translate, manual_edit, re_translate
+  changeReason: varchar("changeReason", { length: 50 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
 // ============================================================
-// 15. ASSETS (إدارة الأصول)
+// 15. ASSETS
 // ============================================================
 export const assetStatuses = ["active", "inactive", "under_maintenance", "disposed"] as const;
 export type AssetStatus = typeof assetStatuses[number];
@@ -448,7 +441,6 @@ export const assets = mysqlTable("assets", {
   qrCode: varchar("qrCode", { length: 200 }),
   rfidTag: varchar("rfidTag", { length: 100 }).unique(),
   notes: text("notes"),
-  // Auto-translation fields
   description_ar: text("description_ar"),
   description_en: text("description_en"),
   description_ur: text("description_ur"),
@@ -461,16 +453,12 @@ export const assets = mysqlTable("assets", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type Asset = typeof assets.$inferSelect;
 export type InsertAsset = typeof assets.$inferInsert;
 export type UpdateAsset = Partial<InsertAsset>;
 
-// RFID Tag type
-
-
 // ============================================================
-// 16. PREVENTIVE MAINTENANCE PLANS (خطط الصيانة الوقائية)
+// 16. PREVENTIVE MAINTENANCE PLANS
 // ============================================================
 export const pmFrequencies = ["daily", "weekly", "monthly", "quarterly", "biannual", "annual"] as const;
 export type PMFrequency = typeof pmFrequencies[number];
@@ -483,10 +471,10 @@ export const preventivePlans = mysqlTable("preventive_plans", {
   assetId: int("assetId"),
   siteId: int("siteId"),
   frequency: mysqlEnum("frequency", ["daily", "weekly", "monthly", "quarterly", "biannual", "annual"]).notNull(),
-  frequencyValue: int("frequencyValue").default(1).notNull(), // e.g. every 2 months
+  frequencyValue: int("frequencyValue").default(1).notNull(),
   estimatedDurationMinutes: int("estimatedDurationMinutes"),
-  assignedToId: int("assignedToId"), // default technician
-  checklist: json("checklist"), // array of {id, text, required}
+  assignedToId: int("assignedToId"),
+  checklist: json("checklist"),
   isActive: boolean("isActive").default(true).notNull(),
   lastGeneratedAt: timestamp("lastGeneratedAt"),
   nextDueDate: timestamp("nextDueDate"),
@@ -494,12 +482,11 @@ export const preventivePlans = mysqlTable("preventive_plans", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type PreventivePlan = typeof preventivePlans.$inferSelect;
 export type InsertPreventivePlan = typeof preventivePlans.$inferInsert;
 
 // ============================================================
-// 17. PREVENTIVE MAINTENANCE WORK ORDERS (أوامر العمل الوقائية)
+// 17. PREVENTIVE MAINTENANCE WORK ORDERS
 // ============================================================
 export const pmWorkOrderStatuses = ["scheduled", "in_progress", "completed", "overdue", "cancelled"] as const;
 
@@ -514,10 +501,9 @@ export const pmWorkOrders = mysqlTable("pm_work_orders", {
   completedDate: timestamp("completedDate"),
   status: mysqlEnum("status", ["scheduled", "in_progress", "completed", "overdue", "cancelled"]).default("scheduled").notNull(),
   assignedToId: int("assignedToId"),
-  checklistResults: json("checklistResults"), // array of {id, text, done, notes}
+  checklistResults: json("checklistResults"),
   technicianNotes: text("technicianNotes"),
   completionPhotoUrl: text("completionPhotoUrl"),
-  // Auto-translation fields
   technicianNotes_ar: text("technicianNotes_ar"),
   technicianNotes_en: text("technicianNotes_en"),
   technicianNotes_ur: text("technicianNotes_ur"),
@@ -525,35 +511,33 @@ export const pmWorkOrders = mysqlTable("pm_work_orders", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type PMWorkOrder = typeof pmWorkOrders.$inferSelect;
 export type InsertPMWorkOrder = typeof pmWorkOrders.$inferInsert;
 
 // ============================================================
-// ASSET SPARE PARTS - ربط الأصول بالأجزاء (M:M)
+// ASSET SPARE PARTS
 // ============================================================
 export const assetSpareParts = mysqlTable("asset_spare_parts", {
   id: int("id").autoincrement().primaryKey(),
   assetId: int("assetId").notNull(),
   inventoryItemId: int("inventoryItemId").notNull(),
-  minStockLevel: int("minStockLevel").default(5).notNull(), // الحد الأدنى للتنبيه
-  preferredQuantity: int("preferredQuantity").default(10).notNull(), // الكمية المفضلة للطلب
-  notes: text("notes"), // ملاحظات خاصة بهذا الجزء للأصل
+  minStockLevel: int("minStockLevel").default(5).notNull(),
+  preferredQuantity: int("preferredQuantity").default(10).notNull(),
+  notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type AssetSparePart = typeof assetSpareParts.$inferSelect;
 export type InsertAssetSparePart = typeof assetSpareParts.$inferInsert;
 
 // ============================================================
-// PREVENTIVE MAINTENANCE JOBS - وظائف الصيانة الوقائية التلقائية
+// PREVENTIVE MAINTENANCE JOBS
 // ============================================================
 export const pmJobs = mysqlTable("pm_jobs", {
   id: int("id").autoincrement().primaryKey(),
   planId: int("planId").notNull(),
   assetId: int("assetId").notNull(),
-  ticketId: int("ticketId"), // البلاغ المُنشأ تلقائياً
+  ticketId: int("ticketId"),
   dueDate: timestamp("dueDate").notNull(),
   executedDate: timestamp("executedDate"),
   status: mysqlEnum("status", ["pending", "executed", "skipped", "overdue"]).default("pending").notNull(),
@@ -561,70 +545,60 @@ export const pmJobs = mysqlTable("pm_jobs", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type PMJob = typeof pmJobs.$inferSelect;
 export type InsertPMJob = typeof pmJobs.$inferInsert;
 
 // ============================================================
-// ASSET PERFORMANCE METRICS - مؤشرات أداء الأصول
+// ASSET PERFORMANCE METRICS
 // ============================================================
 export const assetMetrics = mysqlTable("asset_metrics", {
   id: int("id").autoincrement().primaryKey(),
   assetId: int("assetId").notNull().unique(),
   totalTickets: int("totalTickets").default(0).notNull(),
   closedTickets: int("closedTickets").default(0).notNull(),
-  totalDowntime: int("totalDowntime").default(0).notNull(), // بالدقائق
-  mttr: decimal("mttr", { precision: 10, scale: 2 }).default("0").notNull(), // Mean Time To Repair (بالساعات)
-  mtbf: decimal("mtbf", { precision: 10, scale: 2 }).default("0").notNull(), // Mean Time Between Failures (بالساعات)
-  availability: decimal("availability", { precision: 5, scale: 2 }).default("100").notNull(), // النسبة المئوية
+  totalDowntime: int("totalDowntime").default(0).notNull(),
+  mttr: decimal("mttr", { precision: 10, scale: 2 }).default("0").notNull(),
+  mtbf: decimal("mtbf", { precision: 10, scale: 2 }).default("0").notNull(),
+  availability: decimal("availability", { precision: 5, scale: 2 }).default("100").notNull(),
   lastFailureDate: timestamp("lastFailureDate"),
   lastRepairDate: timestamp("lastRepairDate"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type AssetMetrics = typeof assetMetrics.$inferSelect;
 export type InsertAssetMetrics = typeof assetMetrics.$inferInsert;
 
-
 // ============================================================
-// 14. TWO-FACTOR AUTHENTICATION (2FA)
+// TWO-FACTOR AUTHENTICATION
 // ============================================================
 export const twoFactorSecrets = mysqlTable("two_factor_secrets", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull().unique(),
-  secret: varchar("secret", { length: 255 }).notNull(), // Base32 encoded secret
-  backupCodes: text("backupCodes").notNull(), // JSON array of hashed backup codes
+  secret: varchar("secret", { length: 255 }).notNull(),
+  backupCodes: text("backupCodes").notNull(),
   isEnabled: boolean("isEnabled").default(false).notNull(),
   enabledAt: timestamp("enabledAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type TwoFactorSecret = typeof twoFactorSecrets.$inferSelect;
 export type InsertTwoFactorSecret = typeof twoFactorSecrets.$inferInsert;
 
-
-
-// ============================================================
-// 15. TWO-FACTOR AUTHENTICATION AUDIT LOG
-// ============================================================
 export const twoFactorAuditLogs = mysqlTable("two_factor_audit_logs", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
-  action: varchar("action", { length: 50 }).notNull(), // "setup", "verify_success", "verify_failed", "disable", "backup_code_used"
+  action: varchar("action", { length: 50 }).notNull(),
   ipAddress: varchar("ipAddress", { length: 45 }),
   userAgent: text("userAgent"),
   success: boolean("success").notNull(),
-  details: text("details"), // JSON with additional info
+  details: text("details"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
-
 export type TwoFactorAuditLog = typeof twoFactorAuditLogs.$inferSelect;
 export type InsertTwoFactorAuditLog = typeof twoFactorAuditLogs.$inferInsert;
 
 // ============================================================
-// 16. WEB PUSH SUBSCRIPTIONS
+// WEB PUSH SUBSCRIPTIONS
 // ============================================================
 export const pushSubscriptions = mysqlTable("push_subscriptions", {
   id: int("id").autoincrement().primaryKey(),
@@ -640,81 +614,73 @@ export type PushSubscription = typeof pushSubscriptions.$inferSelect;
 export type InsertPushSubscription = typeof pushSubscriptions.$inferInsert;
 
 // ============================================================
-// 17. PM CHECKLIST ITEMS (بنود قائمة الفحص المنفصلة)
+// PM CHECKLIST ITEMS
 // ============================================================
-// Each preventive plan can have multiple checklist items stored as rows
 export const pmChecklistItems = mysqlTable("pm_checklist_items", {
   id: int("id").autoincrement().primaryKey(),
-  planId: int("planId").notNull(), // FK → preventive_plans.id
-  orderIndex: int("orderIndex").default(0).notNull(), // ترتيب البند
-  text: text("text").notNull(), // نص البند
+  planId: int("planId").notNull(),
+  orderIndex: int("orderIndex").default(0).notNull(),
+  text: text("text").notNull(),
   text_ar: text("text_ar"),
   text_en: text("text_en"),
   isRequired: boolean("isRequired").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
-
 export type PMChecklistItem = typeof pmChecklistItems.$inferSelect;
 export type InsertPMChecklistItem = typeof pmChecklistItems.$inferInsert;
 
 // ============================================================
-// 18. PM EXECUTION RESULTS (نتائج تنفيذ بنود الفحص)
+// PM EXECUTION RESULTS
 // ============================================================
-// Each work order execution stores per-item results
 export const pmItemResultStatuses = ["ok", "fixed", "issue"] as const;
 export type PMItemResultStatus = typeof pmItemResultStatuses[number];
 
 export const pmExecutionResults = mysqlTable("pm_execution_results", {
   id: int("id").autoincrement().primaryKey(),
-  workOrderId: int("workOrderId").notNull(), // FK → pm_work_orders.id
-  checklistItemId: int("checklistItemId").notNull(), // FK → pm_checklist_items.id
-  status: mysqlEnum("status", ["ok", "fixed", "issue"]).notNull(), // ✅ سليم | 🛠️ إصلاح فوري | ⚠️ يوجد خلل
-  fixNotes: text("fixNotes"), // ملاحظة الإصلاح الفوري
-  photoUrl: text("photoUrl"), // صورة توثيق
-  linkedTicketId: int("linkedTicketId"), // FK → tickets.id (إذا تم فتح بلاغ)
+  workOrderId: int("workOrderId").notNull(),
+  checklistItemId: int("checklistItemId").notNull(),
+  status: mysqlEnum("status", ["ok", "fixed", "issue"]).notNull(),
+  fixNotes: text("fixNotes"),
+  photoUrl: text("photoUrl"),
+  linkedTicketId: int("linkedTicketId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type PMExecutionResult = typeof pmExecutionResults.$inferSelect;
 export type InsertPMExecutionResult = typeof pmExecutionResults.$inferInsert;
 
 // ============================================================
-// 19. PM EXECUTION SESSIONS (جلسات تنفيذ الفحص)
+// PM EXECUTION SESSIONS
 // ============================================================
-// Tracks the overall execution session (start/end time, duration)
 export const pmExecutionSessionStatuses = ["in_progress", "completed", "paused"] as const;
 
 export const pmExecutionSessions = mysqlTable("pm_execution_sessions", {
   id: int("id").autoincrement().primaryKey(),
-  workOrderId: int("workOrderId").notNull().unique(), // FK → pm_work_orders.id
-  technicianId: int("technicianId").notNull(), // FK → users.id
+  workOrderId: int("workOrderId").notNull().unique(),
+  technicianId: int("technicianId").notNull(),
   startedAt: timestamp("startedAt").defaultNow().notNull(),
   completedAt: timestamp("completedAt"),
-  durationSeconds: int("durationSeconds"), // مدة التنفيذ بالثواني
+  durationSeconds: int("durationSeconds"),
   totalItems: int("totalItems").default(0).notNull(),
   okCount: int("okCount").default(0).notNull(),
   fixedCount: int("fixedCount").default(0).notNull(),
   issueCount: int("issueCount").default(0).notNull(),
-  generalNotes: text("generalNotes"), // ملاحظات عامة
+  generalNotes: text("generalNotes"),
   status: mysqlEnum("status", ["in_progress", "completed", "paused"]).default("in_progress").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type PMExecutionSession = typeof pmExecutionSessions.$inferSelect;
 export type InsertPMExecutionSession = typeof pmExecutionSessions.$inferInsert;
 
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Inspection Results — structured corrective maintenance inspection records
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================================
+// INSPECTION RESULTS
+// ============================================================
 export const inspectionResults = mysqlTable("inspection_results", {
   id:                int("id").autoincrement().primaryKey(),
-  ticketId:          int("ticketId").notNull(),           // FK → tickets.id
-  assetId:           int("assetId"),                      // FK → assets.id (nullable)
-  inspectorId:       int("inspectorId").notNull(),        // FK → users.id
+  ticketId:          int("ticketId").notNull(),
+  assetId:           int("assetId"),
+  inspectorId:       int("inspectorId").notNull(),
   inspectionType:    mysqlEnum("inspectionType", ["triage", "detailed"]).notNull(),
   severity:          mysqlEnum("severity", ["low", "medium", "high", "critical"]).notNull(),
   rootCause:         varchar("rootCause", { length: 500 }),
@@ -726,7 +692,7 @@ export type InspectionResult = typeof inspectionResults.$inferSelect;
 export type InsertInspectionResult = typeof inspectionResults.$inferInsert;
 
 // ============================================================
-// 20. ASSET CATEGORIES TABLE
+// ASSET CATEGORIES
 // ============================================================
 export const assetCategories = mysqlTable("asset_categories", {
   id:        int("id").primaryKey().autoincrement(),
@@ -735,3 +701,188 @@ export const assetCategories = mysqlTable("asset_categories", {
 });
 export type AssetCategory = typeof assetCategories.$inferSelect;
 export type InsertAssetCategory = typeof assetCategories.$inferInsert;
+
+// ============================================================
+// WAREHOUSE RECEIPTS
+// ============================================================
+export const warehouseReceipts = mysqlTable("warehouse_receipts", {
+  id: int("id").autoincrement().primaryKey(),
+  receiptNumber: varchar("receiptNumber", { length: 20 }).notNull(),
+  purchaseOrderId: int("purchaseOrderId").notNull(),
+  receivedById: int("receivedById").notNull(),
+  receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+  notes: text("notes"),
+  totalItems: int("totalItems").default(0),
+  status: mysqlEnum("status", ["draft", "confirmed"]).default("confirmed").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type WarehouseReceipt = typeof warehouseReceipts.$inferSelect;
+export type InsertWarehouseReceipt = typeof warehouseReceipts.$inferInsert;
+
+// ============================================================
+// WAREHOUSE RETURNS
+// ============================================================
+export const warehouseReturns = mysqlTable("warehouse_returns", {
+  id: int("id").autoincrement().primaryKey(),
+  returnNumber: varchar("returnNumber", { length: 20 }).notNull(),
+  receiptId: int("receiptId").notNull(),
+  purchaseOrderId: int("purchaseOrderId").notNull(),
+  purchaseOrderItemId: int("purchaseOrderItemId").notNull(),
+  inventoryId: int("inventoryId").notNull(),
+  returnedQuantity: int("returnedQuantity").notNull(),
+  reason: text("reason").notNull(),
+  returnedById: int("returnedById").notNull(),
+  returnedAt: timestamp("returnedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type WarehouseReturn = typeof warehouseReturns.$inferSelect;
+export type InsertWarehouseReturn = typeof warehouseReturns.$inferInsert;
+
+// ============================================================
+// CATALOG MODULE — وحدة الكتالوج
+// ============================================================
+
+// 1. عقد التصنيف الهرمي
+export const catalogNodes = mysqlTable("catalog_nodes", {
+  id:          int("id").autoincrement().primaryKey(),
+  code:        varchar("code", { length: 20 }).unique(),
+  nameAr:      varchar("nameAr", { length: 255 }).notNull(),
+  nameEn:      varchar("nameEn", { length: 255 }).notNull(),
+  nameUr:      varchar("nameUr", { length: 255 }),
+  parentId:    int("parentId"),
+  level:       int("level").default(1).notNull(),
+  isActive:    boolean("isActive").default(true).notNull(),
+  createdAt:   timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:   timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type CatalogNode = typeof catalogNodes.$inferSelect;
+export type InsertCatalogNode = typeof catalogNodes.$inferInsert;
+
+// 2. عناصر الكتالوج (الأصناف)
+export const catalogItems = mysqlTable("catalog_items", {
+  id:             int("id").autoincrement().primaryKey(),
+  code:           varchar("code", { length: 100 }),
+  nameAr:         varchar("nameAr", { length: 255 }).notNull(),
+  nameEn:         varchar("nameEn", { length: 255 }).notNull(),
+  nameUr:         varchar("nameUr", { length: 255 }),
+  descriptionAr:  text("descriptionAr"),
+  descriptionEn:  text("descriptionEn"),
+  descriptionUr:  text("descriptionUr"),
+  unit:           varchar("unit", { length: 50 }),
+  manufacturer:   varchar("manufacturer", { length: 255 }),
+  nodeId:         int("nodeId").notNull(),
+  isActive:       boolean("isActive").default(true).notNull(),
+  createdAt:      timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:      timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type CatalogItem = typeof catalogItems.$inferSelect;
+export type InsertCatalogItem = typeof catalogItems.$inferInsert;
+
+// 3. مواصفات الأصناف
+export const catalogItemSpecs = mysqlTable("catalog_item_specs", {
+  id:        int("id").autoincrement().primaryKey(),
+  itemId:    int("itemId").notNull(),
+  keyAr:     varchar("keyAr", { length: 255 }).notNull(),
+  keyEn:     varchar("keyEn", { length: 255 }).notNull(),
+  value:     text("value").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CatalogItemSpec = typeof catalogItemSpecs.$inferSelect;
+export type InsertCatalogItemSpec = typeof catalogItemSpecs.$inferInsert;
+
+// 4. ربط الأصناف بالعقد
+export const catalogItemNodes = mysqlTable("catalog_item_nodes", {
+  id:        int("id").autoincrement().primaryKey(),
+  itemId:    int("itemId").notNull(),
+  nodeId:    int("nodeId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CatalogItemNode = typeof catalogItemNodes.$inferSelect;
+export type InsertCatalogItemNode = typeof catalogItemNodes.$inferInsert;
+
+// 5. صور الأصناف
+export const catalogItemImages = mysqlTable("catalog_item_images", {
+  id:        int("id").autoincrement().primaryKey(),
+  itemId:    int("itemId").notNull(),
+  url:       text("url").notNull(),
+  isPrimary: boolean("isPrimary").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CatalogItemImage = typeof catalogItemImages.$inferSelect;
+export type InsertCatalogItemImage = typeof catalogItemImages.$inferInsert;
+
+// ============================================================
+// 6. الموردين — Supplier Master  ← مُحدَّث
+// ============================================================
+export const catalogSuppliers = mysqlTable("catalog_suppliers", {
+  id:             int("id").autoincrement().primaryKey(),
+  nameAr:         varchar("nameAr",      { length: 255 }).notNull(),
+  nameEn:         varchar("nameEn",      { length: 255 }).notNull(),
+  contactName:    varchar("contactName", { length: 255 }),
+  phone:          varchar("phone",       { length: 50  }),
+  email:          varchar("email",       { length: 255 }),
+  address:        text("address"),
+  country:        varchar("country",     { length: 100 }),  // ← جديد
+  notes:          text("notes"),                            // ← جديد
+  isManufacturer: boolean("isManufacturer").default(false).notNull(), // ← جديد
+  isActive:       boolean("isActive").default(true).notNull(),
+  createdAt:      timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:      timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type CatalogSupplier       = typeof catalogSuppliers.$inferSelect;
+export type InsertCatalogSupplier = typeof catalogSuppliers.$inferInsert;
+
+// ============================================================
+// 7. ربط الموردين بالأصناف — Item-Supplier Relationship  ← مُحدَّث
+// ============================================================
+export const catalogSupplierPrices = mysqlTable("catalog_supplier_prices", {
+  id:               int("id").autoincrement().primaryKey(),
+  itemId:           int("itemId").notNull(),
+  supplierId:       int("supplierId").notNull(),
+  supplierItemCode: varchar("supplierItemCode", { length: 100 }),  // ← جديد
+  price:            decimal("price", { precision: 12, scale: 2 }).notNull(),
+  currency:         varchar("currency", { length: 10 }).default("SAR").notNull(),
+  isPreferred:      boolean("isPreferred").default(false).notNull(),
+  notes:            text("notes"),      // ← جديد
+  isActive:         boolean("isActive").default(true).notNull(), // ← جديد
+  createdAt:        timestamp("createdAt").defaultNow().notNull(), // ← جديد
+  updatedAt:        timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type CatalogSupplierPrice       = typeof catalogSupplierPrices.$inferSelect;
+export type InsertCatalogSupplierPrice = typeof catalogSupplierPrices.$inferInsert;
+
+// 8. إعدادات الكتالوج
+export const catalogSettings = mysqlTable("catalog_settings", {
+  id:        int("id").autoincrement().primaryKey(),
+  key:       varchar("key", { length: 100 }).notNull().unique(),
+  value:     text("value").notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type CatalogSetting = typeof catalogSettings.$inferSelect;
+export type InsertCatalogSetting = typeof catalogSettings.$inferInsert;
+
+// 9. سجل تدقيق الكتالوج
+export const catalogAuditLogs = mysqlTable("catalog_audit_logs", {
+  id:         int("id").autoincrement().primaryKey(),
+  userId:     int("userId").notNull(),
+  action:     varchar("action", { length: 50 }).notNull(),
+  entityType: varchar("entityType", { length: 50 }).notNull(),
+  entityId:   int("entityId").notNull(),
+  oldValues:  text("oldValues"),
+  newValues:  text("newValues"),
+  createdAt:  timestamp("createdAt").defaultNow().notNull(),
+});
+export type CatalogAuditLog = typeof catalogAuditLogs.$inferSelect;
+export type InsertCatalogAuditLog = typeof catalogAuditLogs.$inferInsert;
+
+// 10. وحدات القياس
+export const catalogUnits = mysqlTable("catalog_units", {
+  id:        int("id").autoincrement().primaryKey(),
+  nameAr:    varchar("nameAr", { length: 100 }).notNull(),
+  nameEn:    varchar("nameEn", { length: 100 }).notNull(),
+  isActive:  boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CatalogUnit = typeof catalogUnits.$inferSelect;
+export type InsertCatalogUnit = typeof catalogUnits.$inferInsert;

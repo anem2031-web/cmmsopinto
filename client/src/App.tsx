@@ -1,6 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
+import CatalogDashboard from "@/pages/CatalogDashboard";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -43,6 +44,8 @@ import CostReport from "./pages/CostReport";
 import Dashboard from "./pages/Dashboard";
 import AssetDetail from "./pages/AssetDetail";
 import AssetCategories from "./pages/AssetCategories";
+import WarehouseReceive from "./pages/WarehouseReceive";
+import WarehouseReturn from "./pages/WarehouseReturn";
 
 function Router() {
   return (
@@ -89,7 +92,10 @@ function Router() {
             <Route path="/reports/cost" component={CostReport} />
             <Route path="/asset/:id" component={AssetDetail} />
             <Route path="/asset-categories" component={AssetCategories} />
+            <Route path="/warehouse/receive" component={WarehouseReceive} />
+            <Route path="/warehouse/return" component={WarehouseReturn} />
             <Route path="/inspection-dashboard" component={Dashboard} />
+            <Route path="/catalog" component={CatalogDashboard} />
             <Route path="/404" component={NotFound} />
             <Route component={NotFound} />
           </Switch>

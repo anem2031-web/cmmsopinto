@@ -162,6 +162,20 @@
       "when": 1779006129583,
       "tag": "0022_dusty_enchantress",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "5",
+      "when": 1779982158574,
+      "tag": "0023_blue_frank_castle",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1780296626562,
+      "tag": "0024_slow_smiling_tiger",
+      "breakpoints": true
     }
   ]
 }

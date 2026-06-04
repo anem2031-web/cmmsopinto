@@ -1,9 +1,0 @@
-{
-  "query": "UPDATE purchase_order_items SET status = 'purchased' WHERE status = 'received';",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway03.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3UmgapDHiQE9iXi.56f75e8cce98 --database iLVeDbY8mxvY5mUVofWZbE --execute UPDATE purchase_order_items SET status = 'purchased' WHERE status = 'received';",
-  "rows": [],
-  "messages": [],
-  "stdout": "",
-  "stderr": "",
-  "execution_time_ms": 1662
-}

@@ -12,7 +12,11 @@ import {
   type InsertSection, type InsertInspectionResult,
   assetCategories,
   procurementComments,
-  type InsertProcurementComment
+  type InsertProcurementComment,
+  warehouseReceipts,
+  warehouseReturns,
+  type InsertWarehouseReceipt,
+  type InsertWarehouseReturn
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -75,7 +79,9 @@ export async function getUserByUsername(username: string) {
 export async function createLocalUser(data: { username: string; passwordHash: string; name: string; role: string; email?: string; phone?: string; department?: string }) {
   const db = await getDb();
   if (!db) return null;
-  const openId = `local_${data.username}_${Date.now()}`;
+// openId ثابت مبني على username فقط — بدون Date.now()
+  const openId = `local_${data.username}`;
+
   const result = await db.insert(users).values({
     openId,
     username: data.username,
@@ -100,7 +106,20 @@ export async function updateUserPassword(userId: number, passwordHash: string) {
 export async function getAllUsers() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(users);
+  return db.select().from(users).where(
+    or(
+      isNotNull(users.username),
+      isNotNull(users.name)
+    )
+  );
+}
+
+export async function updateLastSignedIn(openId: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users)
+    .set({ lastSignedIn: new Date() })
+    .where(eq(users.openId, openId));
 }
 
 // ============================================================
@@ -1859,4 +1878,140 @@ export async function deleteAssetCategory(id: number) {
   if (!db) return null;
   await db.delete(assetCategories).where(eq(assetCategories.id, id));
   return { id };
+}
+
+// ============================================================
+// WAREHOUSE RECEIPTS
+// ============================================================
+
+export async function getNextReceiptNumber(): Promise<string> {
+  const db = await getDb();
+  if (!db) return `RCV-${new Date().getFullYear()}-0001`;
+  const year = new Date().getFullYear();
+  const rows = await db.select({ id: warehouseReceipts.id })
+    .from(warehouseReceipts)
+    .where(like(warehouseReceipts.receiptNumber, `RCV-${year}-%`))
+    .orderBy(desc(warehouseReceipts.id))
+    .limit(1);
+  const next = rows.length > 0
+    ? parseInt(rows[0].id.toString()) + 1
+    : 1;
+  return `RCV-${year}-${String(next).padStart(4, "0")}`;
+}
+
+export async function getNextInventoryCode(): Promise<string> {
+  const db = await getDb();
+  if (!db) return `INV-${new Date().getFullYear()}-0001`;
+  const year = new Date().getFullYear();
+  const rows = await db.select({ id: inventory.id })
+    .from(inventory)
+    .where(like(inventory.internalCode, `INV-${year}-%`))
+    .orderBy(desc(inventory.id))
+    .limit(1);
+  const next = rows.length > 0
+    ? parseInt(rows[0].id.toString()) + 1
+    : 1;
+  return `INV-${year}-${String(next).padStart(4, "0")}`;
+}
+
+export async function getNextReturnNumber(): Promise<string> {
+  const db = await getDb();
+  if (!db) return `RTN-${new Date().getFullYear()}-0001`;
+  const year = new Date().getFullYear();
+  const rows = await db.select({ id: warehouseReturns.id })
+    .from(warehouseReturns)
+    .where(like(warehouseReturns.returnNumber, `RTN-${year}-%`))
+    .orderBy(desc(warehouseReturns.id))
+    .limit(1);
+  const next = rows.length > 0
+    ? parseInt(rows[0].id.toString()) + 1
+    : 1;
+  return `RTN-${year}-${String(next).padStart(4, "0")}`;
+}
+
+export async function createWarehouseReceipt(data: InsertWarehouseReceipt) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(warehouseReceipts).values(data);
+  return result[0].insertId;
+}
+
+export async function getWarehouseReceiptById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(warehouseReceipts).where(eq(warehouseReceipts.id, id)).limit(1);
+  return rows[0] || null;
+}
+
+export async function getWarehouseReceiptByPO(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(warehouseReceipts)
+    .where(eq(warehouseReceipts.purchaseOrderId, purchaseOrderId))
+    .orderBy(desc(warehouseReceipts.createdAt));
+  return rows;
+}
+
+export async function listWarehouseReceipts() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(warehouseReceipts).orderBy(desc(warehouseReceipts.createdAt));
+}
+
+// ============================================================
+// INVENTORY BARCODE SEARCH
+// ============================================================
+
+export async function getInventoryByBarcode(code: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(inventory)
+    .where(or(
+      eq(inventory.internalCode, code),
+      eq(inventory.manufacturerBarcode, code)
+    ))
+    .limit(1);
+  return rows[0] || null;
+}
+
+export async function getInventoryBySearch(search: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(inventory)
+    .where(or(
+      like(inventory.internalCode, `%${search}%`),
+      like(inventory.manufacturerBarcode, `%${search}%`),
+      like(inventory.itemName, `%${search}%`)
+    ))
+    .orderBy(desc(inventory.updatedAt));
+}
+
+// ============================================================
+// WAREHOUSE RETURNS
+// ============================================================
+
+export async function createWarehouseReturn(data: InsertWarehouseReturn) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(warehouseReturns).values(data);
+  return result[0].insertId;
+}
+
+export async function getWarehouseReturns(filters?: { purchaseOrderId?: number; inventoryId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.purchaseOrderId) conditions.push(eq(warehouseReturns.purchaseOrderId, filters.purchaseOrderId));
+  if (filters?.inventoryId) conditions.push(eq(warehouseReturns.inventoryId, filters.inventoryId));
+  return conditions.length > 0
+    ? db.select().from(warehouseReturns).where(and(...conditions)).orderBy(desc(warehouseReturns.createdAt))
+    : db.select().from(warehouseReturns).orderBy(desc(warehouseReturns.createdAt));
+}
+
+export async function getInventoryTransactions(inventoryId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return inventoryId
+    ? db.select().from(inventoryTransactions).where(eq(inventoryTransactions.inventoryId, inventoryId)).orderBy(desc(inventoryTransactions.createdAt))
+    : db.select().from(inventoryTransactions).orderBy(desc(inventoryTransactions.createdAt));
 }

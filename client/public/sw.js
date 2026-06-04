@@ -60,6 +60,22 @@ self.addEventListener('fetch', (event) => {
   }
 });
 
+// ─── Background Sync: رفع الصور المعلقة عند عودة الاتصال ───────────────────
+// يُستدعى تلقائياً من المتصفح بمجرد عودة الإنترنت
+self.addEventListener("sync", (event) => {
+  if (event.tag === "cmms-upload-sync") {
+    event.waitUntil(syncPendingUploads());
+  }
+});
+
+async function syncPendingUploads() {
+  // أخبر جميع نوافذ التطبيق المفتوحة لتبدأ المزامنة عبر الـ hook
+  const allClients = await clients.matchAll({ type: "window", includeUncontrolled: true });
+  for (const client of allClients) {
+    client.postMessage({ type: "CMMS_SYNC_UPLOADS" });
+  }
+}
+
 // ─── Web Push Notifications ──────────────────────────────────────────────────
 self.addEventListener("push", function (event) {
   if (!event.data) return;

@@ -1,0 +1,4 @@
+ALTER TABLE `purchase_order_items` MODIFY COLUMN `status` enum('pending','estimated','approved','rejected','funded','purchased','delivered_to_warehouse','delivered_to_requester','cancelled') NOT NULL DEFAULT 'pending';--> statement-breakpoint
+ALTER TABLE `users` MODIFY COLUMN `role` enum('user','admin','operator','technician','maintenance_manager','supervisor','purchase_manager','purchase_requester','delegate','accountant','senior_management','warehouse','gate_security','owner') NOT NULL DEFAULT 'user';--> statement-breakpoint
+ALTER TABLE `purchase_order_items` ADD `receivedQuantity` int;--> statement-breakpoint
+ALTER TABLE `purchase_order_items` ADD `deliveredQuantity` int;

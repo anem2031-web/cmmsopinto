@@ -526,7 +526,9 @@ export async function generatePurchaseRequestPDF(
 
   // Verify delegate owns at least one item in this PO
   const delegateItems = (allItems as any[]).filter((item: any) => item.delegateId === delegateId);
-  if (delegateItems.length === 0) throw new Error("Access denied: not your request");
+const requestingUser = await db.getUserById(delegateId);
+const canViewAll = ["admin", "owner", "maintenance_manager", "purchase_manager"].includes(requestingUser?.role || "");
+if (delegateItems.length === 0 && !canViewAll) throw new Error("Access denied: not your request");
 
   // Get delegate user info
   const delegate = await db.getUserById(delegateId);
