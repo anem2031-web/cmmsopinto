@@ -3,7 +3,8 @@ import { z } from "zod";
 import { router, protectedProcedure, managerProcedure } from "../_shared/procedures";
 import * as db from "../../db";
 import { invokeLLM } from "../../_core/llm";
-import { translateFields, detectLanguage, type SupportedLanguage } from "../../services/translation";
+import { detectLanguage, type SupportedLanguage } from "../../services/translation";
+import { queueTranslation, translationCache } from "../../translationEngine";
 
 export const preventiveRouter = router({
   listPlans: protectedProcedure.input(z.object({
@@ -41,6 +42,48 @@ export const preventiveRouter = router({
       nextDueDate: nextDue,
       createdById: ctx.user.id,
     });
+    if (result?.id) {
+      const planLang = await detectLanguage(input.title).catch(() => "ar" as const);
+
+      // ترجمة عنوان ووصف الخطة في الخلفية
+      queueTranslation({
+        entityType: "PM_PLAN",
+        entityId: result.id,
+        fields: [
+          { fieldName: "title", text: input.title },
+          ...(input.description ? [{ fieldName: "description", text: input.description }] : []),
+        ],
+        sourceLanguage: planLang,
+        userId: ctx.user.id,
+      }).catch(e => console.error("[PM_PLAN] Queue translation failed:", e));
+
+      // حفظ بنود قائمة الفحص في الجدول المنفصل وترجمتها
+      if (input.checklist && input.checklist.length > 0) {
+        const ddb = await db.getDb();
+        if (ddb) {
+          const { pmChecklistItems } = await import("../../../drizzle/schema");
+          for (let i = 0; i < input.checklist.length; i++) {
+            const item = input.checklist[i];
+            if (!item.text?.trim()) continue;
+            const itemLang = await detectLanguage(item.text).catch(() => "ar" as const);
+            const inserted = await ddb.insert(pmChecklistItems).values({
+              planId: result.id,
+              text: item.text,
+              orderIndex: i,
+              isRequired: item.required ?? true,
+              originalLanguage: itemLang,
+            });
+            const itemId = Number((inserted as any)[0].insertId);
+            queueTranslation({
+              entityType: "PM_CHECKLIST",
+              entityId: itemId,
+              fields: [{ fieldName: "text", text: item.text }],
+              sourceLanguage: itemLang,
+            }).catch(e => console.error("[PM_CHECKLIST] Queue translation failed:", e));
+          }
+        }
+      }
+    }
     return result;
   }),
 
@@ -136,23 +179,24 @@ export const preventiveRouter = router({
     // Auto-translate technicianNotes to all 3 languages
     let woTranslation: Record<string, any> = {};
     if (data.technicianNotes && data.technicianNotes.trim().length > 0) {
-      try {
-        const detectedLang = await detectLanguage(data.technicianNotes) as SupportedLanguage;
-        const translations = await translateFields({ technicianNotes: data.technicianNotes }, detectedLang);
-        if (translations.technicianNotes) {
-          woTranslation.technicianNotes_ar = translations.technicianNotes.ar;
-          woTranslation.technicianNotes_en = translations.technicianNotes.en;
-          woTranslation.technicianNotes_ur = translations.technicianNotes.ur;
-        }
-      } catch (e) {
-        console.error("[WorkOrder] technicianNotes translation failed:", e);
-      }
+      queueTranslation({
+        entityType: "PM_WORK_ORDER",
+        entityId: id,
+        fields: [{ fieldName: "technicianNotes", text: data.technicianNotes }],
+        sourceLanguage: await detectLanguage(data.technicianNotes).catch(() => "ar" as const),
+      }).catch(e => console.error("[WorkOrder] Queue translation failed:", e));
     }
-    return db.updatePMWorkOrder(id, {
+    const woResult = await db.updatePMWorkOrder(id, {
       ...data,
       ...woTranslation,
       completedDate: data.completedDate ? new Date(data.completedDate) : undefined,
     });
+
+    if (Object.keys(woTranslation).length > 0) {
+      translationCache.invalidate("WORK_ORDER", id);
+    }
+
+    return woResult;
   }),
 
   // ─── AI Predictive Analysis ──────────────────────────────────────────
@@ -284,14 +328,24 @@ export const preventiveRouter = router({
   })).mutation(async ({ input }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmChecklistItems } = await import("../drizzle/schema");
+    const { pmChecklistItems } = await import("../../../drizzle/schema");
+    const detectedLang = await detectLanguage(input.text).catch(() => "ar" as const);
     const result = await ddb.insert(pmChecklistItems).values({
       planId: input.planId,
       text: input.text,
       orderIndex: input.orderIndex ?? 0,
       isRequired: input.isRequired,
+      originalLanguage: detectedLang,
     });
-    return { id: Number(result[0].insertId), ...input };
+    const newId = Number(result[0].insertId);
+    // ترجمة بند قائمة الفحص في الخلفية
+    queueTranslation({
+      entityType: "PM_CHECKLIST",
+      entityId: newId,
+      fields: [{ fieldName: "text", text: input.text }],
+      sourceLanguage: detectedLang,
+    }).catch(e => console.error("[PM_CHECKLIST] Queue translation failed:", e));
+    return { id: newId, ...input };
   }),
 
   updateChecklistItem: managerProcedure.input(z.object({
@@ -302,7 +356,7 @@ export const preventiveRouter = router({
   })).mutation(async ({ input }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmChecklistItems } = await import("../drizzle/schema");
+    const { pmChecklistItems } = await import("../../../drizzle/schema");
     const { id, ...data } = input;
     await ddb.update(pmChecklistItems).set(data).where(eq(pmChecklistItems.id, id));
     return { success: true };
@@ -311,7 +365,7 @@ export const preventiveRouter = router({
   deleteChecklistItem: managerProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmChecklistItems } = await import("../drizzle/schema");
+    const { pmChecklistItems } = await import("../../../drizzle/schema");
     await ddb.delete(pmChecklistItems).where(eq(pmChecklistItems.id, input.id));
     return { success: true };
   }),
@@ -319,7 +373,7 @@ export const preventiveRouter = router({
   getChecklistItems: protectedProcedure.input(z.object({ planId: z.number() })).query(async ({ input }) => {
     const ddb = await db.getDb();
     if (!ddb) return [];
-    const { pmChecklistItems } = await import("../drizzle/schema");
+    const { pmChecklistItems } = await import("../../../drizzle/schema");
     return ddb.select().from(pmChecklistItems)
       .where(eq(pmChecklistItems.planId, input.planId))
       .orderBy(asc(pmChecklistItems.orderIndex));
@@ -330,7 +384,7 @@ export const preventiveRouter = router({
   })).mutation(async ({ input }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmChecklistItems } = await import("../drizzle/schema");
+    const { pmChecklistItems } = await import("../../../drizzle/schema");
     for (const item of input.items) {
       await ddb.update(pmChecklistItems).set({ orderIndex: item.orderIndex }).where(eq(pmChecklistItems.id, item.id));
     }
@@ -343,7 +397,7 @@ export const preventiveRouter = router({
   })).mutation(async ({ input, ctx }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmExecutionSessions, pmWorkOrders, pmChecklistItems } = await import("../drizzle/schema");
+    const { pmExecutionSessions, pmWorkOrders, pmChecklistItems } = await import("../../../drizzle/schema");
     // Get work order
     const wo = await db.getPMWorkOrderById(input.workOrderId);
     if (!wo) throw new TRPCError({ code: "NOT_FOUND", message: "أمر العمل غير موجود" });
@@ -379,7 +433,7 @@ export const preventiveRouter = router({
   })).mutation(async ({ input, ctx }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmExecutionResults, pmExecutionSessions } = await import("../drizzle/schema");
+    const { pmExecutionResults, pmExecutionSessions } = await import("../../../drizzle/schema");
     const { eq, and } = await import("drizzle-orm");
     // Upsert result
     const existing = await ddb.select().from(pmExecutionResults)
@@ -387,18 +441,30 @@ export const preventiveRouter = router({
         eq(pmExecutionResults.workOrderId, input.workOrderId),
         eq(pmExecutionResults.checklistItemId, input.checklistItemId)
       ));
+    let resultId: number;
     if (existing.length > 0) {
       await ddb.update(pmExecutionResults)
         .set({ status: input.status, fixNotes: input.fixNotes, photoUrl: input.photoUrl })
         .where(eq(pmExecutionResults.id, existing[0].id));
+      resultId = existing[0].id;
     } else {
-      await ddb.insert(pmExecutionResults).values({
+      const inserted = await ddb.insert(pmExecutionResults).values({
         workOrderId: input.workOrderId,
         checklistItemId: input.checklistItemId,
         status: input.status,
         fixNotes: input.fixNotes,
         photoUrl: input.photoUrl,
       });
+      resultId = (inserted as any).insertId;
+    }
+    // ترجمة ملاحظات الإصلاح في الخلفية
+    if (input.fixNotes && resultId) {
+      queueTranslation({
+        entityType: "PM_RESULT",
+        entityId: resultId,
+        fields: [{ fieldName: "fixNotes", text: input.fixNotes }],
+        sourceLanguage: await detectLanguage(input.fixNotes).catch(() => "ar" as const),
+      }).catch(e => console.error("[PM_RESULT] Queue translation failed:", e));
     }
     // Update session counts
     const allResults = await ddb.select().from(pmExecutionResults)
@@ -415,7 +481,7 @@ export const preventiveRouter = router({
   getExecutionProgress: protectedProcedure.input(z.object({ workOrderId: z.number() })).query(async ({ input }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmExecutionResults, pmExecutionSessions, pmChecklistItems, pmWorkOrders } = await import("../drizzle/schema");
+    const { pmExecutionResults, pmExecutionSessions, pmChecklistItems, pmWorkOrders } = await import("../../../drizzle/schema");
     const { eq } = await import("drizzle-orm");
     const wo = await db.getPMWorkOrderById(input.workOrderId);
     if (!wo) throw new TRPCError({ code: "NOT_FOUND", message: "أمر العمل غير موجود" });
@@ -442,7 +508,7 @@ export const preventiveRouter = router({
   })).mutation(async ({ input, ctx }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmExecutionSessions, pmWorkOrders, pmExecutionResults } = await import("../drizzle/schema");
+    const { pmExecutionSessions, pmWorkOrders, pmExecutionResults } = await import("../../../drizzle/schema");
     const { eq } = await import("drizzle-orm");
     const now = new Date();
     // Get session
@@ -457,6 +523,16 @@ export const preventiveRouter = router({
         durationSeconds,
         generalNotes: input.generalNotes,
       }).where(eq(pmExecutionSessions.workOrderId, input.workOrderId));
+      // ترجمة الملاحظات العامة في الخلفية
+      if (input.generalNotes && sessions[0]?.id) {
+        queueTranslation({
+          entityType: "PM_SESSION",
+          entityId: sessions[0].id,
+          fields: [{ fieldName: "generalNotes", text: input.generalNotes }],
+          sourceLanguage: await detectLanguage(input.generalNotes).catch(() => "ar" as const),
+          userId: ctx.user.id,
+        }).catch(e => console.error("[PM_SESSION] Queue translation failed:", e));
+      }
     }
     // Get results for notification
     const results = await ddb.select().from(pmExecutionResults)
@@ -512,7 +588,7 @@ export const preventiveRouter = router({
   })).mutation(async ({ input, ctx }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmExecutionResults, pmWorkOrders } = await import("../drizzle/schema");
+    const { pmExecutionResults, pmWorkOrders } = await import("../../../drizzle/schema");
     const { eq, and } = await import("drizzle-orm");
     // Get work order info
     const wo = await db.getPMWorkOrderById(input.workOrderId);
@@ -547,7 +623,7 @@ export const preventiveRouter = router({
   }).optional()).query(async ({ input }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmExecutionResults, pmExecutionSessions, pmWorkOrders } = await import("../drizzle/schema");
+    const { pmExecutionResults, pmExecutionSessions, pmWorkOrders } = await import("../../../drizzle/schema");
     const { gte, lte, and, eq } = await import("drizzle-orm");
     const from = input?.dateFrom ? new Date(input.dateFrom) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const to = input?.dateTo ? new Date(input.dateTo) : new Date();
@@ -604,7 +680,7 @@ export const preventiveRouter = router({
   })).query(async ({ input }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmExecutionSessions, pmWorkOrders, pmExecutionResults } = await import("../drizzle/schema");
+    const { pmExecutionSessions, pmWorkOrders, pmExecutionResults } = await import("../../../drizzle/schema");
     const { eq, desc, and } = await import("drizzle-orm");
     // Get work orders for this asset
     const workOrders = await db.listPMWorkOrders({ assetId: input.assetId, status: "completed" });

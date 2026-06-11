@@ -20,7 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import {
   Plus, Calendar, Clock, CheckSquare, AlertTriangle,
-  Play, Trash2, Edit, ClipboardList, Camera, Loader2,
+  Play, Trash2, Edit, ClipboardList, Camera, Loader2, Eye,
   Search, Filter, X, Power, PowerOff, FileText,
 } from "lucide-react";
 import { nanoid } from "nanoid";
@@ -77,6 +77,8 @@ export default function PreventiveMaintenance() {
   const [tab, setTab] = useState("plans");
   const [showPlanForm, setShowPlanForm] = useState(false);
   const [editPlanId, setEditPlanId] = useState<number | null>(null);
+  const [previewPlan, setPreviewPlan] = useState<any | null>(null);
+  const [previewPlanId, setPreviewPlanId] = useState<number | null>(null);
   const [planForm, setPlanForm] = useState<PlanForm>(defaultPlanForm);
   const [deletePlanId, setDeletePlanId] = useState<number | null>(null);
   const [generateWOPlanId, setGenerateWOPlanId] = useState<number | null>(null);
@@ -104,6 +106,10 @@ export default function PreventiveMaintenance() {
   const utils = trpc.useUtils();
 
   const { data: plans = [], isLoading: plansLoading } = trpc.preventive.listPlans.useQuery({});
+  const { data: previewChecklistItems = [] } = trpc.preventive.getChecklistItems.useQuery(
+    { planId: previewPlanId! },
+    { enabled: !!previewPlanId }
+  );
   const { data: workOrders = [], isLoading: woLoading } = trpc.preventive.listWorkOrders.useQuery({});
   const { data: assets = [] } = trpc.assets.list.useQuery({});
   const { data: sites = [] } = trpc.sites.list.useQuery();
@@ -451,7 +457,7 @@ export default function PreventiveMaintenance() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
                           <p className="text-xs text-muted-foreground">{plan.planNumber}</p>
-                          <CardTitle className="text-base truncate">{plan.title}</CardTitle>
+                          <CardTitle className="text-base truncate">{getField(plan, "title")}</CardTitle>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <Badge variant="outline">{freqLabel(plan.frequency)}</Badge>
@@ -502,6 +508,9 @@ export default function PreventiveMaintenance() {
                         >
                           <Play className="h-3 w-3 ml-1" />
                           {t.preventive.generateWorkOrder}
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => { setPreviewPlan(plan); setPreviewPlanId(plan.id); }} title="استعراض">
+                          <Eye className="h-3 w-3" />
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => openEditPlan(plan)} title="تعديل">
                           <Edit className="h-3 w-3" />
@@ -596,7 +605,7 @@ export default function PreventiveMaintenance() {
                             {woStatusLabel(wo.status)}
                           </span>
                         </div>
-                        <p className="font-medium truncate">{wo.title}</p>
+                        <p className="font-medium truncate">{getField(wo, "title")}</p>
                         <div className="flex items-center gap-3 mt-1">
                           {wo.scheduledDate && (
                             <p className="text-xs text-muted-foreground">
@@ -719,7 +728,7 @@ export default function PreventiveMaintenance() {
                 {planForm.checklist.map((item) => (
                   <div key={item.id} className="flex items-center gap-2 bg-muted/30 rounded px-3 py-1.5">
                     <CheckSquare className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <span className="flex-1 text-sm">{item.text}</span>
+                    <span className="flex-1 text-sm">{getField(item, "text") || item.text}</span>
                     <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => removeChecklistItem(item.id)}>
                       <Trash2 className="h-3 w-3" />
                     </Button>
@@ -907,6 +916,70 @@ export default function PreventiveMaintenance() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* ── Preview Plan Dialog ── */}
+      <Dialog open={!!previewPlan} onOpenChange={(o) => { if (!o) { setPreviewPlan(null); setPreviewPlanId(null); } }}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold">{previewPlan && getField(previewPlan, "title")}</DialogTitle>
+          </DialogHeader>
+          {previewPlan && (
+            <div className="space-y-4 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">{t.common.status || "الحالة"}</span>
+                <span>{previewPlan.isActive ? (t.common.active || "نشط") : (t.common.inactive || "متوقف")}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">{t.preventive?.frequency || "التكرار"}</span>
+                <span>{previewPlan.frequency}</span>
+              </div>
+              {previewPlan.estimatedDurationMinutes && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">{t.common.duration || "المدة"}</span>
+                  <span>{previewPlan.estimatedDurationMinutes} {t.common.minutes || "دقيقة"}</span>
+                </div>
+              )}
+              {previewPlan.nextDueDate && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">{t.preventive?.nextDueDate || "الموعد القادم"}</span>
+                  <span>{new Date(previewPlan.nextDueDate).toLocaleDateString()}</span>
+                </div>
+              )}
+              {previewPlan.description && (
+                <div>
+                  <p className="text-muted-foreground mb-1">{t.common.description || "الوصف"}</p>
+                  <p className="bg-muted/50 rounded-lg p-3 leading-relaxed">{getField(previewPlan, "description")}</p>
+                </div>
+              )}
+              {(previewChecklistItems.length > 0 || (previewPlan.checklist && previewPlan.checklist.length > 0)) && (
+                <div>
+                  <p className="text-muted-foreground mb-2">
+                    {t.preventive?.checklist || "قائمة الفحص"} ({previewChecklistItems.length || previewPlan.checklist?.length || 0})
+                  </p>
+                  <ul className="space-y-1">
+                    {previewChecklistItems.length > 0
+                      ? previewChecklistItems.map((item: any) => (
+                          <li key={item.id} className="flex items-center gap-2 bg-muted/30 rounded-md p-2">
+                            <ClipboardList className="h-3 w-3 text-muted-foreground shrink-0" />
+                            <span>{getField(item, "text") || item.text}</span>
+                            {item.isRequired && <span className="text-xs text-red-500 mr-auto">*</span>}
+                          </li>
+                        ))
+                      : (previewPlan.checklist ?? []).map((item: any, idx: number) => (
+                          <li key={idx} className="flex items-center gap-2 bg-muted/30 rounded-md p-2">
+                            <ClipboardList className="h-3 w-3 text-muted-foreground shrink-0" />
+                            <span>{item.text}</span>
+                            {item.required && <span className="text-xs text-red-500 mr-auto">*</span>}
+                          </li>
+                        ))
+                    }
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Delete Plan Confirm ── */}
       <Dialog open={!!deletePlanId} onOpenChange={(o) => { if (!o) setDeletePlanId(null); }}>

@@ -82,7 +82,6 @@ function PhaseTimeline({ phases }: { phases: Array<{ phase: string; durationHour
   const total = phases.reduce((s, p) => s + (p.durationHours || 0), 0);
   return (
     <div className="space-y-2">
-      {/* Bar chart */}
       {total > 0 && (
         <div className="flex h-3 rounded-full overflow-hidden gap-0.5">
           {phases.map((p, i) => {
@@ -98,7 +97,6 @@ function PhaseTimeline({ phases }: { phases: Array<{ phase: string; durationHour
           })}
         </div>
       )}
-      {/* Legend */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5">
         {phases.map((p, i) => (
           <div key={i} className="flex items-center gap-1.5 text-xs">
@@ -114,10 +112,62 @@ function PhaseTimeline({ phases }: { phases: Array<{ phase: string; durationHour
   );
 }
 
+// ─── Actor Cell ───────────────────────────────────────────────────────────────
+function ActorCell({ phase }: { phase: any }) {
+  const [open, setOpen] = useState(false);
+
+  if (phase.phase === "تسليم للفني") {
+    if (!phase.actor && !phase.deliveredTo) return <span className="text-muted-foreground text-xs">—</span>;
+    return (
+      <div className="text-xs space-y-0.5">
+        {phase.actor && <div className="flex items-center gap-1"><span className="text-muted-foreground">سلّمه:</span><span className="font-medium">{phase.actor}</span></div>}
+        {phase.deliveredTo && <div className="flex items-center gap-1"><span className="text-muted-foreground">استلمه:</span><span className="font-medium">{phase.deliveredTo}</span></div>}
+      </div>
+    );
+  }
+
+  if (Array.isArray(phase.actors)) {
+    if (phase.actors.length === 0) return <span className="text-muted-foreground text-xs">—</span>;
+    if (phase.actors.length === 1) {
+      return <span className="font-medium text-xs">{phase.actors[0].name}</span>;
+    }
+    return (
+      <div>
+        <button
+          onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+          className="flex items-center gap-1 text-xs text-primary hover:underline font-medium"
+        >
+          متعدد ({phase.actors.length})
+          {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        </button>
+        {open && (
+          <div className="mt-1.5 space-y-1 border border-border rounded-md p-2 bg-background shadow-sm">
+            {phase.actors.map((a: any, i: number) => (
+              <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                {a.itemName && <span className="text-muted-foreground truncate max-w-[120px]">{a.itemName}</span>}
+                <span className="font-medium">{a.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (!phase.actor) return <span className="text-muted-foreground text-xs">—</span>;
+  return <span className="font-medium text-xs">{phase.actor}</span>;
+}
+
 // ─── Item Row ─────────────────────────────────────────────────────────────────
 function ItemRow({ item }: { item: any }) {
   const { t: tr } = useLanguage();
   const [expanded, setExpanded] = useState(false);
+
+  const phasesWithActors = item.phases.map((p: any) => ({
+    ...p,
+    actors: p.actor ? [{ itemName: item.itemName, name: p.actor }] : [],
+  }));
+
   return (
     <div className="border border-border rounded-lg overflow-hidden">
       <div
@@ -154,7 +204,6 @@ function ItemRow({ item }: { item: any }) {
         <div className="px-3 pb-3 border-t border-border bg-muted/20">
           <div className="pt-3 space-y-3">
             <PhaseTimeline phases={item.phases} />
-            {/* Detailed phase table */}
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -163,11 +212,12 @@ function ItemRow({ item }: { item: any }) {
                     <th className="text-right py-1.5 font-semibold text-muted-foreground">{tr.purchaseCycleReport?.start || "بداية"}</th>
                     <th className="text-right py-1.5 font-semibold text-muted-foreground">{tr.purchaseCycleReport?.end || "نهاية"}</th>
                     <th className="text-right py-1.5 font-semibold text-muted-foreground">{tr.purchaseCycleReport?.duration || "المدة"}</th>
+                    <th className="text-right py-1.5 font-semibold text-muted-foreground">المنفذ</th>
                     <th className="text-right py-1.5 font-semibold text-muted-foreground">{tr.common?.status || "الحالة"}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {item.phases.map((p: any, i: number) => (
+                  {phasesWithActors.map((p: any, i: number) => (
                     <tr key={i} className="border-b border-border/50 last:border-0">
                       <td className="py-1.5 pr-2">
                         <div className="flex items-center gap-1.5">
@@ -183,6 +233,9 @@ function ItemRow({ item }: { item: any }) {
                       </td>
                       <td className="py-1.5 font-semibold">
                         {formatHours(p.durationHours)}
+                      </td>
+                      <td className="py-1.5">
+                        <ActorCell phase={p} />
                       </td>
                       <td className="py-1.5">
                         {p.status === "done"
@@ -255,28 +308,49 @@ function POCard({ po }: { po: any }) {
 
       {expanded && (
         <div className="border-t border-border">
-          {/* PO-level phases */}
-          <div className="p-4 bg-muted/20 border-b border-border">
-            <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-primary" />
-              مراحل الطلب
-            </h4>
-            <div className="grid grid-cols-3 gap-3">
-              {po.poPhases.map((p: any, i: number) => (
-                <div key={i} className={cn(
-                  "p-3 rounded-lg border text-center",
-                  p.status === "done" ? "bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800"
-                    : "bg-muted border-border"
-                )}>
-                  <div className="text-xs text-muted-foreground mb-1">{p.phase}</div>
-                  <div className="font-bold text-sm">{formatHours(p.durationHours)}</div>
-                  {p.actor && <div className="text-xs text-muted-foreground mt-1 truncate">{p.actor}</div>}
-                </div>
-              ))}
-            </div>
-          </div>
+<div className="p-4 bg-muted/20 border-b border-border">
+  <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+    <BarChart3 className="w-4 h-4 text-primary" />
+    مراحل الطلب
+  </h4>
+  <div className="overflow-x-auto">
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="border-b border-border">
+          <th className="text-right py-1.5 pr-2 font-semibold text-muted-foreground">المرحلة</th>
+          <th className="text-right py-1.5 font-semibold text-muted-foreground">التاريخ</th>
+          <th className="text-right py-1.5 font-semibold text-muted-foreground">المنفذ</th>
+          <th className="text-right py-1.5 font-semibold text-muted-foreground">الحالة</th>
+        </tr>
+      </thead>
+      <tbody>
+        {po.poPhases.map((p: any, i: number) => (
+          <tr key={i} className="border-b border-border/50 last:border-0">
+            <td className="py-1.5 pr-2">
+              <div className="flex items-center gap-1.5">
+                <span className={cn("w-2 h-2 rounded-full flex-shrink-0", PHASE_COLORS[i % PHASE_COLORS.length])} />
+                <span className="font-medium">{p.phase}</span>
+              </div>
+            </td>
+            <td className="py-1.5 text-muted-foreground">
+              {p.startAt ? new Date(p.startAt).toLocaleDateString("ar-SA") : "—"}
+            </td>
+            <td className="py-1.5">
+              <ActorCell phase={p} />
+            </td>
+            <td className="py-1.5">
+              {p.status === "done"
+                ? <span className="text-green-600 dark:text-green-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />منجز</span>
+                : <span className="text-muted-foreground flex items-center gap-1"><Clock className="w-3 h-3" />انتظار</span>
+              }
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+</div>
 
-          {/* Items */}
           <div className="p-4 space-y-2">
             <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
               <Package className="w-4 h-4 text-primary" />
@@ -307,9 +381,7 @@ export default function PurchaseCycleReport() {
     { refetchInterval: 60000 }
   );
 
-  const handleApplyFilter = () => {
-    setFilterInput({ dateFrom, dateTo });
-  };
+  const handleApplyFilter = () => setFilterInput({ dateFrom, dateTo });
 
   const handleClearFilter = () => {
     setDateFrom("");
@@ -317,7 +389,6 @@ export default function PurchaseCycleReport() {
     setFilterInput({ dateFrom: "", dateTo: "" });
   };
 
-  // Sort POs by totalPOHours desc (bottlenecks first)
   const sortedPOs = useMemo(() => {
     if (!data?.pos) return [];
     return [...data.pos].sort((a, b) => (b.totalPOHours || 0) - (a.totalPOHours || 0));
@@ -325,7 +396,6 @@ export default function PurchaseCycleReport() {
 
   return (
     <div className="space-y-6" dir="rtl">
-      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -348,7 +418,6 @@ export default function PurchaseCycleReport() {
         </div>
       </div>
 
-      {/* Filters */}
       {showFilters && (
         <Card>
           <CardContent className="p-4">
@@ -368,7 +437,6 @@ export default function PurchaseCycleReport() {
         </Card>
       )}
 
-      {/* Summary Cards */}
       {isLoading ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
@@ -384,19 +452,15 @@ export default function PurchaseCycleReport() {
               <p className="text-3xl font-bold text-blue-700 dark:text-blue-300">{data.total}</p>
             </CardContent>
           </Card>
-
           <Card className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950/40 dark:to-green-900/20 border-green-200 dark:border-green-800">
             <CardContent className="p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Timer className="w-4 h-4 text-green-600 dark:text-green-400" />
                 <span className="text-xs text-green-600 dark:text-green-400 font-medium">{tr.purchaseCycleReport?.avgCycleTime || "متوسط وقت الدورة"}</span>
               </div>
-              <p className="text-2xl font-bold text-green-700 dark:text-green-300">
-                {formatHours(data.avgTotalHours)}
-              </p>
+              <p className="text-2xl font-bold text-green-700 dark:text-green-300">{formatHours(data.avgTotalHours)}</p>
             </CardContent>
           </Card>
-
           <Card className="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-950/40 dark:to-orange-900/20 border-orange-200 dark:border-orange-800">
             <CardContent className="p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -411,7 +475,6 @@ export default function PurchaseCycleReport() {
               </p>
             </CardContent>
           </Card>
-
           <Card className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/40 dark:to-purple-900/20 border-purple-200 dark:border-purple-800">
             <CardContent className="p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -426,7 +489,6 @@ export default function PurchaseCycleReport() {
         </div>
       )}
 
-      {/* Phase Averages */}
       {data && data.phaseAvgs.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
@@ -464,13 +526,11 @@ export default function PurchaseCycleReport() {
         </Card>
       )}
 
-      {/* PO List */}
       <div className="space-y-3">
         <h2 className="text-base font-semibold flex items-center gap-2">
           <ShoppingCart className="w-4 h-4 text-primary" />
           طلبات الشراء ({sortedPOs.length})
         </h2>
-
         {isLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}

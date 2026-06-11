@@ -5,7 +5,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Plus, ShoppingCart, Trash2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Plus, ShoppingCart, Trash2, User, Package } from "lucide-react";
 import { useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/contexts/LanguageContext";
@@ -27,21 +28,43 @@ const PO_STATUS_COLORS: Record<string, string> = {
   rejected: "bg-red-100 text-red-700",
 };
 
+// الأدوار التي تملك صلاحية رؤية فلتر المستخدم
+const FULL_ACCESS_ROLES = ["owner", "admin", "maintenance_manager", "purchase_manager", "senior_management", "accountant"];
+
 export default function PurchaseOrders() {
   const [, setLocation] = useLocation();
-  const [statusFilter, setStatusFilter] = useState("all");
   const { t, language } = useTranslation();
   const { getPOStatusLabel } = useStaticLabels();
   const { user } = useAuth();
   const utils = trpc.useUtils();
 
+  // فلاتر
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [requestedById, setRequestedById] = useState("all");
+
   const canDelete = user && ["owner", "admin", "maintenance_manager", "purchase_manager"].includes(user.role);
+  const canFilterByUser = user && FULL_ACCESS_ROLES.includes(user.role);
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedPO, setSelectedPO] = useState<any>(null);
 
+  // جلب قائمة المستخدمين للفلتر (فقط للأدوار الكاملة الصلاحيات)
+  const { data: allUsers = [] } = trpc.users.list.useQuery(undefined, {
+    enabled: !!canFilterByUser,
+  });
+
+  // بناء الفلاتر المُرسلة للسيرفر
+  const queryInput = {
+    ...(statusFilter !== "all" && { status: statusFilter }),
+    ...(dateFrom && { dateFrom }),
+    ...(dateTo && { dateTo }),
+    ...(canFilterByUser && requestedById !== "all" && { requestedById: Number(requestedById) }),
+  };
+
   const { data: pos, isLoading } = trpc.purchaseOrders.list.useQuery(
-    statusFilter !== "all" ? { status: statusFilter } : undefined
+    Object.keys(queryInput).length > 0 ? queryInput : undefined
   );
 
   const deleteMutation = trpc.purchaseOrders.delete.useMutation({
@@ -77,14 +100,76 @@ export default function PurchaseOrders() {
         </div>
       </div>
 
-      <div className="flex gap-3">
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[200px]"><SelectValue placeholder={t.common.status} /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t.common.all}</SelectItem>
-            {Object.keys(t.poStatus).map(k => <SelectItem key={k} value={k}>{getPOStatusLabel(k)}</SelectItem>)}
-          </SelectContent>
-        </Select>
+      {/* شريط الفلترة */}
+      <div className="flex flex-wrap gap-3 items-end">
+        {/* فلتر الحالة */}
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">{t.common.status}</span>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-[180px]"><SelectValue placeholder={t.common.status} /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t.common.all}</SelectItem>
+              {Object.keys(t.poStatus).map(k => <SelectItem key={k} value={k}>{getPOStatusLabel(k)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* فلتر من تاريخ */}
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">{t.common.dateFrom ?? "من تاريخ"}</span>
+          <Input
+            type="date"
+            value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+            className="w-[160px]"
+          />
+        </div>
+
+        {/* فلتر إلى تاريخ */}
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">{t.common.dateTo ?? "إلى تاريخ"}</span>
+          <Input
+            type="date"
+            value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
+            className="w-[160px]"
+          />
+        </div>
+
+        {/* فلتر المنشئ — فقط للأدوار الكاملة الصلاحيات */}
+        {canFilterByUser && (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">{t.common.createdBy ?? "منشئ الطلب"}</span>
+            <Select value={requestedById} onValueChange={setRequestedById}>
+              <SelectTrigger className="w-[200px]"><SelectValue placeholder={t.common.all ?? "الكل"} /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t.common.all ?? "الكل"}</SelectItem>
+                {allUsers.map((u: any) => (
+                  <SelectItem key={u.id} value={String(u.id)}>
+                    {u.name || u.username}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* زر مسح الفلاتر */}
+        {(statusFilter !== "all" || dateFrom || dateTo || requestedById !== "all") && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="self-end text-muted-foreground"
+            onClick={() => {
+              setStatusFilter("all");
+              setDateFrom("");
+              setDateTo("");
+              setRequestedById("all");
+            }}
+          >
+            {t.common.clearFilters ?? "مسح الفلاتر"}
+          </Button>
+        )}
       </div>
 
       {isLoading ? (
@@ -105,7 +190,19 @@ export default function PurchaseOrders() {
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-xs font-mono text-muted-foreground">{po.poNumber}</span>
                     </div>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
+                    <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1 flex-wrap">
+                      {/* منشئ الطلب */}
+                      {po.requestedByName && (
+                        <span className="flex items-center gap-1">
+                          <User className="w-3 h-3" />
+                          {po.requestedByName}
+                        </span>
+                      )}
+                      {/* عدد الأصناف */}
+                      <span className="flex items-center gap-1">
+                        <Package className="w-3 h-3" />
+                        {(po as any).itemCount ?? 0} {t.purchaseOrders.items ?? "صنف"}
+                      </span>
                       {po.totalEstimatedCost && <span>{t.purchaseOrders.totalEstimated}: {Number(po.totalEstimatedCost).toLocaleString(locale)} {currency}</span>}
                       {po.totalActualCost && <span>{t.purchaseOrders.totalActual}: {Number(po.totalActualCost).toLocaleString(locale)} {currency}</span>}
                       <span>{new Date(po.createdAt).toLocaleDateString(locale)}</span>

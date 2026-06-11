@@ -19,7 +19,7 @@ import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { useStaticLabels } from "@/hooks/useContentTranslation";
-import { useTranslatedField, getLocalizedName } from "@/hooks/useTranslatedField";
+import { useResolvedTranslation, getLocalizedName } from "@/hooks/useTranslatedField";
 import DropZone, { type UploadedFile } from "@/components/DropZone";
 
 export default function TicketDetail() {
@@ -28,12 +28,18 @@ export default function TicketDetail() {
   const { user } = useAuth();
   const { t, language } = useTranslation();
   const { getStatusLabel, getPriorityLabel, getCategoryLabel, getPOStatusLabel } = useStaticLabels();
-  const { getField } = useTranslatedField();
-  const locale = language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-US";
-  const currency = language === "en" ? "SAR" : "ر.س";
-  const ticketId = parseInt(params?.id || "0");
+const locale = language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-US";
+const currency = language === "en" ? "SAR" : "ر.س";
+const ticketId = parseInt(params?.id || "0");
 
-  const { data: ticket, isLoading, refetch } = trpc.tickets.getById.useQuery({ id: ticketId }, { enabled: !!ticketId });
+const { data: ticket, isLoading, refetch } = trpc.tickets.getById.useQuery({ id: ticketId }, { enabled: !!ticketId });
+
+const { getField } = useResolvedTranslation(
+  "TICKET",
+  ticket?.id,
+  ticket,
+  ticket?.originalLanguage
+);
   const { data: history } = trpc.tickets.history.useQuery({ ticketId }, { enabled: !!ticketId });
   const { data: users } = trpc.users.list.useQuery();
   // Phase 2: listTechnicians gives users with specialty; legacy technicians.list kept for external-only assignments
@@ -227,7 +233,7 @@ export default function TicketDetail() {
               <Badge variant="outline" className={PRIORITY_COLORS[ticket.priority]}>{getPriorityLabel(ticket.priority)}</Badge>
               <Badge variant="outline">{getCategoryLabel(ticket.category)}</Badge>
             </div>
-            <h1 className="text-xl font-bold mt-1">{getField(ticket, "title")}</h1>
+            <h1 className="text-xl font-bold mt-1">{getField("title")}</h1>
           </div>
         </div>
         <Button
@@ -282,7 +288,7 @@ export default function TicketDetail() {
           <Card>
             <CardHeader><CardTitle className="text-base">{t.tickets.ticketTitle}</CardTitle></CardHeader>
             <CardContent className="space-y-4">
-              {ticket.description && <p className="text-sm leading-relaxed">{getField(ticket, "description")}</p>}
+              {ticket.description && <p className="text-sm leading-relaxed">{getField("description")}</p>}
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">{t.tickets.category}:</span>
@@ -390,7 +396,7 @@ export default function TicketDetail() {
               {ticket.repairNotes && (
                 <div className="bg-muted/50 rounded-lg p-3">
                   <p className="text-sm font-medium mb-1">{t.tickets.repairNotes}</p>
-                  <p className="text-sm text-muted-foreground">{getField(ticket, "repairNotes")}</p>
+                  <p className="text-sm text-muted-foreground">{getField("repairNotes")}</p>
                 </div>
               )}
               {ticket.materialsUsed && (
@@ -949,7 +955,7 @@ export default function TicketDetail() {
           <div className="space-y-4">
             <div className="p-3 bg-muted rounded-lg">
               <p className="font-medium text-sm">{ticket?.ticketNumber}</p>
-              <p className="text-sm text-muted-foreground">{ticket && getField(ticket, "title")}</p>
+              <p className="text-sm text-muted-foreground">{ticket && getField("title")}</p>
             </div>
             <div className="space-y-2">
               <Label>تعيين فني <span className="text-muted-foreground text-xs">(مطلوب)</span></Label>

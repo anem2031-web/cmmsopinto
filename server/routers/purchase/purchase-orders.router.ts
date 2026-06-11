@@ -3,6 +3,8 @@ import { z } from "zod";
 import { router, protectedProcedure, managerProcedure, warehouseProcedure, delegateProcedure } from "../_shared/procedures";
 import * as db from "../../db";
 import { notifyOwner } from "../../_core/notification";
+import { detectLanguage } from "../../services/translation";
+import { queueTranslation } from "../../translationEngine";
 
 export const purchaseOrdersRouter = router({
   cancelItem: protectedProcedure.input(z.object({
@@ -254,6 +256,7 @@ export const purchaseOrdersRouter = router({
       quantity: z.number().min(1),
       unit: z.string().optional(),
       photoUrl: z.string().optional(),
+      photoUrls: z.array(z.string()).optional(),
       notes: z.string().optional(),
       delegateId: z.number().optional(),
     })),
@@ -276,6 +279,36 @@ export const purchaseOrdersRouter = router({
     // delegateId is optional at creation — assigned during reviewItems step
     const itemsData = input.items.map(item => ({ ...item, purchaseOrderId: poId!, status: "pending" }));
     await db.createPOItems(itemsData);
+
+    // ترجمة حقول PO في الخلفية
+    if (input.notes) {
+      queueTranslation({
+        entityType: "PO",
+        entityId: poId!,
+        fields: [{ fieldName: "notes", text: input.notes }],
+        sourceLanguage: await detectLanguage(input.notes).catch(() => "ar" as const),
+        userId: ctx.user.id,
+      }).catch(e => console.error("[PO] Queue translation failed:", e));
+    }
+
+    // ترجمة أسماء وأوصاف الأصناف في الخلفية
+    const poItemsCreated = await db.getPOItems(poId!);
+    for (const item of poItemsCreated) {
+      if (item.itemName) {
+        queueTranslation({
+          entityType: "PO_ITEM",
+          entityId: item.id,
+          fields: [
+            { fieldName: "itemName", text: item.itemName },
+            ...(item.description ? [{ fieldName: "description", text: item.description }] : []),
+            ...(item.notes ? [{ fieldName: "notes", text: item.notes }] : []),
+          ],
+          sourceLanguage: await detectLanguage(item.itemName).catch(() => "ar" as const),
+          userId: ctx.user.id,
+        }).catch(e => console.error("[PO_ITEM] Queue translation failed:", e));
+      }
+    }
+
     // Update ticket status if linked (Path C: keep at work_approved — gate security controls status)
     if (input.ticketId) {
       const ticket = await db.getTicketById(input.ticketId);
@@ -326,7 +359,7 @@ export const purchaseOrdersRouter = router({
   deleteItem: protectedProcedure.input(z.object({ id: z.number(), purchaseOrderId: z.number() })).mutation(async ({ input, ctx }) => {
     const po = await db.getPurchaseOrderById(input.purchaseOrderId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND" });
-    if (!["pending_estimate", "pending_accounting"].includes(po.status)) {
+    if (!["draft", "pending_review", "pending_estimate", "pending_accounting", "revision_needed"].includes(po.status)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن حذف صنف من طلب معتمد" });
     }
     const item = await db.getPOItemById(input.id);
@@ -345,18 +378,39 @@ export const purchaseOrdersRouter = router({
     photoUrl: z.string().optional(),
     notes: z.string().optional(),
     estimatedUnitCost: z.string().optional(),
+    lastKnownUpdatedAt: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
     const po = await db.getPurchaseOrderById(input.purchaseOrderId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND" });
-    if (!['pending_estimate', 'pending_accounting', 'draft', 'revision_needed'].includes(po.status)) {
+    if (!['draft', 'pending_review', 'pending_estimate', 'pending_accounting', 'revision_needed'].includes(po.status)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن تعديل صنف في طلب معتمد أو ممول" });
     }
 
     // Enforce creator-only editing when status is 'revision_needed'
     if (po.status === 'revision_needed' && po.requestedById !== ctx.user.id) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "فقط منشئ الطلب يمكنه تعديل الأصناف عند طلب المراجعة" });
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "فقط منشئ الطلب يمكنه تعديل الأصناف عند طلب المراجعة"
+      });
     }
+
     const oldItem = await db.getPOItemById(input.id);
+
+    if (!oldItem) {
+      throw new TRPCError({ code: "NOT_FOUND" });
+    }
+
+    if (
+      oldItem.updatedAt &&
+      input.lastKnownUpdatedAt &&
+      new Date(oldItem.updatedAt).getTime() !==
+        new Date(input.lastKnownUpdatedAt).getTime()
+    ) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "تم تعديل الصنف بواسطة مستخدم آخر، قم بتحديث الصفحة",
+      });
+    }
     if (!oldItem) throw new TRPCError({ code: "NOT_FOUND" });
     const updates: any = {};
     if (input.itemName !== undefined) updates.itemName = input.itemName;
@@ -373,10 +427,21 @@ export const purchaseOrdersRouter = router({
     }
     await db.updatePOItem(input.id, updates);
     await db.createAuditLog({
-      userId: ctx.user.id, action: "update", entityType: "purchase_order_item", entityId: input.id,
-      oldValues: { itemName: oldItem.itemName, description: oldItem.description, quantity: oldItem.quantity, unit: oldItem.unit, estimatedUnitCost: oldItem.estimatedUnitCost, photoUrl: oldItem.photoUrl, notes: oldItem.notes },
-      newValues: updates,
-
+      userId: ctx.user.id,
+      action: "update_po_item",
+      entityType: "purchase_order_item",
+      entityId: input.id,
+      oldValues: {
+        itemName: oldItem.itemName,
+        description: oldItem.description,
+        quantity: oldItem.quantity,
+        unit: oldItem.unit,
+        estimatedUnitCost: oldItem.estimatedUnitCost,
+        estimatedTotalCost: oldItem.estimatedTotalCost,
+        photoUrl: oldItem.photoUrl,
+        notes: oldItem.notes,
+      },
+      newValues: { ...updates },
     });
     return { success: true };
   }),
@@ -398,7 +463,7 @@ export const purchaseOrdersRouter = router({
       }
       const totalCost = cost * (poItem?.quantity || 1);
       totalEstimated += totalCost;
-      await db.updatePOItem(item.id, { estimatedUnitCost: item.estimatedUnitCost, estimatedTotalCost: String(totalCost), status: "estimated" });
+      await db.updatePOItem(item.id, { estimatedUnitCost: item.estimatedUnitCost, estimatedTotalCost: String(totalCost), status: "estimated", estimatedById: ctx.user.id });
     }
     // Check if all items are estimated (excluding rejected/cancelled items)
     const allItems = await db.getPOItems(input.purchaseOrderId);
@@ -424,26 +489,44 @@ export const purchaseOrdersRouter = router({
     return { ...po, items, comments };
   }),
 
-  list: protectedProcedure.input(z.object({ status: z.string().optional() }).optional()).query(async ({ input, ctx }) => {
-    const role = ctx.user.role;
-    let filters: any = input || {};
-    
-    if (role === "purchase_requester") {
-      // Purchase requesters only see their own requests
-      filters.requestedById = ctx.user.id;
-      return db.getPurchaseOrders(filters);
-    }
-    
-    if (role === "delegate") {
-      // Delegates see POs that have items assigned to them
-      const items = await db.getPOItemsByDelegate(ctx.user.id);
-      const poIds = Array.from(new Set(items.map(i => i.purchaseOrderId)));
-      if (poIds.length === 0) return [];
-      const allPOs = await db.getPurchaseOrders(filters);
-      return allPOs.filter(po => poIds.includes(po.id));
-    }
-    return db.getPurchaseOrders(filters);
-  }),
+list: protectedProcedure.input(z.object({
+  status: z.string().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+  requestedById: z.number().optional(),
+}).optional()).query(async ({ input, ctx }) => {
+  const role = ctx.user.role;
+
+  // الأدوار المحدودة: تجاهل فلاتر المستخدم وتثبيت الـ requestedById
+  if (role === "purchase_requester") {
+    return db.getPurchaseOrders({
+      status: input?.status,
+      dateFrom: input?.dateFrom,
+      dateTo: input?.dateTo,
+      requestedById: ctx.user.id, // دائماً طلباته فقط
+    });
+  }
+
+  if (role === "delegate") {
+    const items = await db.getPOItemsByDelegate(ctx.user.id);
+    const poIds = Array.from(new Set(items.map(i => i.purchaseOrderId)));
+    if (poIds.length === 0) return [];
+    const allPOs = await db.getPurchaseOrders({
+      status: input?.status,
+      dateFrom: input?.dateFrom,
+      dateTo: input?.dateTo,
+    });
+    return allPOs.filter(po => poIds.includes(po.id));
+  }
+
+  // الأدوار الكاملة الصلاحيات: تقبل جميع الفلاتر بما فيها requestedById
+  return db.getPurchaseOrders({
+    status: input?.status,
+    dateFrom: input?.dateFrom,
+    dateTo: input?.dateTo,
+    requestedById: input?.requestedById,
+  });
+}),
 
   myItems: protectedProcedure.query(async ({ ctx }) => {
     const isAdminOrOwner = ctx.user.role === "admin" || ctx.user.role === "owner";

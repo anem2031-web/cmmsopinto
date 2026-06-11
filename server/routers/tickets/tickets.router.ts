@@ -1,7 +1,8 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure, managerProcedure } from "../_shared/procedures";
-import { translateFields, detectLanguage, type SupportedLanguage } from "../../services/translation";
+import { detectLanguage, type SupportedLanguage } from "../../services/translation";
+import { queueTranslation, translationCache } from "../../translationEngine";
 import * as db from "../../db";
 
 export const ticketsRouter = router({
@@ -41,32 +42,31 @@ export const ticketsRouter = router({
     beforePhotoUrl: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
     const ticketNumber = await db.getNextTicketNumber();
-    // Auto-translate fields
-    const fieldsToTranslate: Record<string, string> = {};
-    if (input.title) fieldsToTranslate.title = input.title;
-    if (input.description) fieldsToTranslate.description = input.description;
-    let translationData: Record<string, any> = {};
-    let detectedLang: SupportedLanguage = "ar";
-    if (Object.keys(fieldsToTranslate).length > 0) {
-      try {
-        detectedLang = await detectLanguage(input.title);
-        const translations = await translateFields(fieldsToTranslate, detectedLang);
-        if (translations.title) {
-          translationData.title_ar = translations.title.ar;
-          translationData.title_en = translations.title.en;
-          translationData.title_ur = translations.title.ur;
-        }
-        if (translations.description) {
-          translationData.description_ar = translations.description.ar;
-          translationData.description_en = translations.description.en;
-          translationData.description_ur = translations.description.ur;
-        }
-      } catch (e) {
-        console.error("[Ticket] Translation failed:", e);
-      }
-    }
-    // New workflow: tickets start as pending_triage and go to supervisor
-    const id = await db.createTicket({ ...input, ...translationData, originalLanguage: detectedLang, ticketNumber, reportedById: ctx.user.id, status: "pending_triage" });
+
+    // كشف اللغة فقط — الترجمة تحدث في الخلفية
+    const detectedLang: SupportedLanguage = await detectLanguage(input.title).catch(() => "ar" as SupportedLanguage);
+
+    // إنشاء التذكرة فوراً بدون انتظار الترجمة
+    const id = await db.createTicket({
+      ...input,
+      originalLanguage: detectedLang,
+      ticketNumber,
+      reportedById: ctx.user.id,
+      status: "pending_triage"
+    });
+    // ترجمة في الخلفية — المستخدم لا ينتظر
+    const fieldsToQueue = [
+      { fieldName: "title", text: input.title },
+      ...(input.description ? [{ fieldName: "description", text: input.description }] : []),
+    ];
+    queueTranslation({
+      entityType: "TICKET",
+      entityId: id!,
+      fields: fieldsToQueue,
+      sourceLanguage: detectedLang,
+      userId: ctx.user.id,
+    }).catch(e => console.error("[Ticket] Queue translation failed:", e));
+
     await db.addTicketStatusHistory({ ticketId: id!, fromStatus: undefined, toStatus: "pending_triage", changedById: ctx.user.id });
     await db.createAuditLog({ userId: ctx.user.id, action: "create_ticket", entityType: "ticket", entityId: id! });
     // Notify supervisors first (new workflow)
@@ -105,32 +105,29 @@ export const ticketsRouter = router({
     if (input.priority && input.priority !== ticket.priority) { oldValues.priority = ticket.priority; newValues.priority = input.priority; }
     if (input.category && input.category !== ticket.category) { oldValues.category = ticket.category; newValues.category = input.category; }
     if (input.siteId && input.siteId !== ticket.siteId) { oldValues.siteId = ticket.siteId; newValues.siteId = input.siteId; }
-    // Auto-translate updated text fields to all 3 languages
-    let translationUpdate: Record<string, any> = {};
-    const fieldsToTranslate: Record<string, string> = {};
-    if (input.title && input.title !== ticket.title) fieldsToTranslate.title = input.title;
-    if (input.description && input.description !== ticket.description) fieldsToTranslate.description = input.description;
-    if (Object.keys(fieldsToTranslate).length > 0) {
-      try {
-        const textForDetection = Object.values(fieldsToTranslate)[0];
-        const detectedLang = await detectLanguage(textForDetection) as SupportedLanguage;
-        const translations = await translateFields(fieldsToTranslate, detectedLang);
-        if (translations.title) {
-          translationUpdate.title_ar = translations.title.ar;
-          translationUpdate.title_en = translations.title.en;
-          translationUpdate.title_ur = translations.title.ur;
-        }
-        if (translations.description) {
-          translationUpdate.description_ar = translations.description.ar;
-          translationUpdate.description_en = translations.description.en;
-          translationUpdate.description_ur = translations.description.ur;
-        }
-      } catch (e) {
-        console.error("[Ticket] Update translation failed:", e);
-      }
+    // تحديث التذكرة فوراً
+    await db.updateTicket(id, { ...updateData });
+
+    // إعادة الترجمة في الخلفية إذا تغيرت حقول نصية
+    const fieldsToRequeue = [
+      ...(input.title && input.title !== ticket.title
+        ? [{ fieldName: "title", text: input.title }] : []),
+      ...(input.description && input.description !== ticket.description
+        ? [{ fieldName: "description", text: input.description }] : []),
+    ];
+    if (fieldsToRequeue.length > 0) {
+      const detectedLang = await detectLanguage(fieldsToRequeue[0].text).catch(() => ticket.originalLanguage as SupportedLanguage);
+      queueTranslation({
+        entityType: "TICKET",
+        entityId: id,
+        fields: fieldsToRequeue,
+        sourceLanguage: detectedLang,
+        userId: ctx.user.id,
+      }).catch(e => console.error("[Ticket] Queue translation update failed:", e));
+      translationCache.invalidate("TICKET", id);
     }
-    await db.updateTicket(id, { ...updateData, ...translationUpdate });
-    await db.createAuditLog({ userId: ctx.user.id, action: "update_ticket", entityType: "ticket", entityId: id, oldValues, newValues });
+
+await db.createAuditLog({ userId: ctx.user.id, action: "update_ticket", entityType: "ticket", entityId: id, oldValues, newValues });
     // Notify managers about ticket edit
     if (Object.keys(newValues).length > 0) {
       const managers = await db.getManagerUsers();

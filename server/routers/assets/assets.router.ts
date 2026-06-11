@@ -3,6 +3,7 @@ import { z } from "zod";
 import { router, protectedProcedure, managerProcedure } from "../_shared/procedures";
 import { translateFields, detectLanguage, type SupportedLanguage } from "../../services/translation";
 import { storageRename } from "../../storage";
+import { translationCache } from "../../translationEngine";
 import * as db from "../../db";
 
 export const assetsRouter = router({
@@ -179,13 +180,19 @@ export const assetsRouter = router({
         console.error("[Asset] RFID rename on rfid-change failed:", e);
       }
     }
-    return db.updateAsset(id, {
-      ...data,
-      ...assetTranslation,
-      photoUrl: finalPhotoUrl,
-      purchaseDate: data.purchaseDate ? new Date(data.purchaseDate) : undefined,
-      warrantyExpiry: data.warrantyExpiry ? new Date(data.warrantyExpiry) : undefined,
-    });
+const updateResult = await db.updateAsset(id, {
+  ...data,
+  ...assetTranslation,
+  photoUrl: finalPhotoUrl,
+  purchaseDate: data.purchaseDate ? new Date(data.purchaseDate) : undefined,
+  warrantyExpiry: data.warrantyExpiry ? new Date(data.warrantyExpiry) : undefined,
+});
+
+if (Object.keys(assetTranslation).length > 0) {
+  translationCache.invalidate("ASSET", id);
+}
+
+return updateResult;
   }),
 
   delete: managerProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {

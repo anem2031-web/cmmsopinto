@@ -37,6 +37,7 @@ export const purchaseReportsRouter = router({
         const items = allItems.filter(i => i.purchaseOrderId === po.id);
         const ticket = po.ticketId ? allTickets.find(t => t.id === po.ticketId) : null;
         const requestedBy = allUsers.find(u => u.id === po.requestedById)?.name || "غير معروف";
+        const reviewedBy = allUsers.find(u => u.id === (po as any).reviewedById)?.name || null;
         const accountingApprovedBy = allUsers.find(u => u.id === po.accountingApprovedById)?.name;
         const managementApprovedBy = allUsers.find(u => u.id === po.managementApprovedById)?.name;
 
@@ -44,14 +45,35 @@ export const purchaseReportsRouter = router({
         const t1 = po.accountingApprovedAt ? new Date(po.accountingApprovedAt).getTime() : null;
         const t2 = po.managementApprovedAt ? new Date(po.managementApprovedAt).getTime() : null;
 
-        const poPhases = [
-          { phase: "إنشاء الطلب", startAt: new Date(po.createdAt), endAt: po.accountingApprovedAt ? new Date(po.accountingApprovedAt) : null, durationHours: t1 ? msToHours(t1 - t0) : null, actor: requestedBy, status: "done" },
-          { phase: "موافقة الحسابات", startAt: po.accountingApprovedAt ? new Date(po.accountingApprovedAt) : null, endAt: po.managementApprovedAt ? new Date(po.managementApprovedAt) : null, durationHours: t1 && t2 ? msToHours(t2 - t1) : null, actor: accountingApprovedBy || null, status: po.accountingApprovedAt ? "done" : "pending" },
-          { phase: "موافقة الإدارة", startAt: po.managementApprovedAt ? new Date(po.managementApprovedAt) : null, endAt: null, durationHours: null, actor: managementApprovedBy || null, status: po.managementApprovedAt ? "done" : "pending" },
-        ];
+// جمع المنفذين على مستوى الطلب كله
+const purchasedActors = items
+  .filter(i => i.purchasedById)
+  .map(i => ({ itemName: i.itemName, name: allUsers.find(u => u.id === i.purchasedById)?.name || "غير معروف" }));
+
+const receivedActors = items
+  .filter(i => i.receivedById)
+  .map(i => ({ itemName: i.itemName, name: allUsers.find(u => u.id === i.receivedById)?.name || "غير معروف" }));
+
+const deliveredActors = items
+  .filter(i => i.deliveredById)
+  .map(i => ({
+    itemName: i.itemName,
+    name: allUsers.find(u => u.id === i.deliveredById)?.name || "غير معروف",
+    deliveredTo: allUsers.find(u => u.id === i.deliveredToId)?.name || null,
+  }));
+
+const poPhases = [
+  { phase: "إنشاء الطلب", startAt: new Date(po.createdAt), endAt: (po as any).reviewedAt ? new Date((po as any).reviewedAt) : null, durationHours: null, actor: requestedBy, actors: [{ itemName: "", name: requestedBy }], status: "done" },
+  { phase: "مراجعة الأصناف", startAt: (po as any).reviewedAt ? new Date((po as any).reviewedAt) : null, endAt: po.accountingApprovedAt ? new Date(po.accountingApprovedAt) : null, durationHours: null, actor: reviewedBy, actors: reviewedBy ? [{ itemName: "", name: reviewedBy }] : [], status: (po as any).reviewedAt ? "done" : "pending" },
+  { phase: "موافقة الحسابات", startAt: po.accountingApprovedAt ? new Date(po.accountingApprovedAt) : null, endAt: po.managementApprovedAt ? new Date(po.managementApprovedAt) : null, durationHours: t1 && t2 ? msToHours(t2 - t1) : null, actor: accountingApprovedBy || null, actors: accountingApprovedBy ? [{ itemName: "", name: accountingApprovedBy }] : [], status: po.accountingApprovedAt ? "done" : "pending" },
+  { phase: "موافقة الإدارة", startAt: po.managementApprovedAt ? new Date(po.managementApprovedAt) : null, endAt: null, durationHours: null, actor: managementApprovedBy || null, actors: managementApprovedBy ? [{ itemName: "", name: managementApprovedBy }] : [], status: po.managementApprovedAt ? "done" : "pending" },
+  { phase: "شراء المندوب", startAt: null, endAt: null, durationHours: null, actor: null, actors: purchasedActors, status: purchasedActors.length > 0 ? "done" : "pending" },
+  { phase: "استلام المستودع", startAt: null, endAt: null, durationHours: null, actor: null, actors: receivedActors, status: receivedActors.length > 0 ? "done" : "pending" },
+  { phase: "تسليم للفني", startAt: null, endAt: null, durationHours: null, actor: null, actors: deliveredActors, status: deliveredActors.length > 0 ? "done" : "pending" },
+];
 
         const itemsReport = items.map(item => {
-          const delegate = allUsers.find(u => u.id === item.delegateId)?.name || "غير مُعيَّن";
+          const delegate = allUsers.find(u => u.id === Number(item.estimatedById || item.delegateId))?.name || "غير مُعيَّن";
           const receivedBy = allUsers.find(u => u.id === item.receivedById)?.name;
           const deliveredBy = allUsers.find(u => u.id === item.deliveredById)?.name;
           const purchasedBy = allUsers.find(u => u.id === item.purchasedById)?.name;
@@ -62,11 +84,11 @@ export const purchaseReportsRouter = router({
           const tDelivered = item.deliveredAt ? new Date(item.deliveredAt).getTime() : null;
 
           const phases = [
-            { phase: "انتظار التسعير", startAt: new Date(item.createdAt), endAt: item.estimatedUnitCost ? new Date(item.updatedAt) : null, durationHours: item.estimatedUnitCost && t2 ? msToHours(t2 - tCreated) : null, status: item.estimatedUnitCost ? "done" : "pending" },
-            { phase: "اعتماد الشراء", startAt: po.managementApprovedAt ? new Date(po.managementApprovedAt) : null, endAt: item.purchasedAt ? new Date(item.purchasedAt) : null, durationHours: t2 && tPurchased ? msToHours(tPurchased - t2) : null, status: item.purchasedAt ? "done" : (po.managementApprovedAt ? "in_progress" : "pending") },
+            { phase: "انتظار التسعير", startAt: new Date(item.createdAt), endAt: item.estimatedUnitCost ? new Date(item.updatedAt) : null, durationHours: item.estimatedUnitCost && t2 ? msToHours(t2 - tCreated) : null, actor: purchasedBy || delegate || null, status: item.estimatedUnitCost ? "done" : "pending" },
+            { phase: "اعتماد الشراء", startAt: po.managementApprovedAt ? new Date(po.managementApprovedAt) : null, endAt: item.purchasedAt ? new Date(item.purchasedAt) : null, durationHours: t2 && tPurchased ? msToHours(tPurchased - t2) : null, actor: reviewedBy || null, status: item.purchasedAt ? "done" : (po.managementApprovedAt ? "in_progress" : "pending") },
             { phase: "شراء المندوب", startAt: item.purchasedAt ? new Date(item.purchasedAt) : null, endAt: item.receivedAt ? new Date(item.receivedAt) : null, durationHours: tPurchased && tReceived ? msToHours(tReceived - tPurchased) : null, actor: purchasedBy || delegate, status: item.purchasedAt ? "done" : "pending" },
             { phase: "استلام المستودع", startAt: item.receivedAt ? new Date(item.receivedAt) : null, endAt: item.deliveredAt ? new Date(item.deliveredAt) : null, durationHours: tReceived && tDelivered ? msToHours(tDelivered - tReceived) : null, actor: receivedBy || null, status: item.receivedAt ? "done" : "pending" },
-            { phase: "تسليم للفني", startAt: item.deliveredAt ? new Date(item.deliveredAt) : null, endAt: null, durationHours: null, actor: deliveredBy || null, status: item.deliveredAt ? "done" : "pending" },
+            { phase: "تسليم للفني", startAt: item.deliveredAt ? new Date(item.deliveredAt) : null, endAt: null, durationHours: null, actor: deliveredBy || null, deliveredTo: allUsers.find(u => u.id === item.deliveredToId)?.name || null, status: item.deliveredAt ? "done" : "pending" },
           ];
 
           const totalHours = tDelivered ? msToHours(tDelivered - tCreated) : null;

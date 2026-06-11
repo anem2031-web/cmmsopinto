@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTranslation } from "@/contexts/LanguageContext";
+import { useTranslatedField } from "@/hooks/useTranslatedField";
 import { useStaticLabels } from "@/hooks/useContentTranslation";
 import DropZone, { type UploadedFile } from "@/components/DropZone";
 
@@ -73,6 +74,7 @@ export default function PurchaseOrderDetail() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
   const { t, language } = useTranslation();
+  const { getField } = useTranslatedField();
   const { getPOStatusLabel, getPOItemStatusLabel } = useStaticLabels();
   const locale = language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-US";
   const currency = language === "en" ? "SAR" : "ر.س";
@@ -372,17 +374,17 @@ export default function PurchaseOrderDetail() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <h4 className={`font-medium text-sm ${isCancelled ? "line-through text-gray-400" : ""}`}>{item.itemName}</h4>
+                      <h4 className={`font-medium text-sm ${isCancelled ? "line-through text-gray-400" : ""}`}>{getField(item, "itemName")}</h4>
                       <Badge className={`text-[10px] ${ITEM_STATUS_COLORS[item.status] || "bg-gray-100 text-gray-700"}`}>
                         {getPOItemStatusLabel(item.status)}
                       </Badge>
                     </div>
-                    {item.description && <p className={`text-xs ${isCancelled ? "text-gray-400 line-through" : "text-muted-foreground"}`}>{item.description}</p>}
+                    {item.description && <p className={`text-xs ${isCancelled ? "text-gray-400 line-through" : "text-muted-foreground"}`}>{getField(item, "description")}</p>}
                     <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground flex-wrap">
                       <span className={isCancelled ? "line-through" : ""}>{t.purchaseOrders.quantity}: <strong>{item.quantity} {item.unit || ""}</strong></span>
                       {delegate && <span>{t.purchaseOrders.delegate}: <strong>{delegate.name}</strong></span>}
                     </div>
-                    {item.notes && <p className="text-xs text-muted-foreground mt-1.5 bg-muted/50 rounded-lg p-2">{item.notes}</p>}
+                    {item.notes && <p className="text-xs text-muted-foreground mt-1.5 bg-muted/50 rounded-lg p-2">{getField(item, "notes")}</p>}
                     {isCancelled && item.managementRejectionReason && (
                       <p className="text-xs text-gray-400 mt-1">{language === "ar" ? "سبب الإلغاء: " : "Cancel reason: "}{item.managementRejectionReason}</p>
                     )}
@@ -397,7 +399,7 @@ export default function PurchaseOrderDetail() {
                     </button>
                   )}
                   {/* Edit button - only for editable statuses */}
-                  {po && role !== "delegate" && ['draft', 'pending_estimate', 'pending_accounting', 'revision_needed'].includes(po.status) && ['pending', 'estimated'].includes(item.status) && (
+                  {po && role !== "delegate" && ['draft', 'pending_review', 'pending_estimate', 'pending_accounting', 'revision_needed'].includes(po.status) && ['pending', 'estimated', 'approved'].includes(item.status) && (
                     <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={() => {
                       setEditingItem(item);
                       setEditForm({ itemName: item.itemName, description: item.description || "", quantity: item.quantity, estimatedUnitCost: item.estimatedUnitCost || "", unit: item.unit || "", photoUrl: item.photoUrl || "", notes: item.notes || "" });
@@ -771,8 +773,8 @@ export default function PurchaseOrderDetail() {
                   <div key={item.id} className="border rounded-lg p-3 space-y-3 bg-white">
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <p className="text-sm font-medium">{item.itemName}</p>
-                        {item.description && <p className="text-xs text-muted-foreground">{item.description}</p>}
+                        <p className="text-sm font-medium">{getField(item, "itemName")}</p>
+                        {item.description && <p className="text-xs text-muted-foreground">{getField(item, "description")}</p>}
                         <p className="text-xs text-muted-foreground mt-0.5">{t.purchaseOrders.quantity}: <strong>{item.quantity} {item.unit || ""}</strong></p>
                       </div>
                     </div>
@@ -861,7 +863,7 @@ export default function PurchaseOrderDetail() {
               {po.items?.filter((i: any) => i.status !== "rejected").map((item: any) => (
                 <div key={item.id} className="flex items-center justify-between py-2 border-b border-orange-50 last:border-0">
                   <div className="flex-1">
-                    <p className={`text-sm ${lateRejections[item.id] ? 'line-through text-gray-400' : 'text-gray-800 font-medium'}`}>{item.itemName}</p>
+                    <p className={`text-sm ${lateRejections[item.id] ? 'line-through text-gray-400' : 'text-gray-800 font-medium'}`}>{getField(item, "itemName")}</p>
                     <p className="text-xs text-gray-500">التكلفة المقدرة: {Number(item.estimatedTotalCost || 0).toLocaleString("ar-SA")} ر.س.</p>
                   </div>
                   <Button 
@@ -915,7 +917,7 @@ export default function PurchaseOrderDetail() {
               {po.items?.filter((i: any) => i.status !== "rejected").map((item: any) => (
                 <div key={item.id} className="flex items-center justify-between py-2 border-b border-orange-50 last:border-0">
                   <div className="flex-1">
-                    <p className={`text-sm ${lateRejections[item.id] ? 'line-through text-gray-400' : 'text-gray-800 font-medium'}`}>{item.itemName}</p>
+                    <p className={`text-sm ${lateRejections[item.id] ? 'line-through text-gray-400' : 'text-gray-800 font-medium'}`}>{getField(item, "itemName")}</p>
                     <p className="text-xs text-gray-500">التكلفة المقدرة: {Number(item.estimatedTotalCost || 0).toLocaleString("ar-SA")} ر.س.</p>
                   </div>
                   <Button 
@@ -1062,23 +1064,33 @@ export default function PurchaseOrderDetail() {
               <Label>{t.common.description}</Label>
               <Textarea value={editForm.description} onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))} rows={3} />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+<div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>{t.purchaseOrders.quantity}</Label>
                 <Input type="number" min={1} value={editForm.quantity} onChange={e => setEditForm(p => ({ ...p, quantity: parseInt(e.target.value) || 1 }))} />
               </div>
               <div className="space-y-2">
-                <Label>{t.purchaseOrders.estimatedUnitCost}</Label>
-                <Input type="number" step="0.01" value={editForm.estimatedUnitCost} onChange={e => setEditForm(p => ({ ...p, estimatedUnitCost: e.target.value }))} placeholder="0.00" />
-              </div>
-              <div className="space-y-2">
                 <Label>{t.purchaseOrders.unit}</Label>
                 <Input value={editForm.unit} onChange={e => setEditForm(p => ({ ...p, unit: e.target.value }))} />
               </div>
+            </div>
+
+            {!['approved', 'partial_purchase', 'purchased', 'received'].includes(po.status) && (
               <div className="space-y-2">
-                <Label>Photo URL</Label>
-                <Input value={editForm.photoUrl} onChange={e => setEditForm(p => ({ ...p, photoUrl: e.target.value }))} />
+                <Label>{t.purchaseOrders.estimatedUnitCost}</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={editForm.estimatedUnitCost}
+                  onChange={e => setEditForm(p => ({ ...p, estimatedUnitCost: e.target.value }))}
+                  placeholder="0.00"
+                />
               </div>
+            )}
+
+            <div className="space-y-2">
+              <Label>Photo URL</Label>
+              <Input value={editForm.photoUrl} onChange={e => setEditForm(p => ({ ...p, photoUrl: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label>{t.common.notes}</Label>
@@ -1090,12 +1102,17 @@ export default function PurchaseOrderDetail() {
             <Button onClick={() => {
               if (!editingItem) return;
               editItemMut.mutate({
+                lastKnownUpdatedAt: editingItem.updatedAt?.toISOString(),
+
                 id: editingItem.id,
                 purchaseOrderId: po.id,
                 itemName: editForm.itemName,
                 description: editForm.description,
                 quantity: editForm.quantity,
-                estimatedUnitCost: editForm.estimatedUnitCost || undefined,
+                estimatedUnitCost:
+                 ['approved', 'partial_purchase', 'purchased', 'received'].includes(po.status)
+                   ? undefined
+                   : (editForm.estimatedUnitCost || undefined),
                 unit: editForm.unit || undefined,
                 photoUrl: editForm.photoUrl || undefined,
                 notes: editForm.notes || undefined,

@@ -482,6 +482,16 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
   });
 
+  // استعادة الـ translation jobs المعلقة عند بدء التشغيل
+  setTimeout(async () => {
+    try {
+      const { recoverPendingTranslations } = await import("../translationEngine");
+      await recoverPendingTranslations();
+    } catch (e) {
+      console.error("[Startup] Translation recovery failed:", e);
+    }
+  }, 3000);
+
   const ONE_HOUR = 60 * 60 * 1000;
   setTimeout(() => {
     runTechnicianOverdueJob();

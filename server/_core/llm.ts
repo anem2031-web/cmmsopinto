@@ -280,7 +280,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   } = params;
 
   const payload: Record<string, unknown> = {
-    model: "gemini-2.5-flash",
+    model: "deepseek-chat",
     messages: messages.map(normalizeMessage),
   };
 
@@ -297,10 +297,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   }
 
   payload.max_tokens = 32768
-  payload.thinking = {
-    "budget_tokens": 128
-  }
-
+  
   const normalizedResponseFormat = normalizeResponseFormat({
     responseFormat,
     response_format,

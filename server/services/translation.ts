@@ -139,28 +139,53 @@ Keep technical terms, numbers, asset codes, and proper nouns as-is.`,
       ],
     });
 
-    const content = response.choices?.[0]?.message?.content;
-    if (!content) throw new Error("No translation content returned");
+const content = response.choices?.[0]?.message?.content;
+if (!content) throw new Error("No translation content returned");
 
-    const parsed = typeof content === "string" ? JSON.parse(content) : content;
+// تنظيف الـ markdown إذا أضافه الـ LLM
+const cleanContent = typeof content === "string"
+  ? content.replace(/```json\n?|\n?```/g, "").trim()
+  : content;
 
-    for (const [key] of nonEmptyFields) {
-      if (parsed[key]) {
-        results[key] = {
-          ar: parsed[key].ar || fields[key],
-          en: parsed[key].en || fields[key],
-          ur: parsed[key].ur || fields[key],
-          originalLanguage: detectedLang,
-        };
-      } else {
-        results[key] = {
-          ar: fields[key],
-          en: fields[key],
-          ur: fields[key],
-          originalLanguage: detectedLang,
-        };
-      }
-    }
+let parsed: any;
+try {
+  parsed = typeof cleanContent === "string" ? JSON.parse(cleanContent) : cleanContent;
+} catch {
+  console.error("[Translation] JSON parse failed, content was:", cleanContent);
+  // fallback: كل حقل يأخذ نصه الأصلي
+  for (const [key, value] of nonEmptyFields) {
+    results[key] = { ar: value, en: value, ur: value, originalLanguage: detectedLang };
+  }
+  return results;
+}
+
+// تحقق من الشكل قبل الكتابة
+if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  console.error("[Translation] Unexpected response shape:", parsed);
+  for (const [key, value] of nonEmptyFields) {
+    results[key] = { ar: value, en: value, ur: value, originalLanguage: detectedLang };
+  }
+  return results;
+}
+
+for (const [key] of nonEmptyFields) {
+  const t = parsed[key];
+  if (t && typeof t === "object" && (t.ar || t.en || t.ur)) {
+    results[key] = {
+      ar: t.ar || fields[key],
+      en: t.en || fields[key],
+      ur: t.ur || fields[key],
+      originalLanguage: detectedLang,
+    };
+  } else {
+    results[key] = {
+      ar: fields[key],
+      en: fields[key],
+      ur: fields[key],
+      originalLanguage: detectedLang,
+    };
+  }
+}
   } catch (error) {
     console.error("[Translation] Error translating fields:", error);
     // Fallback

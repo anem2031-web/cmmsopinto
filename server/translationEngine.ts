@@ -18,7 +18,9 @@ import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   entityTranslations, translationJobs, translationVersions,
-  type SupportedLanguage, supportedLanguages, auditLogs
+  type SupportedLanguage, supportedLanguages, auditLogs,
+  tickets, assets, pmWorkOrders, purchaseOrderItems,
+  preventivePlans, pmExecutionResults, pmExecutionSessions, pmChecklistItems,
 } from "../drizzle/schema";
 import { invokeLLM } from "./_core/llm";
 import { getDb } from "./db";
@@ -53,12 +55,23 @@ export interface TranslationResult {
 
 // Entity field mapping - defines which fields are translatable for each entity type
 export const ENTITY_FIELD_MAP: Record<string, string[]> = {
-  TICKET: ["title", "description", "repairNotes", "materialsUsed"],
-  PO: ["justification", "notes", "accountingNotes", "managementNotes", "rejectionReason"],
-  PO_ITEM: ["itemName", "specifications", "notes"],
-  INVENTORY: ["itemName", "description", "category"],
-  SITE: ["name", "address", "description"],
+  // tickets table: title_ar/en/ur, description_ar/en/ur, repairNotes_ar/en/ur موجودة في الـ schema
+  TICKET: ["title", "description", "repairNotes"],
+  // purchaseOrders table: لا أعمدة ترجمة مباشرة - يُخزَّن في entity_translations فقط
+  PO: ["notes", "accountingNotes", "managementNotes", "rejectionReason"],
+  // purchaseOrderItems: specifications غير موجود في الـ schema
+  PO_ITEM: ["itemName", "description", "notes"],
+  // inventory: لا أعمدة ترجمة في الـ schema حالياً - يُخزَّن في entity_translations فقط
+  INVENTORY: ["itemName", "description"],
+  // sites: name فقط - address وdescription غير مترجمَين في الـ schema
+  SITE: ["name"],
+  // notifications: لا أعمدة ترجمة في الـ schema حالياً
   NOTIFICATION: ["title", "message"],
+  PM_PLAN: ["title", "description"],
+  PM_WORK_ORDER: ["title", "technicianNotes"],
+  PM_RESULT: ["fixNotes"],
+  PM_SESSION: ["generalNotes"],
+  PM_CHECKLIST: ["text"],
 };
 
 // ============================================================
@@ -272,6 +285,113 @@ export async function queueTranslation(request: TranslationRequest): Promise<num
 }
 
 /**
+ * كتابة الترجمة في الأعمدة المباشرة بعد اكتمال الـ Engine
+ * حتى تظهر الترجمة في القوائم والبحث والتقارير
+ */
+async function writeBackToDirectColumn(
+  db: any,
+  entityType: string,
+  entityId: number,
+  fieldName: string,
+  language: SupportedLanguage,
+  translatedText: string
+): Promise<void> {
+  try {
+    const columnName = `${fieldName}_${language}`;
+
+    if (entityType === "TICKET") {
+      const validColumns = [
+        "title_ar", "title_en", "title_ur",
+        "description_ar", "description_en", "description_ur",
+        "repairNotes_ar", "repairNotes_en", "repairNotes_ur",
+      ];
+      if (!validColumns.includes(columnName)) return;
+      await db.update(tickets)
+        .set({ [columnName]: translatedText })
+        .where(eq(tickets.id, entityId));
+
+    } else if (entityType === "ASSET") {
+      const validColumns = [
+        "description_ar", "description_en", "description_ur",
+        "notes_ar", "notes_en", "notes_ur",
+      ];
+      if (!validColumns.includes(columnName)) return;
+      await db.update(assets)
+        .set({ [columnName]: translatedText })
+        .where(eq(assets.id, entityId));
+
+    } else if (entityType === "WORK_ORDER") {
+      const validColumns = [
+        "technicianNotes_ar", "technicianNotes_en", "technicianNotes_ur",
+      ];
+      if (!validColumns.includes(columnName)) return;
+      await db.update(pmWorkOrders)
+        .set({ [columnName]: translatedText })
+        .where(eq(pmWorkOrders.id, entityId));
+
+    } else if (entityType === "PO_ITEM") {
+      const validColumns = [
+        "itemName_ar", "itemName_en", "itemName_ur",
+        "description_ar", "description_en", "description_ur",
+        "notes_ar", "notes_en", "notes_ur",
+      ];
+      if (!validColumns.includes(columnName)) return;
+      await db.update(purchaseOrderItems)
+        .set({ [columnName]: translatedText })
+        .where(eq(purchaseOrderItems.id, entityId));
+
+    } else if (entityType === "PM_PLAN") {
+      const validColumns = [
+        "title_ar", "title_en", "title_ur",
+        "description_ar", "description_en", "description_ur",
+      ];
+      if (!validColumns.includes(columnName)) return;
+      await db.update(preventivePlans)
+        .set({ [columnName]: translatedText })
+        .where(eq(preventivePlans.id, entityId));
+
+    } else if (entityType === "PM_WORK_ORDER") {
+      const validColumns = [
+        "title_ar", "title_en", "title_ur",
+        "technicianNotes_ar", "technicianNotes_en", "technicianNotes_ur",
+      ];
+      if (!validColumns.includes(columnName)) return;
+      await db.update(pmWorkOrders)
+        .set({ [columnName]: translatedText })
+        .where(eq(pmWorkOrders.id, entityId));
+
+    } else if (entityType === "PM_RESULT") {
+      const validColumns = [
+        "fixNotes_ar", "fixNotes_en", "fixNotes_ur",
+      ];
+      if (!validColumns.includes(columnName)) return;
+      await db.update(pmExecutionResults)
+        .set({ [columnName]: translatedText })
+        .where(eq(pmExecutionResults.id, entityId));
+
+    } else if (entityType === "PM_SESSION") {
+      const validColumns = [
+        "generalNotes_ar", "generalNotes_en", "generalNotes_ur",
+      ];
+      if (!validColumns.includes(columnName)) return;
+      await db.update(pmExecutionSessions)
+        .set({ [columnName]: translatedText })
+        .where(eq(pmExecutionSessions.id, entityId));
+
+    } else if (entityType === "PM_CHECKLIST") {
+      const validColumns = ["text_ar", "text_en", "text_ur"];
+      if (!validColumns.includes(columnName)) return;
+      await db.update(pmChecklistItems)
+        .set({ [columnName]: translatedText })
+        .where(eq(pmChecklistItems.id, entityId));
+    }
+  } catch (e) {
+    // لا نوقف العملية إذا فشل الـ write-back
+    console.error(`[TranslationEngine] Write-back failed for ${entityType}.${fieldName}_${language}:`, e);
+  }
+}
+
+/**
  * Process translation jobs (called asynchronously)
  */
 async function processTranslationJobs(jobIds: number[]): Promise<void> {
@@ -339,6 +459,12 @@ async function processTranslationJobs(jobIds: number[]): Promise<void> {
         translationCache.set(
           job.entityType, job.entityId, job.fieldName,
           job.targetLanguage as SupportedLanguage, translated
+        );
+
+        // كتابة الترجمة في الأعمدة المباشرة أيضاً حتى تظهر في القوائم والبحث
+        await writeBackToDirectColumn(
+          db, job.entityType, job.entityId,
+          job.fieldName, job.targetLanguage as SupportedLanguage, translated
         );
       }
 
@@ -745,4 +871,40 @@ export async function updateUserLanguage(userId: number, language: SupportedLang
   }
   const { users } = await import("../drizzle/schema");
   await db.update(users).set({ preferredLanguage: language }).where(eq(users.id, userId));
+}
+
+/**
+ * استعادة الـ jobs المعلقة عند بدء تشغيل السيرفر
+ */
+export async function recoverPendingTranslations(): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+
+  const pending = await db.select()
+    .from(translationJobs)
+    .where(inArray(translationJobs.status, ["pending", "processing"]))
+    .limit(50);
+
+  if (pending.length === 0) {
+    console.log("[TranslationEngine] No pending translation jobs to recover.");
+    return;
+  }
+
+  console.log(`[TranslationEngine] Recovering ${pending.length} pending translation jobs...`);
+
+  // أعد وضع الـ processing كـ pending إذا كانت stuck
+  const processingIds = pending
+    .filter(j => j.status === "processing")
+    .map(j => j.id);
+
+  if (processingIds.length > 0) {
+    await db.update(translationJobs)
+      .set({ status: "pending" })
+      .where(inArray(translationJobs.id, processingIds));
+  }
+
+  const allPendingIds = pending.map(j => j.id);
+  processTranslationJobs(allPendingIds).catch(e =>
+    console.error("[TranslationEngine] Recovery processing error:", e)
+  );
 }

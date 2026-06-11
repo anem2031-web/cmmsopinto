@@ -22,7 +22,7 @@ type ItemForm = {
   quantity: number;
   unit: string;
 
-  photoUrl: string;
+  photoUrls: string[];
   notes: string;
 };
 
@@ -35,7 +35,7 @@ const emptyItem = (): ItemForm => ({
   quantity: 1,
   unit: "قطعة",
 
-  photoUrl: "",
+  photoUrls: [],
   notes: ""
 });
 
@@ -343,17 +343,25 @@ export default function CreatePurchaseOrder() {
     setItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: value } : item));
   };
 
-  const handleUpload = async (idx: number, file: File) => {
-    setUploadingIdx(idx);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.url) { updateItem(idx, "photoUrl", data.url); toast.success(t.common.save); }
-    } catch { toast.error(t.common.close); }
-    setUploadingIdx(null);
-  };
+const handleUpload = async (idx: number, file: File) => {
+  setUploadingIdx(idx);
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/upload", { method: "POST", body: formData });
+    const data = await res.json();
+    if (data.url) {
+      const current = items[idx].photoUrls || [];
+      if (current.length < 4) {
+        updateItem(idx, "photoUrls", [...current, data.url]);
+        toast.success(t.common.save);
+      } else {
+        toast.error("الحد الأقصى 4 صور");
+      }
+    }
+  } catch { toast.error(t.common.close); }
+  setUploadingIdx(null);
+};
 
   // عند اختيار صنف من الكاتلوج
 const handleCatalogSelect = (catalogItem: any) => {
@@ -369,7 +377,7 @@ const handleCatalogSelect = (catalogItem: any) => {
             itemName: catalogItem.nameAr || "",
             description: catalogItem.nameEn || "",
 
-            photoUrl: catalogItem.primaryImageUrl || "",
+            photoUrls: catalogItem.primaryImageUrl ? [catalogItem.primaryImageUrl] : [],
           }
         : item
     )
@@ -387,7 +395,8 @@ const handleCatalogSelect = (catalogItem: any) => {
         description: i.description || undefined,
         quantity:    i.quantity,
         unit:        i.unit || undefined,
-        photoUrl:    i.photoUrl || undefined,
+        photoUrl:    i.photoUrls?.[0] || undefined,
+        photoUrls:   i.photoUrls?.length ? i.photoUrls : undefined,
         notes:       i.notes || undefined,
       })),
     });
@@ -533,99 +542,105 @@ const handleCatalogSelect = (catalogItem: any) => {
           />
         </div>
 
-        {/* الصورة */}
-        <div className="space-y-2">
-          <Label>{t.tickets.photos}</Label>
+{/* الصور — حتى 4 */}
+<div className="space-y-2">
+  <Label>
+    {t.tickets.photos}
+    <span className="text-xs text-muted-foreground mr-2">
+      ({(item.photoUrls || []).length}/4)
+    </span>
+  </Label>
 
-          {item.photoUrl ? (
-            <div className="relative">
-              <img
-                src={item.photoUrl}
-                alt=""
-                className="w-full h-20 rounded-lg object-cover border"
-              />
-
-              <Button
-                variant="destructive"
-                size="icon"
-                className="absolute top-1 left-1 h-6 w-6"
-                onClick={() => {
-                  updateItem(idx, "photoUrl", "");
-                  setShowDropZoneIdx(null);
-                }}
-              >
-                <Trash2 className="w-3 h-3" />
-              </Button>
-            </div>
-          ) : showDropZoneIdx === idx ? (
-
-            <DropZone
-              maxFiles={1}
-              accept="image/*"
-              label="اسحب صورة الصنف"
-              sublabel="صورة واحدة فقط"
-              onFilesUploaded={(files: UploadedFile[]) => {
-                const done = files.find(
-                  f => f.status === "done" && f.url
-                );
-
-                if (done?.url) {
-                  updateItem(idx, "photoUrl", done.url);
-                  setShowDropZoneIdx(null);
-                }
-              }}
-            />
-
-          ) : (
-
-            <div className="flex gap-2">
-
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex-1 h-20 border-dashed gap-1"
-                onClick={() => {
-                  const input =
-                    document.createElement("input");
-
-                  input.type = "file";
-                  input.accept = "image/*";
-
-                  input.onchange = (e: any) => {
-                    if (e.target.files[0]) {
-                      handleUpload(idx, e.target.files[0]);
-                    }
-                  };
-
-                  input.click();
-                }}
-                disabled={uploadingIdx === idx}
-              >
-                {uploadingIdx === idx ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Camera className="w-4 h-4" />
-                )}
-
-                {uploadingIdx === idx
-                  ? "..."
-                  : t.common.upload}
-              </Button>
-
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-20 px-3 border-dashed"
-                onClick={() => setShowDropZoneIdx(idx)}
-                title="سحب وإفلات"
-              >
-                <Upload className="w-4 h-4" />
-              </Button>
-
-            </div>
-          )}
+  {/* عرض الصور المرفوعة */}
+  {(item.photoUrls || []).length > 0 && (
+    <div className="grid grid-cols-4 gap-2">
+      {(item.photoUrls || []).map((url, pIdx) => (
+        <div key={pIdx} className="relative">
+          <img
+            src={url}
+            alt=""
+            className="w-full h-16 rounded-lg object-cover border"
+          />
+          <Button
+            variant="destructive"
+            size="icon"
+            className="absolute top-0.5 left-0.5 h-5 w-5"
+            onClick={() => {
+              const updated = (item.photoUrls || []).filter((_, i) => i !== pIdx);
+              updateItem(idx, "photoUrls", updated);
+            }}
+          >
+            <Trash2 className="w-3 h-3" />
+          </Button>
         </div>
+      ))}
+    </div>
+  )}
+
+  {/* أزرار الرفع — تظهر فقط إذا أقل من 4 */}
+  {(item.photoUrls || []).length < 4 && (
+    showDropZoneIdx === idx ? (
+      <DropZone
+        maxFiles={4 - (item.photoUrls || []).length}
+        accept="image/*"
+        label="اسحب صور الصنف"
+        sublabel={`حتى ${4 - (item.photoUrls || []).length} صور`}
+        onFilesUploaded={(files: UploadedFile[]) => {
+          const uploaded = files
+            .filter(f => f.status === "done" && f.url)
+            .map(f => f.url!);
+          if (uploaded.length > 0) {
+            const current = item.photoUrls || [];
+            const combined = [...current, ...uploaded].slice(0, 4);
+            updateItem(idx, "photoUrls", combined);
+            setShowDropZoneIdx(null);
+          }
+        }}
+      />
+    ) : (
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="flex-1 h-16 border-dashed gap-1"
+          onClick={() => {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.accept = "image/*";
+            input.multiple = true;
+            input.onchange = async (e: any) => {
+              const files: File[] = Array.from(e.target.files || []);
+              const remaining = 4 - (item.photoUrls || []).length;
+              for (const file of files.slice(0, remaining)) {
+                await handleUpload(idx, file);
+              }
+            };
+            input.click();
+          }}
+          disabled={uploadingIdx === idx}
+        >
+          {uploadingIdx === idx ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Camera className="w-4 h-4" />
+          )}
+          {uploadingIdx === idx ? "..." : t.common.upload}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-16 px-3 border-dashed"
+          onClick={() => setShowDropZoneIdx(idx)}
+          title="سحب وإفلات"
+        >
+          <Upload className="w-4 h-4" />
+        </Button>
       </div>
+    )
+  )}
+</div> {/* إغلاق div الصور space-y-2 */}
+
+      </div> {/* إغلاق grid grid-cols-2 md:grid-cols-3 */}
 
       {/* الملاحظات */}
       <div className="space-y-2">

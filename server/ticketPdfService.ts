@@ -12,7 +12,35 @@
  */
 
 import { htmlToPdf } from "./htmlToPdfService";
-import { getTicketById, getUserById, getSiteById, getSections, getPurchaseOrders } from "./db";
+import {
+  getTicketById,
+  getUserById,
+  getSiteById,
+  getSections,
+  getPurchaseOrders,
+  getAttachments
+} from "./db";
+
+async function imageUrlToBase64(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      console.error("Image fetch failed:", response.status, url);
+      return null;
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    const contentType =
+      response.headers.get("content-type") || "image/jpeg";
+
+    return `data:${contentType};base64,${buffer.toString("base64")}`;
+  } catch (error) {
+    console.error("Failed to convert image:", url, error);
+    return null;
+  }
+}
 
 // Status labels for display
 const STATUS_LABELS: Record<string, string> = {
@@ -72,7 +100,10 @@ function escapeHtml(text: string | null | undefined): string {
 export async function generateTicketPDF(ticketId: number): Promise<Buffer> {
   // Fetch ticket data
   const ticket = await getTicketById(ticketId);
+
   if (!ticket) throw new Error("Ticket not found");
+
+  console.log("PHOTO URL:", ticket.beforePhotoUrl);
 
   // Enrich with related data
   const reportedBy = ticket.reportedById ? await getUserById(ticket.reportedById) : null;
@@ -115,6 +146,19 @@ export async function generateTicketPDF(ticketId: number): Promise<Buffer> {
       : '<tr><td colspan="4" style="text-align: center; color: #9ca3af;">لا توجد طلبات شراء مرتبطة</td></tr>';
 
   // Build HTML document
+const attachments = await getAttachments("ticket", ticketId);
+
+const imageAttachments = attachments.filter((a: any) =>
+  a.mimeType?.startsWith("image/")
+);
+
+const imageBase64List = await Promise.all(
+  imageAttachments.map(async (a: any) => {
+    const mediaUrl = `http://localhost:3000${a.fileUrl}`;
+
+    return await imageUrlToBase64(mediaUrl);
+  })
+);
   const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -302,14 +346,91 @@ export async function generateTicketPDF(ticketId: number): Promise<Buffer> {
       color: #64748b;
       text-align: center;
     }
-    
+
+.photos-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.photo-item {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+  padding: 6px;
+  page-break-inside: avoid;
+}
+
+.photo-item img {
+  width: 100%;
+  height: 220px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.inspection-box {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 24px;
+  min-height: 220px;
+}
+
+.inspection-line {
+  border-bottom: 1px dashed #94a3b8;
+  height: 32px;
+}
+
+.inspection-signatures {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 32px;
+  gap: 16px;
+}
+
     /* Print-specific adjustments */
-    @media print {
-      body { margin: 0; padding: 0; }
-      .header { page-break-after: avoid; }
-      .section-header { page-break-after: avoid; }
-      table { page-break-inside: avoid; }
-    }
+@page {
+  size: A4;
+  margin: 12mm;
+}
+
+@media print {
+  html,
+  body {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0;
+    padding: 0;
+    background: #fff;
+  }
+
+  body {
+    zoom: 0.95;
+  }
+
+  .header {
+    page-break-after: avoid;
+  }
+
+  .section-header {
+    page-break-after: avoid;
+  }
+
+  table,
+  .info-box,
+  .content-block,
+  .inspection-box,
+  .photo-item {
+    page-break-inside: avoid;
+  }
+
+  img {
+    max-width: 100%;
+    display: block;
+  }
+}
   </style>
 </head>
 <body>
@@ -385,15 +506,58 @@ export async function generateTicketPDF(ticketId: number): Promise<Buffer> {
     <div class="content-text">${escapeHtml(ticket.description || "لا يوجد وصف إضافي")}</div>
   </div>
 
-  <!-- Section 3: Work Execution Details -->
+<!-- Section 3: Ticket Photos -->
+${imageBase64List.length > 0 ? `
+<div class="section-header">3. صور البلاغ</div>
+
+<div class="photos-grid">
+  ${imageBase64List
+    .filter(Boolean)
+    .map((img) => `
+      <div class="photo-item">
+        <img src="${img}" />
+      </div>
+    `)
+    .join("")}
+</div>
+` : ""}
+
+  <!-- Section 4: Inspection Result -->
+  <div class="section-header">4. تسجيل نتيجة الفحص</div>
+
+  <div class="inspection-box">
+    <div class="inspection-line"></div>
+    <div class="inspection-line"></div>
+    <div class="inspection-line"></div>
+    <div class="inspection-line"></div>
+    <div class="inspection-line"></div>
+
+    <div class="inspection-signatures">
+      <div>
+        <strong>اسم الفني:</strong>
+      </div>
+
+      <div>
+        <strong>التوقيع:</strong>
+      </div>
+
+      <div>
+        <strong>التاريخ:</strong>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 5: Work Execution Details -->
   ${ticket.inspectionNotes || ticket.repairNotes || ticket.materialsUsed ? `
-  <div class="section-header">3. تفاصيل التنفيذ</div>
+  <div class="section-header">5. تفاصيل التنفيذ</div>
+
   ${ticket.inspectionNotes ? `
   <div class="content-block">
     <span class="content-label">ملاحظات الفحص:</span>
     <div class="content-text">${escapeHtml(ticket.inspectionNotes)}</div>
   </div>
   ` : ""}
+
   ${ticket.repairNotes ? `
   <div class="content-block">
     <span class="content-label">ملاحظات الإصلاح:</span>

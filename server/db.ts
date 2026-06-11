@@ -311,7 +311,13 @@ export async function getTickets(filters?: { status?: string; priority?: string;
   if (filters?.assignedToId) conditions.push(eq(tickets.assignedToId, filters.assignedToId));
   if (filters?.assignedTechnicianId) conditions.push(eq(tickets.assignedTechnicianId, filters.assignedTechnicianId));
   if (filters?.reportedById) conditions.push(eq(tickets.reportedById, filters.reportedById));
-  if (filters?.search) conditions.push(or(like(tickets.title, `%${filters.search}%`), like(tickets.ticketNumber, `%${filters.search}%`)));
+  if (filters?.search) conditions.push(or(
+    like(tickets.title, `%${filters.search}%`),
+    like(tickets.title_ar, `%${filters.search}%`),
+    like(tickets.title_en, `%${filters.search}%`),
+    like(tickets.title_ur, `%${filters.search}%`),
+    like(tickets.ticketNumber, `%${filters.search}%`)
+  ));
   if (filters?.category) conditions.push(eq(tickets.category, filters.category as any));
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   // Phase 4: join both external technicians table AND internal users table
@@ -388,14 +394,71 @@ export async function createPurchaseOrder(data: any) {
   return result[0].insertId;
 }
 
-export async function getPurchaseOrders(filters?: { status?: string; requestedById?: number }) {
+export async function getPurchaseOrders(filters?: {
+  status?: string;
+  requestedById?: number;
+  dateFrom?: string;
+  dateTo?: string;
+}) {
   const db = await getDb();
   if (!db) return [];
   const conditions: any[] = [];
   if (filters?.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
   if (filters?.requestedById) conditions.push(eq(purchaseOrders.requestedById, filters.requestedById));
+  if (filters?.dateFrom) conditions.push(gte(purchaseOrders.createdAt, new Date(filters.dateFrom)));
+  if (filters?.dateTo) {
+    const to = new Date(filters.dateTo);
+    to.setHours(23, 59, 59, 999);
+    conditions.push(lte(purchaseOrders.createdAt, to));
+  }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
-  return db.select().from(purchaseOrders).where(where).orderBy(desc(purchaseOrders.createdAt));
+
+  // استعلام 1: جلب الطلبات مع اسم المنشئ
+  const poList = await db
+.select({
+      id: purchaseOrders.id,
+      poNumber: purchaseOrders.poNumber,
+      ticketId: purchaseOrders.ticketId,
+      status: purchaseOrders.status,
+      requestedById: purchaseOrders.requestedById,
+      requestedByName: users.name,
+      totalEstimatedCost: purchaseOrders.totalEstimatedCost,
+      totalActualCost: purchaseOrders.totalActualCost,
+      notes: purchaseOrders.notes,
+      createdAt: purchaseOrders.createdAt,
+      updatedAt: purchaseOrders.updatedAt,
+      reviewedById: purchaseOrders.reviewedById,
+      reviewedAt: purchaseOrders.reviewedAt,
+      accountingApprovedById: purchaseOrders.accountingApprovedById,
+      accountingApprovedAt: purchaseOrders.accountingApprovedAt,
+      managementApprovedById: purchaseOrders.managementApprovedById,
+      managementApprovedAt: purchaseOrders.managementApprovedAt,
+      custodyAmount: purchaseOrders.custodyAmount,
+    })
+    .from(purchaseOrders)
+    .leftJoin(users, eq(purchaseOrders.requestedById, users.id))
+    .where(where)
+    .orderBy(desc(purchaseOrders.createdAt));
+
+  if (poList.length === 0) return [];
+
+  // استعلام 2: جلب عدد الأصناف لكل طلب دفعة واحدة
+  const poIds = poList.map(p => p.id);
+  const itemCounts = await db
+    .select({
+      purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+      itemCount: count(purchaseOrderItems.id),
+    })
+    .from(purchaseOrderItems)
+    .where(inArray(purchaseOrderItems.purchaseOrderId, poIds))
+    .groupBy(purchaseOrderItems.purchaseOrderId);
+
+  // دمج النتيجتين
+  const countMap = new Map(itemCounts.map(r => [r.purchaseOrderId, Number(r.itemCount)]));
+  return poList.map(po => ({
+    ...po,
+    itemCount: countMap.get(po.id) ?? 0,
+  }));
 }
 
 export async function getPurchaseOrderById(id: number) {
@@ -1795,7 +1858,16 @@ export async function getAllPushSubscriptions() {
 export async function getAllPOItems() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(purchaseOrderItems).orderBy(desc(purchaseOrderItems.createdAt));
+  const items = await db.select().from(purchaseOrderItems).orderBy(desc(purchaseOrderItems.createdAt));
+  return items.map(i => ({
+    ...i,
+    estimatedById: i.estimatedById ? Number(i.estimatedById) : null,
+    delegateId: i.delegateId ? Number(i.delegateId) : null,
+    purchasedById: i.purchasedById ? Number(i.purchasedById) : null,
+    receivedById: i.receivedById ? Number(i.receivedById) : null,
+    deliveredById: i.deliveredById ? Number(i.deliveredById) : null,
+    deliveredToId: i.deliveredToId ? Number(i.deliveredToId) : null,
+  }));
 }
 
 // ============================================================

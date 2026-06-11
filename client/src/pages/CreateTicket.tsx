@@ -161,19 +161,41 @@ export default function CreateTicket() {
 
   const addFiles = useCallback((files: FileList | File[]) => {
     const fileArray = Array.from(files);
-    const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp",
-      "application/pdf", "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "text/plain"];
+const allowed = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "video/mp4",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/plain",
+];
 
-    const valid = fileArray.filter(f => {
+    const currentImagesCount =
+  fileEntries.filter(e => e.file.type.startsWith("image/")).length;
+
+const incomingImagesCount =
+  fileArray.filter(f => f.type.startsWith("image/")).length;
+
+if (currentImagesCount + incomingImagesCount > 4) {
+  toast.error("الحد الأقصى 4 صور للبلاغ");
+  return;
+}
+
+const valid = fileArray.filter(f => {
       if (!allowed.includes(f.type) && !f.type.startsWith("image/")) {
         toast.error(`${at.invalidFileType || "نوع ملف غير مدعوم"}: ${f.name}`);
         return false;
       }
-      if (f.size > 10 * 1024 * 1024) {
+const maxSize = f.type.startsWith("video/")
+  ? 10 * 1024 * 1024
+  : 10 * 1024 * 1024;
+
+if (f.size > maxSize) {
         toast.error(`${at.fileTooLarge || "الملف كبير جداً (الحد 10 MB)"}: ${f.name}`);
         return false;
       }
@@ -360,7 +382,7 @@ export default function CreateTicket() {
             <input
               ref={fileRef}
               type="file"
-              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+              accept="image/*,video/mp4,.pdf,.doc,.docx,.xls,.xlsx,.txt"
               onChange={handleFileInput}
               className="hidden"
               multiple

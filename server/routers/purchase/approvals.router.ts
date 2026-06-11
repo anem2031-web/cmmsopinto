@@ -262,8 +262,12 @@ export const approvalsRouter = router({
         if (po.requestedById && po.requestedById !== ctx.user.id) {
           await db.createNotification({ userId: po.requestedById, title: "❌ تم رفض جميع أصناف طلب الشراء", message: `تم رفض جميع أصناف طلب الشراء رقم ${po.poNumber}.`, type: "critical", relatedPOId: input.poId });
         }
-      } else if (hasApproved) {
-        await db.updatePurchaseOrder(input.poId, { status: "pending_estimate" });
+} else if (hasApproved) {
+        await db.updatePurchaseOrder(input.poId, {
+          status: "pending_estimate",
+          reviewedById: ctx.user.id,
+          reviewedAt: new Date(),
+        });
         const approvedItems = allItems.filter(i => i.status === "pending" && i.delegateId);
         const delegateIds = Array.from(new Set(approvedItems.map(i => i.delegateId!)));
         for (const dId of delegateIds) {
