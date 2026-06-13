@@ -453,13 +453,31 @@ export async function getPurchaseOrders(filters?: {
     .where(inArray(purchaseOrderItems.purchaseOrderId, poIds))
     .groupBy(purchaseOrderItems.purchaseOrderId);
 
-  // دمج النتيجتين
+  // استعلام 3: جلب أسماء الأصناف لكل طلب دفعة واحدة (للبحث الديناميكي)
+  const itemRows = await db
+    .select({
+      purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+      itemName: purchaseOrderItems.itemName,
+    })
+    .from(purchaseOrderItems)
+    .where(inArray(purchaseOrderItems.purchaseOrderId, poIds));
+
+  const namesMap = new Map<number, string[]>();
+  for (const row of itemRows) {
+    const arr = namesMap.get(row.purchaseOrderId) ?? [];
+    arr.push(row.itemName);
+    namesMap.set(row.purchaseOrderId, arr);
+  }
+
+  // دمج النتائج
   const countMap = new Map(itemCounts.map(r => [r.purchaseOrderId, Number(r.itemCount)]));
   return poList.map(po => ({
     ...po,
     itemCount: countMap.get(po.id) ?? 0,
+    itemNames: namesMap.get(po.id) ?? [],
   }));
 }
+
 
 export async function getPurchaseOrderById(id: number) {
   const db = await getDb();
