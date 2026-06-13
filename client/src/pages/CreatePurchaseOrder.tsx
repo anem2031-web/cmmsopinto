@@ -482,6 +482,7 @@ const handleCatalogSelect = (catalogItem: any) => {
         <Label>{t.purchaseOrders.itemName} *</Label>
 
         <Input
+          dir="auto"
           value={item.itemName}
           readOnly={item.sourceType === "catalog"}
           onClick={() => {
@@ -501,6 +502,7 @@ const handleCatalogSelect = (catalogItem: any) => {
         <Label>{t.tickets.description}</Label>
 
         <Textarea
+          dir="auto"
           value={item.description}
           onChange={e =>
             updateItem(idx, "description", e.target.value)
@@ -535,6 +537,7 @@ const handleCatalogSelect = (catalogItem: any) => {
           <Label>{t.purchaseOrders.unit}</Label>
 
           <Input
+            dir="auto"
             value={item.unit}
             onChange={e =>
               updateItem(idx, "unit", e.target.value)
@@ -647,6 +650,7 @@ const handleCatalogSelect = (catalogItem: any) => {
         <Label>{t.purchaseOrders.justification}</Label>
 
         <Input
+          dir="auto"
           value={item.notes}
           onChange={e =>
             updateItem(idx, "notes", e.target.value)
@@ -669,6 +673,7 @@ const handleCatalogSelect = (catalogItem: any) => {
 
       <div className="space-y-3">
         <Textarea
+          dir="auto"
           placeholder={t.purchaseOrders.justification}
           value={notes}
           onChange={e => setNotes(e.target.value)}
