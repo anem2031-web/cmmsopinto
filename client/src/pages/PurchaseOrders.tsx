@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Plus, ShoppingCart, Trash2, User, Package } from "lucide-react";
+import { Plus, ShoppingCart, Trash2, User, Package, Search } from "lucide-react";
 import { useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/contexts/LanguageContext";
@@ -43,6 +43,7 @@ export default function PurchaseOrders() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [requestedById, setRequestedById] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const canDelete = user && ["owner", "admin", "maintenance_manager", "purchase_manager"].includes(user.role);
   const canFilterByUser = user && FULL_ACCESS_ROLES.includes(user.role);
@@ -85,6 +86,24 @@ export default function PurchaseOrders() {
   const locale = language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-US";
   const currency = language === "en" ? "SAR" : "ر.س";
 
+  // البحث الديناميكي: رقم الطلب، اسم المنشئ، عدد الأصناف، أسماء الأصناف، الحالة، الملاحظات، التاريخ
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredPos = (pos ?? []).filter((po: any) => {
+    if (!normalizedSearch) return true;
+    const haystack: string[] = [
+      po.poNumber,
+      po.requestedByName,
+      String(po.itemCount ?? ""),
+      ...(po.itemNames ?? []),
+      getPOStatusLabel(po.status),
+      po.notes,
+      po.totalEstimatedCost != null ? String(po.totalEstimatedCost) : "",
+      po.totalActualCost != null ? String(po.totalActualCost) : "",
+      po.createdAt ? new Date(po.createdAt).toLocaleDateString(locale) : "",
+    ].filter(Boolean).map(String);
+    return haystack.some(field => field.toLowerCase().includes(normalizedSearch));
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -98,6 +117,17 @@ export default function PurchaseOrders() {
             <Plus className="w-4 h-4" /> {t.purchaseOrders.createNew}
           </Button>
         </div>
+      </div>
+
+      {/* خانة البحث الديناميكية */}
+      <div className="relative">
+        <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder={t.common.search ?? "ابحث برقم الطلب، المنشئ، اسم الصنف..."}
+          className="pr-9 max-w-md"
+        />
       </div>
 
       {/* شريط الفلترة */}
@@ -155,7 +185,7 @@ export default function PurchaseOrders() {
         )}
 
         {/* زر مسح الفلاتر */}
-        {(statusFilter !== "all" || dateFrom || dateTo || requestedById !== "all") && (
+        {(statusFilter !== "all" || dateFrom || dateTo || requestedById !== "all" || searchQuery) && (
           <Button
             variant="ghost"
             size="sm"
@@ -165,6 +195,7 @@ export default function PurchaseOrders() {
               setDateFrom("");
               setDateTo("");
               setRequestedById("all");
+              setSearchQuery("");
             }}
           >
             {t.common.clearFilters ?? "مسح الفلاتر"}
@@ -174,7 +205,7 @@ export default function PurchaseOrders() {
 
       {isLoading ? (
         <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Card key={i}><CardContent className="p-4"><Skeleton className="h-16 w-full" /></CardContent></Card>)}</div>
-      ) : !pos?.length ? (
+      ) : !filteredPos?.length ? (
         <Card><CardContent className="p-12 text-center">
           <ShoppingCart className="w-12 h-12 mx-auto text-muted-foreground/40 mb-4" />
           <h3 className="font-semibold text-lg mb-1">{t.purchaseOrders.noPOs}</h3>
@@ -182,7 +213,7 @@ export default function PurchaseOrders() {
         </CardContent></Card>
       ) : (
         <div className="space-y-2">
-          {pos.map(po => (
+          {filteredPos.map(po => (
             <Card key={po.id} className="hover:shadow-lg hover:border-primary/20 transition-all duration-200 cursor-pointer" onClick={() => setLocation(`/purchase-orders/${po.id}`)}>
               <CardContent className="p-4">
                 <div className="flex items-center justify-between gap-4">
