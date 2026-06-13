@@ -220,7 +220,7 @@ export default function ItemsManager() {
 
   const { data: items, isLoading, refetch } =
     trpc.catalog.items.list.useQuery({
-      limit: 100,
+      limit: 10000,
       isActive: true,
     });
 
