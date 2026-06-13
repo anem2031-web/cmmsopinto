@@ -60,10 +60,7 @@ export default function CatalogSettings() {
                 {t.catalog.settings.requireSupplier}
               </p>
               <p className="text-sm text-slate-600">
-                {t(
-                  "catalog.settings.requireSupplierDesc",
-                  "يجب تحديد مورد واحد على الأقل عند إضافة صنف"
-                )}
+                {"يجب تحديد مورد واحد على الأقل عند إضافة صنف"}
               </p>
             </div>
             <Switch
@@ -81,10 +78,7 @@ export default function CatalogSettings() {
                 {t.catalog.settings.autoCode}
               </p>
               <p className="text-sm text-slate-600">
-                {t(
-                  "catalog.settings.autoCodeDesc",
-                  "توليد كود الصنف تلقائياً بناءً على القسم"
-                )}
+                {"توليد كود الصنف تلقائياً بناءً على القسم"}
               </p>
             </div>
             <Switch
@@ -102,10 +96,7 @@ export default function CatalogSettings() {
                 {t.catalog.settings.bulkImport}
               </p>
               <p className="text-sm text-slate-600">
-                {t(
-                  "catalog.settings.bulkImportDesc",
-                  "السماح برفع ملفات Excel لإضافة أصناف متعددة"
-                )}
+                {"السماح برفع ملفات Excel لإضافة أصناف متعددة"}
               </p>
             </div>
             <Switch
@@ -123,10 +114,7 @@ export default function CatalogSettings() {
                 {t.catalog.settings.requireImage}
               </p>
               <p className="text-sm text-slate-600">
-                {t(
-                  "catalog.settings.requireImageDesc",
-                  "يجب إضافة صورة رئيسية لكل صنف"
-                )}
+                {"يجب إضافة صورة رئيسية لكل صنف"}
               </p>
             </div>
             <Switch
@@ -166,10 +154,7 @@ export default function CatalogSettings() {
               className="mt-2"
             />
             <p className="text-xs text-slate-500 mt-1">
-              {t(
-                "catalog.settings.maxImageSizeDesc",
-                "الحد الأقصى لحجم الصورة الواحدة عند الرفع"
-              )}
+              {"الحد الأقصى لحجم الصورة الواحدة عند الرفع"}
             </p>
           </div>
         </CardContent>
@@ -184,10 +169,7 @@ export default function CatalogSettings() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-red-600">
-            {t(
-              "catalog.settings.dangerZoneDesc",
-              "هذه الإجراءات قد تؤدي إلى فقدان البيانات. يرجى التأكد قبل المتابعة."
-            )}
+            {"هذه الإجراءات قد تؤدي إلى فقدان البيانات. يرجى التأكد قبل المتابعة."}
           </p>
           <Button variant="destructive" className="w-full">
             {t.catalog.settings.resetCatalog}
