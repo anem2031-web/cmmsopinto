@@ -1,6 +1,6 @@
 import CatalogExportButton from "./CatalogExportButton";
 import CatalogImportButton from "./CatalogImportButton";
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -218,33 +218,64 @@ export default function ItemsManager() {
 
   const { data: units } = trpc.catalog.units.list.useQuery();
 
-  const { data: items, isLoading, refetch } =
+  // ── Pagination + بحث من السيرفر ──────────────────────────
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(0);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [allItems, setAllItems] = useState<any[]>([]);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+
+  // Debounce: تأخير إرسال البحث للسيرفر وإعادة الصفحة إلى الأول
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+      setPage(0);
+      setAllItems([]);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const { data: items, isLoading, isFetching, refetch } =
     trpc.catalog.items.list.useQuery({
-      limit: 10000,
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
       isActive: true,
+      search: debouncedSearch || undefined,
     });
 
-  // ── فلترة البحث — client-side ──────────────────────────
-  const filteredItems = useMemo(() => {
-    if (!items) return [];
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((item: any) => {
-      return (
-        item.nameAr?.toLowerCase().includes(q) ||
-        item.nameEn?.toLowerCase().includes(q) ||
-        item.code?.toLowerCase().includes(q) ||
-        item.unit?.toLowerCase().includes(q) ||
-        item.manufacturer?.toLowerCase().includes(q)
-      );
-    });
-  }, [items, searchQuery]);
+  // تجميع الصفحات: الصفحة الأولى تستبدل، الباقي يُضاف
+  useEffect(() => {
+    if (!items) return;
+    setAllItems(prev => (page === 0 ? items : [...prev, ...items]));
+  }, [items, page]);
+
+  const hasMore = (items?.length ?? 0) === PAGE_SIZE;
+
+  // تحميل الصفحة التالية عند الوصول لأسفل القائمة
+  useEffect(() => {
+    const el = loadMoreRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasMore && !isFetching) {
+        setPage(p => p + 1);
+      }
+    }, { rootMargin: "200px" });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, isFetching]);
+
+  // إعادة التحميل من الصفحة الأولى (تُستخدم بعد إضافة/تعديل/حذف صنف)
+  const reloadFromStart = () => {
+    setPage(0);
+    setAllItems([]);
+    refetch();
+  };
 
   const attachmentMut = trpc.attachments.add.useMutation();
 
   const createMut = trpc.catalog.items.create.useMutation({
     onSuccess: () => {
-      refetch();
+      reloadFromStart();
       resetForm();
       setIsDialogOpen(false);
       toast.success("تم إضافة الصنف");
@@ -254,7 +285,7 @@ export default function ItemsManager() {
 
   const updateMut = trpc.catalog.items.update.useMutation({
     onSuccess: () => {
-      refetch();
+      reloadFromStart();
       resetForm();
       setEditingItem(null);
       setIsDialogOpen(false);
@@ -265,7 +296,7 @@ export default function ItemsManager() {
 
   const deleteMut = trpc.catalog.items.delete.useMutation({
     onSuccess: () => {
-      refetch();
+      reloadFromStart();
       toast.success("تم حذف الصنف");
     },
     onError: (e) => toast.error(e.message),
@@ -404,11 +435,13 @@ export default function ItemsManager() {
 
 </div>
 
-{/* عداد النتائج عند البحث */}
+{/* عداد العناصر المحمّلة */}
 
-      {searchQuery && (
+      {(searchQuery || allItems.length > 0) && !isLoading && (
         <p className="text-xs text-muted-foreground">
-          {filteredItems.length} نتيجة من {items?.length ?? 0}
+          {searchQuery
+            ? `تم تحميل ${allItems.length} نتيجة للبحث عن "${searchQuery}"`
+            : `تم تحميل ${allItems.length} صنف`}
         </p>
       )}
 
@@ -417,9 +450,9 @@ export default function ItemsManager() {
         <div className="flex justify-center py-12">
           <Loader2 className="w-6 h-6 animate-spin" />
         </div>
-      ) : filteredItems.length > 0 ? (
+      ) : allItems.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredItems.map((item: any) => (
+          {allItems.map((item: any) => (
             <ItemCard
               key={item.id}
               item={item}
@@ -461,6 +494,13 @@ export default function ItemsManager() {
               : t.catalog.items.empty}
           </CardContent>
         </Card>
+      )}
+
+      {/* نقطة تحميل الصفحة التالية (Infinite Scroll) */}
+      {!isLoading && hasMore && (
+        <div ref={loadMoreRef} className="flex justify-center py-6">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        </div>
       )}
 
       {/* View Item Dialog */}
