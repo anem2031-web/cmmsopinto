@@ -158,7 +158,7 @@ onSelect: (item: {
 
   return (
     <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-0">
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-0 resize overflow-auto min-w-[320px] min-h-[300px]">
         <DialogHeader className="px-5 pt-5 pb-3 border-b">
           <DialogTitle className="flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-primary" />
