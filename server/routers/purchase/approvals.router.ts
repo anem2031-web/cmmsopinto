@@ -34,9 +34,12 @@ export const approvalsRouter = router({
       }
     }
 
-          // Check if all items are now rejected or cancelled
+          // Check if all items are now rejected or cancelled (needs_item_revision تُعدّ جانباً مؤقتاً)
     const updatedItems = await db.getPOItems(input.id);
-    const allRejected = updatedItems.every(i => i.status === "rejected" || i.status === "cancelled");
+    // الأصناف التي تُحسب للتقدم: تجاهل needs_item_revision — هي معلّقة ولكن لا تمنع الباقين
+    const activeForAccounting = updatedItems.filter(i => i.status !== "needs_item_revision");
+    const allRejected = activeForAccounting.length > 0 &&
+      activeForAccounting.every(i => i.status === "rejected" || i.status === "cancelled");
     if (allRejected) {
       // If all items are rejected/cancelled, reject the entire PO
       await db.updatePurchaseOrder(input.id, { 
@@ -121,22 +124,49 @@ export const approvalsRouter = router({
     }
 
     // Normal flow: PO is approved (partially or fully)
-    await db.updatePurchaseOrder(input.id, { status: "approved", managementApprovedById: ctx.user.id, managementApprovedAt: new Date(), managementNotes: input.notes });
-    
-    // Update non-rejected/non-cancelled items to approved
+    await db.updatePurchaseOrder(input.id, {
+      status: "approved",
+      managementApprovedById: ctx.user.id,
+      managementApprovedAt: new Date(),
+      managementNotes: input.notes
+    });
+
+    // ── اعتمد الأصناف الجاهزة فقط ──
+    // الأصناف في needs_item_revision تبقى كما هي — ستُعتمد تلقائياً لاحقاً
+    // عندما يسعّرها المندوب بعد تعديل المنشئ، تنتقل مباشرة لـ approved
     for (const item of updatedItems) {
-      if (item.status !== "rejected" && item.status !== "cancelled") {
+      if (
+        item.status !== "rejected" &&
+        item.status !== "cancelled" &&
+        item.status !== "needs_item_revision"
+      ) {
         await db.updatePOItem(item.id, { status: "approved" });
       }
     }
-    
+
     // Notify delegates — only for non-rejected/non-cancelled items
-    const approvedItemsForNotif = updatedItems.filter(i => i.status !== "rejected" && i.status !== "cancelled");
-    const delegateIds = Array.from(new Set(approvedItemsForNotif.filter(i => i.delegateId).map(i => i.delegateId!)));
+    const approvedItemsForNotif = updatedItems.filter(
+      i =>
+        i.status !== "rejected" &&
+        i.status !== "cancelled" &&
+        i.status !== "needs_item_revision"
+    );
+
+    const delegateIds = Array.from(
+      new Set(
+        approvedItemsForNotif
+          .filter(i => i.delegateId)
+          .map(i => i.delegateId!)
+      )
+    );
+
     for (const dId of delegateIds) {
       const delegateItems = items.filter(i => i.delegateId === dId);
       const itemNames = delegateItems.map(i => i.itemName).join("، ");
-      const custodyInfo = po?.custodyAmount ? ` مبلغ العهدة المُصرف لك: ${Number(po.custodyAmount).toLocaleString("ar-SA")} ر.س.` : "";
+      const custodyInfo = po?.custodyAmount
+        ? ` مبلغ العهدة المُصرف لك: ${Number(po.custodyAmount).toLocaleString("ar-SA")} ر.س.`
+        : "";
+
       await db.createNotification({
         userId: dId,
         title: "✅ تم اعتماد طلب الشراء - ابدأ الشراء الآن",
@@ -145,6 +175,7 @@ export const approvalsRouter = router({
         relatedPOId: input.id
       });
     }
+
     // If no delegates assigned, notify managers
     if (delegateIds.length === 0) {
       const managers = await db.getManagerUsers();
