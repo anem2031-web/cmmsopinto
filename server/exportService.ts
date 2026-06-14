@@ -530,9 +530,20 @@ const requestingUser = await db.getUserById(delegateId);
 const canViewAll = ["admin", "owner", "maintenance_manager", "purchase_manager"].includes(requestingUser?.role || "");
 if (delegateItems.length === 0 && !canViewAll) throw new Error("Access denied: not your request");
 
-  // Get delegate user info
-  const delegate = await db.getUserById(delegateId);
-  const delegateName = delegate?.name || "Unknown";
+// Get delegate user info
+const delegate = await db.getUserById(delegateId);
+const delegateName = delegate?.name || "Unknown";
+
+const requester = po.requestedById
+  ? await db.getUserById(po.requestedById)
+  : null;
+
+const reviewer = po.reviewedById
+  ? await db.getUserById(po.reviewedById)
+  : null;
+
+const requesterName = requester?.name || "-";
+const reviewerName = reviewer?.name || "-";
 
   // Calculate totals for all items in the PO
   let grandTotal = 0;
@@ -630,7 +641,8 @@ if (delegateItems.length === 0 && !canViewAll) throw new Error("Access denied: n
       margin-top: 12px;
       font-size: 9px;
       color: #64748b;
-      text-align: center;
+      text-align: left;
+      direction: ltr;
     }
   </style>
 </head>
@@ -658,7 +670,9 @@ if (delegateItems.length === 0 && !canViewAll) throw new Error("Access denied: n
     </tbody>
   </table>
   <div class="footer">
-    Prepared by: ${escapeHtml(delegateName)}
+    <div>Prepared by: ${escapeHtml(delegateName)}</div>
+    <div>Requester: ${escapeHtml(requesterName)}</div>
+    <div>Reviewed by: ${escapeHtml(reviewerName)}</div>
   </div>
 </body>
 </html>`;
