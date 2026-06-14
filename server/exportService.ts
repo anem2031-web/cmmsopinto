@@ -532,7 +532,7 @@ if (delegateItems.length === 0 && !canViewAll) throw new Error("Access denied: n
 
   // Get delegate user info
   const delegate = await db.getUserById(delegateId);
-  const delegateUsername = delegate?.username || delegate?.name || "Unknown";
+  const delegateName = delegate?.name || "Unknown";
 
   // Calculate totals for all items in the PO
   let grandTotal = 0;
@@ -658,7 +658,7 @@ if (delegateItems.length === 0 && !canViewAll) throw new Error("Access denied: n
     </tbody>
   </table>
   <div class="footer">
-    Prepared by: ${escapeHtml(delegateUsername)}
+    Prepared by: ${escapeHtml(delegateName)}
   </div>
 </body>
 </html>`;
