@@ -382,9 +382,17 @@ export async function getNextPONumber() {
   const db = await getDb();
   if (!db) return "PR-2026-0001";
   const year = new Date().getFullYear();
-  const result = await db.select({ cnt: count() }).from(purchaseOrders);
-  const num = (result[0]?.cnt || 0) + 1;
-  return `PR-${year}-${String(num).padStart(4, "0")}`;
+  const prefix = `PR-${year}-`;
+  // جلب آخر رقم طلب في هذه السنة بدلاً من عد الكل — يمنع التكرار عند الحذف أو التزامن
+  const result = await db
+    .select({ poNumber: purchaseOrders.poNumber })
+    .from(purchaseOrders)
+    .where(like(purchaseOrders.poNumber, `${prefix}%`))
+    .orderBy(desc(purchaseOrders.id))
+    .limit(1);
+  if (!result[0]?.poNumber) return `${prefix}0001`;
+  const lastNum = parseInt(result[0].poNumber.replace(prefix, "")) || 0;
+  return `${prefix}${String(lastNum + 1).padStart(4, "0")}`;
 }
 
 export async function createPurchaseOrder(data: any) {
