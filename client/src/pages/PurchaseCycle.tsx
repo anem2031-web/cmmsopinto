@@ -32,17 +32,22 @@ export default function PurchaseCycle() {
   const [activeTab, setActiveTab] = useState(defaultTab);
 
   // Data queries - admin/owner always enabled
+  const { data: pendingEstimate = [], refetch: refetchEstimate } = trpc.purchaseOrders.pendingEstimateItems.useQuery(undefined, { enabled: isDelegate || isAdminOrOwner });
   const { data: pendingPurchase = [], refetch: refetchPurchase } = trpc.purchaseOrders.pendingPurchaseItems.useQuery(undefined, { enabled: isDelegate || isAdminOrOwner });
   const { data: pendingWarehouse = [], refetch: refetchWarehouse } = trpc.purchaseOrders.pendingWarehouseItems.useQuery(undefined, { enabled: isWarehouse || isAdminOrOwner });
   const { data: pendingDelivery = [], refetch: refetchDelivery } = trpc.purchaseOrders.pendingDeliveryItems.useQuery(undefined, { enabled: isWarehouse || isAdminOrOwner });
   const { data: allUsers = [] } = trpc.users.list.useQuery();
 
-  const refetchAll = () => { refetchPurchase(); refetchWarehouse(); refetchDelivery(); };
+  const refetchAll = () => { refetchEstimate(); refetchPurchase(); refetchWarehouse(); refetchDelivery(); };
 
   // Mutations
+  const estimateCostMut = trpc.purchaseOrders.estimateCost.useMutation({ onSuccess: () => { toast.success("تم حفظ التسعير"); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
   const confirmPurchaseMut = trpc.purchaseOrders.confirmItemPurchase.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.purchased); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
   const confirmWarehouseMut = trpc.purchaseOrders.confirmDeliveryToWarehouse.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.deliveredToWarehouse); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
   const confirmDeliveryMut = trpc.purchaseOrders.confirmDeliveryToRequester.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.deliveredToRequester); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
+
+  // Estimate state
+  const [estimateValues, setEstimateValues] = useState<Record<number, string>>({});
 
   // Dialog states
   const [purchaseDialog, setPurchaseDialog] = useState<any>(null);
@@ -214,7 +219,12 @@ export default function PurchaseCycle() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
+          <TabsTrigger value="estimate" className="gap-1.5">
+            <Clock className="w-4 h-4" />
+            <span className="hidden sm:inline">التسعير</span>
+            {pendingEstimate.length > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">{pendingEstimate.length}</Badge>}
+          </TabsTrigger>
           <TabsTrigger value="purchase" className="gap-1.5">
             <ShoppingCart className="w-4 h-4" />
             <span className="hidden sm:inline">{t.purchaseOrders.step1Purchase}</span>
@@ -231,6 +241,74 @@ export default function PurchaseCycle() {
             {pendingDelivery.length > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">{pendingDelivery.length}</Badge>}
           </TabsTrigger>
         </TabsList>
+
+        {/* ==================== TAB 0: Estimate (Delegate - Revision Items) ==================== */}
+        <TabsContent value="estimate" className="mt-4 space-y-4">
+          {pendingEstimate.length === 0 ? (
+            <Card><CardContent className="p-8 text-center text-muted-foreground">
+              <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-green-500" />
+              <p className="font-medium">لا توجد أصناف بانتظار التسعير</p>
+            </CardContent></Card>
+          ) : (
+            <div className="space-y-3">
+              {sortByDate(pendingEstimate).map((item: any) => (
+                <Card key={item.id} className="border-amber-200 bg-amber-50">
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm truncate">{item.itemName}</p>
+                        {item.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{item.description}</p>}
+                        <div className="flex flex-wrap gap-2 mt-1.5">
+                          <Badge variant="outline" className="text-[10px]">الكمية: {item.quantity} {item.unit || ""}</Badge>
+                          {item.purchaseOrderNumber && <Badge variant="outline" className="text-[10px]">{item.purchaseOrderNumber}</Badge>}
+                        </div>
+                        {item.itemRevisionNote && (
+                          <div className="mt-2 text-xs bg-red-50 border border-red-200 rounded p-2 text-red-700">
+                            <strong>سبب المراجعة السابقة:</strong> {item.itemRevisionNote}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 items-end">
+                      <div className="flex-1">
+                        <Label className="text-xs text-amber-700">السعر التقديري للوحدة (ر.س)</Label>
+                        <Input
+                          type="number"
+                          placeholder="0.00"
+                          value={estimateValues[item.id] || ""}
+                          onChange={e => setEstimateValues(p => ({ ...p, [item.id]: e.target.value }))}
+                          className="mt-1 bg-white"
+                        />
+                      </div>
+                      {estimateValues[item.id] && parseFloat(estimateValues[item.id]) > 0 && (
+                        <div className="text-xs text-amber-700 pb-2">
+                          = {(parseFloat(estimateValues[item.id]) * item.quantity).toLocaleString()} ر.س
+                        </div>
+                      )}
+                      <Button
+                        size="sm"
+                        disabled={!estimateValues[item.id] || parseFloat(estimateValues[item.id]) <= 0 || estimateCostMut.isPending}
+                        onClick={() => {
+                          if (!estimateValues[item.id] || parseFloat(estimateValues[item.id]) <= 0) {
+                            toast.error("يرجى إدخال السعر");
+                            return;
+                          }
+                          estimateCostMut.mutate({
+                            purchaseOrderId: item.purchaseOrderId,
+                            items: [{ id: item.id, estimatedUnitCost: estimateValues[item.id] }]
+                          });
+                        }}
+                        className="shrink-0"
+                      >
+                        {estimateCostMut.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "حفظ التسعير"}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
 
         {/* ==================== TAB 1: Purchase (Delegate) ==================== */}
         <TabsContent value="purchase" className="mt-4 space-y-4">
