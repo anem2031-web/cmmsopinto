@@ -1,12 +1,12 @@
 import { trpc } from "@/lib/trpc";
-import { useLocation, useSearch } from "wouter";
+import { useLocation, useSearch, useRoute } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ArrowRight, Plus, Trash2, Loader2, ShoppingCart, Camera, Link2, Upload, BookOpen, FilePlus, Search, ChevronDown, ChevronRight, FolderOpen } from "lucide-react";
+import { ArrowRight, Plus, Trash2, Loader2, ShoppingCart, Camera, Link2, Upload, BookOpen, FilePlus, Search, ChevronDown, ChevronRight, FolderOpen, Save } from "lucide-react";
 import DropZone, { type UploadedFile } from "@/components/DropZone";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { toast } from "sonner";
@@ -316,6 +316,15 @@ export default function CreatePurchaseOrder() {
   const params = new URLSearchParams(searchStr);
   const ticketId = params.get("ticketId") ? parseInt(params.get("ticketId")!) : undefined;
 
+  // قراءة draftId من الـ URL إذا كنا نعدّل مسودة
+  const [matchEdit, editParams] = useRoute("/purchase-orders/edit-draft/:id");
+  const draftId = matchEdit ? parseInt(editParams?.id || "0") : undefined;
+
+  const { data: draftPO } = trpc.purchaseOrders.getById.useQuery(
+    { id: draftId || 0 },
+    { enabled: !!draftId }
+  );
+
   const { data: ticket } = trpc.tickets.getById.useQuery(
     { id: ticketId || 0 },
     { enabled: !!ticketId }
@@ -329,7 +338,44 @@ export default function CreatePurchaseOrder() {
     onError: (err) => toast.error(err.message),
   });
 
+  const saveDraftMut = trpc.purchaseOrders.saveDraft.useMutation({
+    onSuccess: (data) => {
+      toast.success(`تم حفظ المسودة ${data.poNumber}`);
+      setLocation(`/purchase-orders/${data.id}`);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const updateDraftMut = trpc.purchaseOrders.updateDraft.useMutation({
+    onSuccess: () => {
+      toast.success("تم حفظ التعديلات");
+      setLocation(`/purchase-orders/${draftId}`);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const [draftLoaded, setDraftLoaded] = useState(false);
   const [items, setItems] = useState<ItemForm[]>([emptyItem()]);
+
+  // تحميل أصناف المسودة عند فتح صفحة التعديل
+  useEffect(() => {
+    if (draftPO && !draftLoaded) {
+      setNotes(draftPO.notes || "");
+      if (draftPO.items && draftPO.items.length > 0) {
+        setItems(draftPO.items.map((i: any) => ({
+          sourceType: "manual" as const,
+          itemName: i.itemName || "",
+          description: i.description || "",
+          quantity: i.quantity || 1,
+          unit: i.unit || "قطعة",
+          photoUrls: i.photoUrls || (i.photoUrl ? [i.photoUrl] : []),
+          notes: i.notes || "",
+          _existingId: i.id, // نحفظ id الصنف الأصلي
+        })));
+      }
+      setDraftLoaded(true);
+    }
+  }, [draftPO, draftLoaded]);
   const [notes, setNotes] = useState("");
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
   const [showDropZoneIdx, setShowDropZoneIdx] = useState<number | null>(null);
@@ -384,21 +430,49 @@ const handleCatalogSelect = (catalogItem: any) => {
   );
 };
 
+  const buildItemsPayload = () =>
+    items.filter(i => i.itemName.trim()).map(i => ({
+      itemName:    i.itemName,
+      description: i.description || undefined,
+      quantity:    i.quantity,
+      unit:        i.unit || undefined,
+      photoUrl:    i.photoUrls?.[0] || undefined,
+      photoUrls:   i.photoUrls?.length ? i.photoUrls : undefined,
+      notes:       i.notes || undefined,
+    }));
+
+  const handleUpdateDraft = () => {
+    const validItems = buildItemsPayload();
+    if (validItems.length === 0) { toast.error(t.purchaseOrders.items); return; }
+    updateDraftMut.mutate({
+      id: draftId!,
+      notes: notes || undefined,
+      items: (items as any[]).map(i => ({
+        id: i._existingId || undefined,
+        itemName: i.itemName,
+        description: i.description || undefined,
+        quantity: i.quantity,
+        unit: i.unit || undefined,
+        photoUrl: i.photoUrls?.[0] || undefined,
+        photoUrls: i.photoUrls?.length ? i.photoUrls : undefined,
+        notes: i.notes || undefined,
+      })),
+    });
+  };
+
+  const handleSaveDraft = () => {
+    const validItems = buildItemsPayload();
+    if (validItems.length === 0) { toast.error(t.purchaseOrders.items); return; }
+    saveDraftMut.mutate({ ticketId, notes: notes || undefined, items: validItems });
+  };
+
   const handleSubmit = () => {
     const validItems = items.filter(i => i.itemName.trim());
     if (validItems.length === 0) { toast.error(t.purchaseOrders.items); return; }
     createMut.mutate({
       ticketId,
       notes: notes || undefined,
-      items: validItems.map(i => ({
-        itemName:    i.itemName,
-        description: i.description || undefined,
-        quantity:    i.quantity,
-        unit:        i.unit || undefined,
-        photoUrl:    i.photoUrls?.[0] || undefined,
-        photoUrls:   i.photoUrls?.length ? i.photoUrls : undefined,
-        notes:       i.notes || undefined,
-      })),
+      items: buildItemsPayload(),
     });
   };
 
@@ -409,7 +483,7 @@ const handleCatalogSelect = (catalogItem: any) => {
           <ArrowRight className="w-5 h-5" />
         </Button>
         <div>
-          <h1 className="text-xl font-bold">{t.purchaseOrders.createNew}</h1>
+          <h1 className="text-xl font-bold">{draftId ? `تعديل مسودة ${draftPO?.poNumber || ""}` : t.purchaseOrders.createNew}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{t.purchaseOrders.items}</p>
         </div>
       </div>
@@ -690,17 +764,43 @@ const handleCatalogSelect = (catalogItem: any) => {
                 </span>
               )}
             </div>
-            <Button
-              onClick={handleSubmit}
-              disabled={createMut.isPending}
-              className="w-full gap-2"
-              size="lg"
-            >
-              {createMut.isPending
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <ShoppingCart className="w-4 h-4" />}
-              {t.common.submit}
-            </Button>
+            {draftId ? (
+              <Button
+                onClick={handleUpdateDraft}
+                disabled={updateDraftMut.isPending}
+                className="w-full gap-2"
+                size="lg"
+              >
+                {updateDraftMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                حفظ التعديلات
+              </Button>
+            ) : (
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={handleSaveDraft}
+                disabled={saveDraftMut.isPending || createMut.isPending}
+                className="flex-1 gap-2"
+                size="lg"
+              >
+                {saveDraftMut.isPending
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <BookOpen className="w-4 h-4" />}
+                حفظ كمسودة
+              </Button>
+              <Button
+                onClick={handleSubmit}
+                disabled={createMut.isPending || saveDraftMut.isPending}
+                className="flex-1 gap-2"
+                size="lg"
+              >
+                {createMut.isPending
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <ShoppingCart className="w-4 h-4" />}
+                {t.common.submit}
+              </Button>
+            </div>
+            )}
           </CardContent>
         </Card>
       </div>
