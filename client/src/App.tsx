@@ -63,6 +63,7 @@ function Router() {
             <Route path="/tickets/:id" component={TicketDetail} />
             <Route path="/purchase-orders" component={PurchaseOrders} />
             <Route path="/purchase-orders/new" component={CreatePurchaseOrder} />
+            <Route path="/purchase-orders/edit-draft/:id" component={CreatePurchaseOrder} />
             <Route path="/purchase-orders/:id" component={PurchaseOrderDetail} />
             <Route path="/purchase-cycle" component={PurchaseCycle} />
             <Route path="/my-items" component={MyItems} />
