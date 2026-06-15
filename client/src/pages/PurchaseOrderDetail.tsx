@@ -210,6 +210,11 @@ const visibleItems = useMemo(() => {
     );
   }
 
+  // منشئ الطلب دائماً يرى جميع الأصناف بما فيها needs_item_revision
+  if (String(po.requestedById) === String(userId)) {
+    return po.items;
+  }
+
   if (
     role === "accountant" ||
     role === "senior_management" ||
@@ -296,7 +301,7 @@ const visibleItems = useMemo(() => {
               <AlertCircle className="w-4 h-4 mr-1.5" /> {t.purchaseOrders.returnForRevision}
             </Button>
           )}
-          {po.status !== "closed" && (isAdminOrOwner || po.requestedById === userId) && (
+          {po.status !== "closed" && (isAdminOrOwner || String(po.requestedById) === String(userId)) && (
             <Button variant="outline" className="text-muted-foreground" onClick={() => { if (confirm("هل أنت متأكد من إغلاق هذا الطلب؟")) closeMut.mutate({ id: po.id }); }}>
               <XCircle className="w-4 h-4 mr-1.5" /> إغلاق الطلب
             </Button>
@@ -316,7 +321,7 @@ const visibleItems = useMemo(() => {
                 </p>
               </div>
             </div>
-            {(isAdminOrOwner || po.requestedById === userId) && (
+            {(isAdminOrOwner || String(po.requestedById) === String(userId)) && (
               <div className="flex flex-col gap-2 border-t border-rose-200 pt-3">
                 <Label className="text-xs text-rose-800">{t.purchaseOrders.resubmit} ({t.common.optionalNote})</Label>
                 <div className="flex gap-2">
@@ -593,6 +598,7 @@ const visibleItems = useMemo(() => {
       </div>
     )}
 
+    {(isAdminOrOwner || String(po.requestedById) === String(userId)) && (
     <div className="flex gap-2">
       <Button
         variant="outline"
@@ -625,6 +631,7 @@ const visibleItems = useMemo(() => {
         إعادة إرسال الصنف
       </Button>
     </div>
+    )}
   </div>
 )}
 
