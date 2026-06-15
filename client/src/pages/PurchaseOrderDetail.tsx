@@ -100,7 +100,12 @@ export default function PurchaseOrderDetail() {
   onError: (e: any) => toast.error(e.message)
 });
 
-const resubmitItemRevisionMut = trpc.purchaseOrders.resubmitItemRevision.useMutation({
+const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
+    onSuccess: () => { toast.success("تم إرسال طلب الشراء للمراجعة"); refetch(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const resubmitItemRevisionMut = trpc.purchaseOrders.resubmitItemRevision.useMutation({
   onSuccess: () => {
     toast.success(language === "ar" ? "تمت إعادة إرسال الصنف" : "Item resubmitted");
     refetch();
@@ -300,6 +305,26 @@ const visibleItems = useMemo(() => {
             <Button variant="outline" className="border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => setIsRevisionDialogOpen(true)}>
               <AlertCircle className="w-4 h-4 mr-1.5" /> {t.purchaseOrders.returnForRevision}
             </Button>
+          )}
+          {po.status === "draft" && (isAdminOrOwner || String(po.requestedById) === String(userId)) && (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => setLocation(`/purchase-orders/edit-draft/${po.id}`)}
+                className="gap-2"
+              >
+                <Pencil className="w-4 h-4" />
+                تعديل المسودة
+              </Button>
+              <Button
+                onClick={() => { if (confirm("هل أنت متأكد من إرسال طلب الشراء للمراجعة؟")) submitDraftMut.mutate({ id: po.id }); }}
+                disabled={submitDraftMut.isPending}
+                className="gap-2"
+              >
+                {submitDraftMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShoppingCart className="w-4 h-4" />}
+                إرسال للمراجعة
+              </Button>
+            </>
           )}
           {po.status !== "closed" && (isAdminOrOwner || String(po.requestedById) === String(userId)) && (
             <Button variant="outline" className="text-muted-foreground" onClick={() => { if (confirm("هل أنت متأكد من إغلاق هذا الطلب؟")) closeMut.mutate({ id: po.id }); }}>
