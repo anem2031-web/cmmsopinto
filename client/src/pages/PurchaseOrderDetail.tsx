@@ -508,7 +508,7 @@ const visibleItems = useMemo(() => {
                   </div>
                 )}
 
-{isMyItem && item.status === "pending" && po.status === "pending_estimate" && (
+{isMyItem && item.status === "pending" && ["pending_estimate", "approved", "partial_purchase", "purchased"].includes(po.status) && (
   <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
     <p className="text-xs font-medium text-amber-800 flex items-center gap-1.5">
       <DollarSign className="w-3.5 h-3.5" /> {t.purchaseOrders.estimatedUnitCost}:
