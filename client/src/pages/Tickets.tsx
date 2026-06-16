@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { keepPreviousData } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,16 +9,36 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import {
+  Pagination, PaginationContent, PaginationItem, PaginationLink,
+  PaginationEllipsis,
+} from "@/components/ui/pagination";
 import { STATUS_COLORS, PRIORITY_COLORS } from "@shared/types";
-import { Plus, Search, ClipboardList, Pencil, Trash2 } from "lucide-react";
+import { Plus, Search, ClipboardList, Pencil, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { ExportButton } from "@/components/ExportButton";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { useStaticLabels } from "@/hooks/useContentTranslation";
 import { useTranslatedField } from "@/hooks/useTranslatedField";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
+
+// يبني قائمة أرقام الصفحات المطلوب عرضها (مع نقاط حذف "..." عند كثرة الصفحات)
+// مثال لـ 10 صفحات وأنت بالصفحة 1: [1, 2, "dots", 10]
+function getPageNumbers(current: number, total: number): (number | "dots")[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  const left = Math.max(2, current - 1);
+  const right = Math.min(total - 1, current + 1);
+  const range: (number | "dots")[] = [1];
+  if (left > 2) range.push("dots");
+  for (let i = left; i <= right; i++) range.push(i);
+  if (right < total - 1) range.push("dots");
+  range.push(total);
+  return range;
+}
 
 export default function Tickets() {
   const [, setLocation] = useLocation();
@@ -40,6 +61,8 @@ export default function Tickets() {
   const [siteFilter, setSiteFilter] = useState("all");
   const [sectionFilter, setSectionFilter] = useState("all");
   const [technicianFilter, setTechnicianFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
   
   const { t, language } = useTranslation();
   const { getStatusLabel, getPriorityLabel, getCategoryLabel } = useStaticLabels();
@@ -58,20 +81,36 @@ export default function Tickets() {
   const { data: allSections } = trpc.sections.list.useQuery(undefined);
   const { data: userTechniciansList = [] } = trpc.users.listTechnicians.useQuery();
   const allTechnicians = userTechniciansList.map((u: any) => ({ id: u.id, name: u.name || u.email }));
-  
-  const { data: tickets, isLoading } = trpc.tickets.list.useQuery({
+
+  // أي تغيير في البحث أو الفلاتر يرجعنا تلقائياً لأول صفحة
+  // (تفادياً للوقوف على صفحة فاضية بعد ما تتغير نتائج الفلترة)
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter, priorityFilter, siteFilter, sectionFilter, technicianFilter]);
+
+  const { data: ticketsData, isLoading } = trpc.tickets.listPaginated.useQuery({
     status: statusFilter !== "all" ? statusFilter : undefined,
     priority: priorityFilter !== "all" ? priorityFilter : undefined,
     siteId: siteFilter !== "all" ? Number(siteFilter) : undefined,
     sectionId: sectionFilter !== "all" ? Number(sectionFilter) : undefined,
     search: search || undefined,
     assignedToId: technicianFilter !== "all" ? Number(technicianFilter) : undefined,
+    page,
+    pageSize: PAGE_SIZE,
+  }, {
+    placeholderData: keepPreviousData, // يمنع اختفاء القائمة/الصفحات لحظياً عند التنقل بين الصفحات
   });
+
+  const tickets = ticketsData?.tickets ?? [];
+  const totalTickets = ticketsData?.total ?? 0;
+  const totalPages = ticketsData?.totalPages ?? 1;
+  const pageNumbers = useMemo(() => getPageNumbers(page, totalPages), [page, totalPages]);
 
   const updateMutation = trpc.tickets.update.useMutation({
     onSuccess: () => {
       toast.success(t.common.savedSuccessfully);
       utils.tickets.list.invalidate();
+      utils.tickets.listPaginated.invalidate();
       setEditOpen(false);
     },
     onError: (err) => toast.error(err.message),
@@ -81,6 +120,7 @@ export default function Tickets() {
     onSuccess: () => {
       toast.success(t.common.deletedSuccessfully);
       utils.tickets.list.invalidate();
+      utils.tickets.listPaginated.invalidate();
       setDeleteOpen(false);
     },
     onError: (err) => toast.error(err.message),
@@ -117,74 +157,92 @@ export default function Tickets() {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder={`${t.common.search}...`}
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="pr-10"
-          />
+      <div className="flex flex-wrap gap-3 items-end">
+        <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
+          <span className="text-xs text-muted-foreground">{t.common.search}</span>
+          <div className="relative">
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder={`${t.common.search}...`}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="pr-10"
+            />
+          </div>
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder={t.common.status} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t.common.all}</SelectItem>
-            {Object.keys(t.ticketStatus).map(k => (
-              <SelectItem key={k} value={k}>{getStatusLabel(k)}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder={t.tickets.priority} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t.common.all}</SelectItem>
-            {Object.keys(t.priority).map(k => (
-              <SelectItem key={k} value={k}>{getPriorityLabel(k)}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={siteFilter} onValueChange={v => { setSiteFilter(v); setSectionFilter("all"); }}>
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="الموقع" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t.common.all}</SelectItem>
-            {sites.map((s: any) => (
-              <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {siteFilter !== "all" && (
-          <Select value={sectionFilter} onValueChange={setSectionFilter}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="القسم" />
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">{t.common.status}</span>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder={t.common.status} />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t.common.all}</SelectItem>
-              {allSections?.filter((s: any) => s.siteId === Number(siteFilter)).map((s: any) => (
+              {Object.keys(t.ticketStatus).map(k => (
+                <SelectItem key={k} value={k}>{getStatusLabel(k)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">{t.tickets.priority}</span>
+          <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder={t.tickets.priority} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t.common.all}</SelectItem>
+              {Object.keys(t.priority).map(k => (
+                <SelectItem key={k} value={k}>{getPriorityLabel(k)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">{t.tickets.site}</span>
+          <Select value={siteFilter} onValueChange={v => { setSiteFilter(v); setSectionFilter("all"); }}>
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder={t.tickets.site} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t.common.all}</SelectItem>
+              {sites.map((s: any) => (
                 <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
+        </div>
+        {siteFilter !== "all" && (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">{t.tickets.section}</span>
+            <Select value={sectionFilter} onValueChange={setSectionFilter}>
+              <SelectTrigger className="w-[160px]">
+                <SelectValue placeholder={t.tickets.section} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t.common.all}</SelectItem>
+                {allSections?.filter((s: any) => s.siteId === Number(siteFilter)).map((s: any) => (
+                  <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         )}
         {allTechnicians.length > 0 && (
-          <Select value={technicianFilter} onValueChange={setTechnicianFilter}>
-            <SelectTrigger className="w-[170px]">
-              <SelectValue placeholder="الفني المُسند" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t.common.all}</SelectItem>
-              {allTechnicians.map((tech: any) => (
-                <SelectItem key={tech.id} value={String(tech.id)}>{tech.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">{t.tickets.technician}</span>
+            <Select value={technicianFilter} onValueChange={setTechnicianFilter}>
+              <SelectTrigger className="w-[170px]">
+                <SelectValue placeholder={t.tickets.technician} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t.common.all}</SelectItem>
+                {allTechnicians.map((tech: any) => (
+                  <SelectItem key={tech.id} value={String(tech.id)}>{tech.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         )}
       </div>
 
@@ -250,6 +308,61 @@ export default function Tickets() {
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+
+      {!isLoading && tickets.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+          <span className="text-xs text-muted-foreground">
+            {t.tickets.results}: {totalTickets}
+          </span>
+          {totalPages > 1 && (
+            <Pagination className="mx-0 w-auto">
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationLink
+                    href="#"
+                    size="default"
+                    aria-label={t.common.previous}
+                    onClick={e => { e.preventDefault(); if (page > 1) setPage(page - 1); }}
+                    className={`gap-1 px-2.5 ${page <= 1 ? "pointer-events-none opacity-50" : ""}`}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    <span className="hidden sm:block">{t.common.previous}</span>
+                  </PaginationLink>
+                </PaginationItem>
+                {pageNumbers.map((p, idx) =>
+                  p === "dots" ? (
+                    <PaginationItem key={`dots-${idx}`}>
+                      <PaginationEllipsis />
+                    </PaginationItem>
+                  ) : (
+                    <PaginationItem key={p}>
+                      <PaginationLink
+                        href="#"
+                        isActive={p === page}
+                        onClick={e => { e.preventDefault(); setPage(p as number); }}
+                      >
+                        {p}
+                      </PaginationLink>
+                    </PaginationItem>
+                  )
+                )}
+                <PaginationItem>
+                  <PaginationLink
+                    href="#"
+                    size="default"
+                    aria-label={t.common.next}
+                    onClick={e => { e.preventDefault(); if (page < totalPages) setPage(page + 1); }}
+                    className={`gap-1 px-2.5 ${page >= totalPages ? "pointer-events-none opacity-50" : ""}`}
+                  >
+                    <span className="hidden sm:block">{t.common.next}</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </PaginationLink>
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
+          )}
         </div>
       )}
 
