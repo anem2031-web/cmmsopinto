@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ArrowRight, Plus, Trash2, Loader2, ShoppingCart, Camera, Link2, Upload, BookOpen, FilePlus, Search, ChevronDown, ChevronRight, FolderOpen, Save } from "lucide-react";
 import DropZone, { type UploadedFile } from "@/components/DropZone";
@@ -63,50 +64,25 @@ onSelect: (item: {
 }) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // debounce: انتظر 350ms بعد توقف الكتابة ثم ابعث للسيرفر
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 350);
-    return () => clearTimeout(t);
-  }, [searchQuery]);
 
   const { data: allNodes } = trpc.catalog.nodes.list.useQuery(
     { isActive: true },
     { enabled: open }
   );
 
-  // جمع ID التصنيف المختار + كل أحفاده بشكل تكراري
-  const getDescendantIds = (nodeId: number, nodes: CatalogNode[]): number[] => {
-    const children = nodes.filter(n => n.parentId === nodeId);
-    return [nodeId, ...children.flatMap(c => getDescendantIds(c.id, nodes))];
-  };
-
-  const selectedNodeIds = useMemo(() => {
-    if (!selectedNodeId || !allNodes) return undefined;
-    return getDescendantIds(selectedNodeId, allNodes);
-  }, [selectedNodeId, allNodes]);
-
-  // ✅ البحث على السيرفر — يجلب فقط ما يطابق البحث أو التصنيف المختار
-  const { data: serverItems, isFetching } = trpc.catalog.items.list.useQuery(
-    {
-      isActive: true,
-      limit: 80,
-      search: debouncedSearch || undefined,
-      nodeIds: selectedNodeIds,
-    },
+  const { data: allItems } = trpc.catalog.items.list.useQuery(
+    { isActive: true, limit: 500 },
     { enabled: open }
   );
 
-  // إعادة ضبط الحالة عند كل فتح للنافذة
+  // focus on open
   useEffect(() => {
     if (open) {
       setTimeout(() => inputRef.current?.focus(), 100);
       setSearchQuery("");
-      setDebouncedSearch("");
       setSelectedNodeId(null);
     }
   }, [open]);
@@ -128,7 +104,20 @@ onSelect: (item: {
     });
   };
 
-  const items = serverItems || [];
+  // فلترة الأصناف
+  const filteredItems = useMemo(() => {
+    if (!allItems) return [];
+    const q = searchQuery.trim().toLowerCase();
+    return allItems.filter((item: any) => {
+      const matchNode = selectedNodeId ? item.nodeId === selectedNodeId : true;
+      const matchSearch = !q ||
+        item.nameAr?.toLowerCase().includes(q) ||
+        item.nameEn?.toLowerCase().includes(q) ||
+        item.code?.toLowerCase().includes(q) ||
+        item.manufacturer?.toLowerCase().includes(q);
+      return matchNode && matchSearch;
+    });
+  }, [allItems, searchQuery, selectedNodeId]);
 
   const renderNode = (node: CatalogNode, depth = 0): React.ReactNode => {
     const children = getChildren(node.id);
@@ -210,28 +199,23 @@ onSelect: (item: {
                   dir="rtl"
                 />
               </div>
-              <p className="text-xs text-muted-foreground mt-1.5 h-4">
-                {isFetching
-                  ? "جارٍ البحث..."
-                  : items.length > 0
-                    ? `${items.length} صنف${items.length === 80 ? " (الأحدث أولاً)" : ""}`
-                    : ""}
-              </p>
+              {filteredItems.length > 0 && (
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  {filteredItems.length} صنف
+                </p>
+              )}
             </div>
 
             {/* Results */}
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
-              {isFetching ? (
+              {filteredItems.length === 0 ? (
                 <div className="text-center py-10 text-sm text-muted-foreground">
-                  <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
-                  جارٍ التحميل...
-                </div>
-              ) : items.length === 0 ? (
-                <div className="text-center py-10 text-sm text-muted-foreground">
-                  لا توجد نتائج
+                  {searchQuery || selectedNodeId
+                    ? "لا توجد نتائج"
+                    : "اختر تصنيفاً أو ابحث عن صنف"}
                 </div>
               ) : (
-                items.map((item: any) => (
+                filteredItems.map((item: any) => (
                   <button
                     key={item.id}
                     onClick={() => {
@@ -346,6 +330,9 @@ export default function CreatePurchaseOrder() {
     { id: ticketId || 0 },
     { enabled: !!ticketId }
   );
+
+  // ✅ وحدات القياس من الكاتلوج — تُحدّث القائمة فور إضافة وحدة جديدة من تبويب الكاتلوج
+  const { data: catalogUnits } = trpc.catalog.units.list.useQuery();
 
   const createMut = trpc.purchaseOrders.create.useMutation({
     onSuccess: (data) => {
@@ -627,13 +614,25 @@ const handleCatalogSelect = (catalogItem: any) => {
         <div className="space-y-2">
           <Label>{t.purchaseOrders.unit}</Label>
 
-          <Input
-            dir="auto"
+          <Select
             value={item.unit}
-            onChange={e =>
-              updateItem(idx, "unit", e.target.value)
-            }
-          />
+            onValueChange={value => updateItem(idx, "unit", value)}
+          >
+            <SelectTrigger dir="auto">
+              <SelectValue placeholder={t.purchaseOrders.unit} />
+            </SelectTrigger>
+            <SelectContent>
+              {(catalogUnits || []).map((u: any) => (
+                <SelectItem key={u.id} value={u.nameAr}>
+                  {u.nameAr}
+                </SelectItem>
+              ))}
+              {/* في حال القيمة الحالية غير موجودة ضمن وحدات الكاتلوج (بيانات قديمة) */}
+              {item.unit && !(catalogUnits || []).some((u: any) => u.nameAr === item.unit) && (
+                <SelectItem value={item.unit}>{item.unit}</SelectItem>
+              )}
+            </SelectContent>
+          </Select>
         </div>
 
 {/* الصور — حتى 4 */}
