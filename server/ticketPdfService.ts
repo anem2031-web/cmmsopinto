@@ -12,6 +12,7 @@
  */
 
 import { htmlToPdf } from "./htmlToPdfService";
+import { storageGetStream } from "./storage";
 import {
   getTicketById,
   getUserById,
@@ -21,23 +22,21 @@ import {
   getAttachments
 } from "./db";
 
-async function imageUrlToBase64(url: string): Promise<string | null> {
+/**
+ * ✅ يجلب الصورة مباشرة من التخزين (iDrive e2) بدل HTTP fetch على الدومين
+ * هذا يحل مشكلة عدم ظهور الصور في PDF عند النشر على Railway (دومين خارجي/منفذ مختلف)
+ */
+async function fileKeyToBase64(fileKey: string): Promise<string | null> {
   try {
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      console.error("Image fetch failed:", response.status, url);
-      return null;
+    const { stream, contentType } = await storageGetStream(fileKey);
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream as any) {
+      chunks.push(Buffer.from(chunk));
     }
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-
-    const contentType =
-      response.headers.get("content-type") || "image/jpeg";
-
+    const buffer = Buffer.concat(chunks);
     return `data:${contentType};base64,${buffer.toString("base64")}`;
   } catch (error) {
-    console.error("Failed to convert image:", url, error);
+    console.error("Failed to read image from storage:", fileKey, error);
     return null;
   }
 }
@@ -153,11 +152,10 @@ const imageAttachments = attachments.filter((a: any) =>
 );
 
 const imageBase64List = await Promise.all(
-  imageAttachments.map(async (a: any) => {
-    const mediaUrl = `http://localhost:3000${a.fileUrl}`;
-
-    return await imageUrlToBase64(mediaUrl);
-  })
+  imageAttachments.map(async (a: any) =>
+    // ✅ قراءة مباشرة من التخزين عبر fileKey — لا يعتمد على دومين أو منفذ
+    await fileKeyToBase64(a.fileKey)
+  )
 );
   const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -181,6 +179,9 @@ const imageBase64List = await Promise.all(
       background: #fff;
       padding: 0;
       line-height: 1.6;
+      width: 100%;
+      max-width: 100%;
+      overflow-x: hidden; /* حماية إضافية من قص المحتوى عند الأطراف */
     }
     
     /* Header Banner */
@@ -393,21 +394,15 @@ const imageBase64List = await Promise.all(
     /* Print-specific adjustments */
 @page {
   size: A4;
-  margin: 12mm;
 }
 
 @media print {
   html,
   body {
-    width: 210mm;
-    min-height: 297mm;
+    width: 100%;
     margin: 0;
     padding: 0;
     background: #fff;
-  }
-
-  body {
-    zoom: 0.95;
   }
 
   .header {
