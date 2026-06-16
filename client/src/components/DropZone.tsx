@@ -16,6 +16,7 @@ export type UploadedFile = {
   progress: number; // 0-100
   status: "pending" | "uploading" | "done" | "error";
   url?: string;
+  fileKey?: string; // ✅ المفتاح النظيف من السيرفر — يُستخدم للقراءة المباشرة من S3/iDrive
   error?: string;
 };
 
@@ -81,7 +82,9 @@ export default function DropZone({
             const data = JSON.parse(xhr.responseText);
             setFiles(prev => {
               const updated = prev.map(f =>
-                f.id === fileEntry.id ? { ...f, status: "done" as const, progress: 100, url: data.url } : f
+                f.id === fileEntry.id
+                  ? { ...f, status: "done" as const, progress: 100, url: data.url, fileKey: data.fileKey }
+                  : f
               );
               // Notify parent with all done files
               const doneFiles = updated.filter(f => f.status === "done");
