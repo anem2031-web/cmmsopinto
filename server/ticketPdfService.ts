@@ -151,10 +151,26 @@ const imageAttachments = attachments.filter((a: any) =>
   a.mimeType?.startsWith("image/")
 );
 
+/**
+ * ✅ استرجاع fileKey الصحيح للمرفقات القديمة المعطوبة
+ * بعض السجلات القديمة خُزِّن فيها fileKey خاطئ (نتيجة خلل سابق في استخراجه من الرابط).
+ * fileUrl يبقى دائماً صحيحاً (مثل: /api/media?key=cmms%2Fuploads%2F...)، فنستخرج
+ * المفتاح الحقيقي منه كحل بديل عندما يكون fileKey المخزن غير سليم.
+ */
+function resolveFileKey(a: any): string {
+  if (a.fileKey && a.fileKey.startsWith("cmms/")) return a.fileKey;
+  try {
+    const url = new URL(a.fileUrl, "http://x");
+    const recovered = url.searchParams.get("key");
+    if (recovered) return decodeURIComponent(recovered);
+  } catch {}
+  return a.fileKey;
+}
+
 const imageBase64List = await Promise.all(
   imageAttachments.map(async (a: any) =>
     // ✅ قراءة مباشرة من التخزين عبر fileKey — لا يعتمد على دومين أو منفذ
-    await fileKeyToBase64(a.fileKey)
+    await fileKeyToBase64(resolveFileKey(a))
   )
 );
   const html = `<!DOCTYPE html>
