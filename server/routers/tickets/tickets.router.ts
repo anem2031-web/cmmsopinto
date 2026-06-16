@@ -24,6 +24,28 @@ export const ticketsRouter = router({
     return db.getTickets(filters);
   }),
 
+  // صفحات حقيقية لقائمة البلاغات (10 بلاغات/صفحة افتراضياً) — لا تؤثر على list الأصلي
+  listPaginated: protectedProcedure.input(z.object({
+    status: z.string().optional(),
+    priority: z.string().optional(),
+    siteId: z.number().optional(),
+    sectionId: z.number().optional(),
+    assetId: z.number().optional(),
+    search: z.string().optional(),
+    category: z.string().optional(),
+    assignedTechnicianId: z.number().optional(),
+    assignedToId: z.number().optional(),
+    page: z.number().min(1).default(1),
+    pageSize: z.number().min(1).max(100).default(10),
+  }).optional()).query(async ({ input, ctx }) => {
+    const role = ctx.user.role;
+    const { page = 1, pageSize = 10, ...rest } = input || {};
+    let filters: any = rest;
+    if (role === "operator") filters.reportedById = ctx.user.id;
+    else if (role === "technician") filters.assignedToId = ctx.user.id;
+    return db.getTicketsPaginated(filters, page, pageSize);
+  }),
+
   getById: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const ticket = await db.getTicketById(input.id);
     if (!ticket) throw new TRPCError({ code: "NOT_FOUND", message: "البلاغ غير موجود" });
