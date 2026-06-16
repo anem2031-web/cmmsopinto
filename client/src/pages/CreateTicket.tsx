@@ -23,6 +23,7 @@ type FileEntry = {
   status: FileStatus;
   progress: number;
   url?: string;
+  fileKey?: string; // ✅ المفتاح النظيف من السيرفر — يُستخدم للقراءة المباشرة من S3/iDrive
   error?: string;
 };
 
@@ -82,7 +83,8 @@ export default function CreateTicket() {
             entityId: data.id!,
             fileName: entry.file.name,
             fileUrl: entry.url!,
-            fileKey: entry.url!.split("/").pop() || entry.file.name,
+            // ✅ استخدام fileKey النظيف القادم من السيرفر مباشرة بدل استخراجه يدوياً من الرابط
+            fileKey: entry.fileKey || entry.file.name,
             mimeType: entry.file.type,
             fileSize: entry.file.size,
           });
@@ -127,7 +129,7 @@ export default function CreateTicket() {
                 setFileEntries(prev =>
                   prev.map(e => {
                     if (e.id !== entry.id) return e;
-                    return { ...e, status: "done", progress: 100, url: data.url };
+                    return { ...e, status: "done", progress: 100, url: data.url, fileKey: data.fileKey };
                   })
                 );
                 // Set first image as beforePhotoUrl
