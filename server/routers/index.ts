@@ -51,6 +51,7 @@ import { auditRouter } from "./system/audit.router";
 import { backupsRouter } from "./system/backups.router";
 import { preventiveRouter } from "./system/preventive.router";
 import { catalogRouter } from "./catalog.router";
+import { improvementIdeasRouter } from "./improvement-ideas/improvement-ideas.router";
 
 export const appRouter = router({
   system: systemRouter,
@@ -110,6 +111,9 @@ purchaseOrders: router({
 
   // ── وحدة الكتالوج المستقلة ──
   catalog: catalogRouter,
+
+  // ── مركز التحسين والتطوير ──
+  improvementIdeas: improvementIdeasRouter,
 });
 
 export type AppRouter = typeof appRouter;
