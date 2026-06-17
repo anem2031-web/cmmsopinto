@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure, managerProcedure, accountantProcedure, managementProcedure } from "../_shared/procedures";
 import * as db from "../../db";
+import { notifyItemRejection } from "../_shared/router-helpers";
 
 export const approvalsRouter = router({
   approveAccounting: accountantProcedure.input(z.object({
@@ -11,6 +12,7 @@ export const approvalsRouter = router({
     rejectedItemIds: z.array(z.number()).optional(),
     rejectionReason: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
+    const po = await db.getPurchaseOrderById(input.id);
     const items = await db.getPOItems(input.id);
     
     // Process item rejections if any
@@ -19,17 +21,31 @@ export const approvalsRouter = router({
         // Verify item belongs to PO
         const item = items.find(i => i.id === itemId);
         if (item) {
+          const reason = input.rejectionReason || "مرفوض من قبل الحسابات";
           await db.updatePOItem(itemId, { 
             status: "rejected", 
-            managementRejectionReason: input.rejectionReason || "مرفوض من قبل الحسابات"
+            managementRejectionReason: reason
           });
           await db.createAuditLog({ 
             userId: ctx.user.id, 
             action: "reject_po_item", 
             entityType: "purchase_order_item", 
             entityId: itemId,
-            newValues: { reason: input.rejectionReason || "مرفوض من قبل الحسابات" }
+            newValues: { reason }
           });
+          if (po) {
+            await notifyItemRejection({
+              poId: po.id,
+              poNumber: po.poNumber,
+              requestedById: po.requestedById,
+              itemName: item.itemName,
+              actorId: ctx.user.id,
+              actorName: ctx.user.name || "مستخدم",
+              actorRole: ctx.user.role,
+              reason,
+              kind: "rejected",
+            });
+          }
         }
       }
     }
@@ -46,13 +62,14 @@ export const approvalsRouter = router({
         status: "rejected", 
         rejectedById: ctx.user.id, 
         rejectedAt: new Date(), 
-        rejectionReason: "تم رفض جميع الأصناف من قبل الحسابات" 
+        rejectionReason: input.rejectionReason
+          ? `${input.rejectionReason} (بواسطة ${ctx.user.name})`
+          : `تم رفض جميع الأصناف من قبل الحسابات بواسطة ${ctx.user.name}`
       });
       
       // Notify PO creator
-      const po = await db.getPurchaseOrderById(input.id);
       if (po) {
-        await db.createNotification({ userId: po.requestedById, title: "❌ طلب شراء مرفوض", message: `تم رفض جميع أصناف طلب الشراء رقم ${po.poNumber || input.id} من قبل الحسابات.`, type: "error", relatedPOId: input.id });
+        await db.createNotification({ userId: po.requestedById, title: "❌ طلب شراء مرفوض", message: `تم رفض جميع أصناف طلب الشراء رقم ${po.poNumber || input.id} من قبل الحسابات بواسطة ${ctx.user.name}.${input.rejectionReason ? ` السبب: ${input.rejectionReason}` : ""}`, type: "error", relatedPOId: input.id });
       }
     } else {
       // Normal flow: PO goes to management
@@ -60,7 +77,6 @@ export const approvalsRouter = router({
       
       // Notify senior management
       const mgmt = await db.getUsersByRole("senior_management");
-      const po = await db.getPurchaseOrderById(input.id);
       const custodyMsg = input.custodyAmount ? ` مبلغ العهدة: ${Number(input.custodyAmount).toLocaleString("ar-SA")} ر.س.` : "";
       for (const m of mgmt) {
         await db.createNotification({ userId: m.id, title: "طلب شراء بانتظار اعتمادك", message: `طلب شراء رقم ${po?.poNumber || input.id} بانتظار اعتماد الإدارة العليا.${custodyMsg}`, type: "warning", relatedPOId: input.id });
@@ -86,17 +102,31 @@ export const approvalsRouter = router({
         // Verify item belongs to PO
         const item = items.find(i => i.id === itemId);
         if (item) {
+          const reason = input.rejectionReason || "مرفوض من قبل الإدارة";
           await db.updatePOItem(itemId, { 
             status: "rejected", 
-            managementRejectionReason: input.rejectionReason || "مرفوض من قبل الإدارة"
+            managementRejectionReason: reason
           });
           await db.createAuditLog({ 
             userId: ctx.user.id, 
             action: "reject_po_item", 
             entityType: "purchase_order_item", 
             entityId: itemId,
-            newValues: { reason: input.rejectionReason || "مرفوض من قبل الإدارة" }
+            newValues: { reason }
           });
+          if (po) {
+            await notifyItemRejection({
+              poId: po.id,
+              poNumber: po.poNumber,
+              requestedById: po.requestedById,
+              itemName: item.itemName,
+              actorId: ctx.user.id,
+              actorName: ctx.user.name || "مستخدم",
+              actorRole: ctx.user.role,
+              reason,
+              kind: "rejected",
+            });
+          }
         }
       }
     }
@@ -111,12 +141,14 @@ export const approvalsRouter = router({
         status: "rejected", 
         rejectedById: ctx.user.id, 
         rejectedAt: new Date(), 
-        rejectionReason: "تم رفض جميع الأصناف من قبل الإدارة" 
+        rejectionReason: input.rejectionReason
+          ? `${input.rejectionReason} (بواسطة ${ctx.user.name})`
+          : `تم رفض جميع الأصناف من قبل الإدارة بواسطة ${ctx.user.name}`
       });
       
       // Notify PO creator
       if (po) {
-        await db.createNotification({ userId: po.requestedById, title: "❌ طلب شراء مرفوض", message: `تم رفض جميع أصناف طلب الشراء رقم ${po.poNumber || input.id} من قبل الإدارة.`, type: "error", relatedPOId: input.id });
+        await db.createNotification({ userId: po.requestedById, title: "❌ طلب شراء مرفوض", message: `تم رفض جميع أصناف طلب الشراء رقم ${po.poNumber || input.id} من قبل الإدارة بواسطة ${ctx.user.name}.${input.rejectionReason ? ` السبب: ${input.rejectionReason}` : ""}`, type: "error", relatedPOId: input.id });
       }
       
       await db.createAuditLog({ userId: ctx.user.id, action: "approve_management", entityType: "purchase_order", entityId: input.id, newValues: { status: "rejected_all_items" } });
@@ -220,14 +252,22 @@ export const approvalsRouter = router({
   })).mutation(async ({ input, ctx }) => {
     const poReject = await db.getPurchaseOrderById(input.id);
     await db.updatePurchaseOrder(input.id, { status: "rejected", rejectedById: ctx.user.id, rejectedAt: new Date(), rejectionReason: input.reason });
+    await db.createProcurementComment({
+      purchaseOrderId: input.id,
+      userId: ctx.user.id,
+      userName: ctx.user.name || "مستخدم",
+      userRole: ctx.user.role,
+      actionType: "po_rejected",
+      note: `تم رفض طلب الشراء بالكامل\n\nالسبب:\n${input.reason}`,
+    });
     // Notify PO creator and managers
     if (poReject?.requestedById && poReject.requestedById !== ctx.user.id) {
-      await db.createNotification({ userId: poReject.requestedById, title: "❌ تم رفض طلب الشراء", message: `تم رفض طلب الشراء رقم ${poReject.poNumber}. السبب: ${input.reason}`, type: "critical", relatedPOId: input.id });
+      await db.createNotification({ userId: poReject.requestedById, title: "❌ تم رفض طلب الشراء", message: `تم رفض طلب الشراء رقم ${poReject.poNumber} بواسطة ${ctx.user.name}. السبب: ${input.reason}`, type: "critical", relatedPOId: input.id });
     }
     const managersReject = await db.getManagerUsers();
     for (const mgr of managersReject) {
       if (mgr.id !== ctx.user.id) {
-        await db.createNotification({ userId: mgr.id, title: "❌ رفض طلب شراء", message: `تم رفض طلب الشراء رقم ${poReject?.poNumber || input.id}. السبب: ${input.reason}`, type: "critical", relatedPOId: input.id });
+        await db.createNotification({ userId: mgr.id, title: "❌ رفض طلب شراء", message: `تم رفض طلب الشراء رقم ${poReject?.poNumber || input.id} بواسطة ${ctx.user.name}. السبب: ${input.reason}`, type: "critical", relatedPOId: input.id });
       }
     }
     return { success: true };
@@ -275,13 +315,27 @@ export const approvalsRouter = router({
           await db.updatePOItem(reviewItem.id, {
             status: "pending",
             delegateId: reviewItem.delegateId,
-            rejectionReason: null,
+            managementRejectionReason: null,
           });
         } else {
           await db.updatePOItem(reviewItem.id, {
             status: "rejected",
-            rejectionReason: reviewItem.rejectionReason,
+            managementRejectionReason: reviewItem.rejectionReason,
           });
+          const rejectedItem = dbItems.find((i: any) => i.id === reviewItem.id);
+          if (rejectedItem) {
+            await notifyItemRejection({
+              poId: po.id,
+              poNumber: po.poNumber,
+              requestedById: po.requestedById,
+              itemName: rejectedItem.itemName,
+              actorId: ctx.user.id,
+              actorName: ctx.user.name || "مستخدم",
+              actorRole: ctx.user.role,
+              reason: reviewItem.rejectionReason!,
+              kind: "rejected",
+            });
+          }
         }
       }
       // Determine new PO status
@@ -289,9 +343,9 @@ export const approvalsRouter = router({
       const hasApproved = allItems.some(i => i.status === "pending");
       const allRejected = allItems.every(i => i.status === "rejected" || i.status === "cancelled");
       if (allRejected) {
-        await db.updatePurchaseOrder(input.poId, { status: "rejected", rejectedById: ctx.user.id, rejectedAt: new Date(), rejectionReason: "تم رفض جميع الأصناف" });
+        await db.updatePurchaseOrder(input.poId, { status: "rejected", rejectedById: ctx.user.id, rejectedAt: new Date(), rejectionReason: `تم رفض جميع الأصناف بواسطة ${ctx.user.name}` });
         if (po.requestedById && po.requestedById !== ctx.user.id) {
-          await db.createNotification({ userId: po.requestedById, title: "❌ تم رفض جميع أصناف طلب الشراء", message: `تم رفض جميع أصناف طلب الشراء رقم ${po.poNumber}.`, type: "critical", relatedPOId: input.poId });
+          await db.createNotification({ userId: po.requestedById, title: "❌ تم رفض جميع أصناف طلب الشراء", message: `تم رفض جميع أصناف طلب الشراء رقم ${po.poNumber} بواسطة ${ctx.user.name}.`, type: "critical", relatedPOId: input.poId });
         }
 } else if (hasApproved) {
         await db.updatePurchaseOrder(input.poId, {
@@ -305,11 +359,6 @@ export const approvalsRouter = router({
           const delegateItems = approvedItems.filter(i => i.delegateId === dId);
           const itemNames = delegateItems.map(i => i.itemName).join("، ");
           await db.createNotification({ userId: dId, title: "طلب شراء جديد — ابدأ التسعير", message: `تم تخصيص الأصناف التالية لك في طلب الشراء ${po.poNumber}: ${itemNames}`, type: "info", relatedPOId: input.poId });
-        }
-        const rejectedItems = allItems.filter(i => i.status === "rejected");
-        if (rejectedItems.length > 0 && po.requestedById && po.requestedById !== ctx.user.id) {
-          const rejectedNames = rejectedItems.map(i => i.itemName).join("، ");
-          await db.createNotification({ userId: po.requestedById, title: "⚠️ بعض أصناف طلب الشراء مرفوضة", message: `تم رفض الأصناف التالية من طلب الشراء ${po.poNumber}: ${rejectedNames}`, type: "warning", relatedPOId: input.poId });
         }
       }
       await db.createAuditLog({ userId: ctx.user.id, action: "review_po_items", entityType: "purchase_order", entityId: input.poId });
