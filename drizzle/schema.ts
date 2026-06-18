@@ -189,7 +189,7 @@ export const purchaseOrders = mysqlTable("purchase_orders", {
 // ============================================================
 // 5. PURCHASE ORDER ITEMS
 // ============================================================
-export const poItemStatuses = ["pending", "estimated", "approved", "rejected", "funded", "purchased", "delivered_to_warehouse", "delivered_to_requester", "cancelled", "needs_item_revision", "purchase_cancelled"] as const;
+export const poItemStatuses = ["pending", "estimated", "approved", "rejected", "funded", "purchased", "delivered_to_warehouse", "delivered_to_requester", "cancelled"] as const;
 
 export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   id: int("id").autoincrement().primaryKey(),
@@ -235,13 +235,6 @@ export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   returnedQuantity: int("returnedQuantity").default(0),
   returnReason: text("returnReason"),
   returnedAt: timestamp("returnedAt"),
-  itemRevisionNote: text("itemRevisionNote"),
-  itemRevisionRequestedById: int("itemRevisionRequestedById"),
-  itemRevisionRequestedAt: timestamp("itemRevisionRequestedAt"),
-  purchaseCancelReason: text("purchaseCancelReason"),
-  purchaseCancelledById: int("purchaseCancelledById"),
-  purchaseCancelledByName: varchar("purchaseCancelledByName", { length: 300 }),
-  purchaseCancelledAt: timestamp("purchaseCancelledAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -939,8 +932,14 @@ export const improvementCategories = [
   "operational", "technical", "procedural", "safety", "quality",
   "cost_reduction", "productivity", "innovative", "work_note", "recurring_problem",
 ] as const;
+// المجموعة/الملف — يحدّدها الفارز فقط أثناء "الفرز والتصنيف"
+export const improvementGroups = [
+  "maintenance_ops", "warehouse_assets", "purchasing_contracts", "safety_quality",
+  "tech_digital", "restaurants_services", "hr_training", "customer_experience",
+] as const;
+// new → classified → approved → in_progress → completed | postponed | cancelled
 export const improvementStatuses = [
-  "new", "pending_decision", "in_progress", "completed", "postponed", "cancelled",
+  "new", "classified", "approved", "in_progress", "completed", "postponed", "cancelled",
 ] as const;
 
 export const improvementIdeas = mysqlTable("improvement_ideas", {
@@ -949,6 +948,7 @@ export const improvementIdeas = mysqlTable("improvement_ideas", {
   title: varchar("title", { length: 300 }).notNull(),
   description: text("description"),
   category: mysqlEnum("category", [...improvementCategories]).notNull(),
+  groupCategory: varchar("groupCategory", { length: 50 }),
   priority: mysqlEnum("priority", [...ticketPriorities]).default("medium").notNull(),
   status: mysqlEnum("status", [...improvementStatuses]).default("new").notNull(),
   expectedBenefit: text("expectedBenefit"),
@@ -956,15 +956,17 @@ export const improvementIdeas = mysqlTable("improvement_ideas", {
   sectionId: int("sectionId"),
   assetId: int("assetId"),
   submittedById: int("submittedById").notNull(),
-  // الفرز والمراجعة (مشرف / مدير صيانة)
+  // الفرز والتصنيف (مالك النظام / مدير النظام / مدير الصيانة فقط) — يصحّح التصنيف، يحدد المجموعة والأولوية
   triagedById: int("triagedById"),
   triagedAt: timestamp("triagedAt"),
   // قرار الإدارة العليا
   decidedById: int("decidedById"),
   decidedAt: timestamp("decidedAt"),
   decisionNotes: text("decisionNotes"),
-  // التكليف بالتنفيذ (أي مستخدم، ليس بالضرورة فني)
+  // التحويل إلى عمل فعلي بعد الموافقة (تذكرة أو طلب شراء)
   assignedToId: int("assignedToId"),
+  linkedTicketId: int("linkedTicketId"),
+  linkedPurchaseOrderId: int("linkedPurchaseOrderId"),
   postponedUntil: timestamp("postponedUntil"),
   cancelReason: text("cancelReason"),
   completedAt: timestamp("completedAt"),
