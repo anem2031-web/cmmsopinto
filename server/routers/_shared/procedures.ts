@@ -51,6 +51,12 @@ export const managementProcedure = roleMiddleware([
   "admin",
 ]);
 
+// صلاحية الفرز والتصنيف بمركز التحسين والتطوير: مدير الصيانة فقط
+// (owner/admin يدخلون تلقائياً عبر roleMiddleware، supervisor وsenior_management مستثنون عمداً)
+export const ideaTriageProcedure = roleMiddleware([
+  "maintenance_manager",
+]);
+
 export const warehouseProcedure = roleMiddleware([
   "warehouse",
   "owner",
