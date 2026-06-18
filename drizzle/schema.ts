@@ -92,7 +92,8 @@ export const ticketStatuses = [
   "purchase_pending_management", "purchase_approved", "partial_purchase",
   "purchased", "received_warehouse",
   "out_for_repair",
-  "repaired", "verified", "closed"
+  "repaired", "verified", "closed",
+  "requester_confirmed"
 ] as const;
 export type TicketStatus = typeof ticketStatuses[number];
 
@@ -254,6 +255,20 @@ export const procurementComments = mysqlTable("procurement_comments", {
 });
 export type ProcurementComment = typeof procurementComments.$inferSelect;
 export type InsertProcurementComment = typeof procurementComments.$inferInsert;
+
+// ============================================================
+// 5b. TICKET CONFIRMATIONS (requester confirms completion after closure)
+// ============================================================
+export const ticketConfirmations = mysqlTable("ticket_confirmations", {
+  id: int("id").autoincrement().primaryKey(),
+  ticketId: int("ticketId").notNull(),
+  confirmedById: int("confirmedById").notNull(),
+  note: text("note").notNull(),
+  photoUrls: json("photoUrls").$type<string[]>().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type TicketConfirmation = typeof ticketConfirmations.$inferSelect;
+export type InsertTicketConfirmation = typeof ticketConfirmations.$inferInsert;
 
 // ============================================================
 // 6. INVENTORY
