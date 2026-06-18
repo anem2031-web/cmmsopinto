@@ -118,6 +118,16 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   },
   onError: (e: any) => toast.error(e.message)
 });
+
+  const resubmitCancelledPurchaseMut = trpc.purchaseOrders.resubmitCancelledPurchase.useMutation({
+    onSuccess: () => { toast.success("تمت إعادة إرسال الصنف للمندوب للشراء"); refetch(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const finalizeCancelledItemMut = trpc.purchaseOrders.finalizeCancelledItem.useMutation({
+    onSuccess: () => { toast.success("تم إلغاء الصنف نهائياً"); refetch(); },
+    onError: (e: any) => toast.error(e.message),
+  });
   const role = user?.role || "";
   const userId = user?.id;
 
@@ -462,17 +472,7 @@ const visibleItems = useMemo(() => {
                       {delegate && <span>{t.purchaseOrders.delegate}: <strong>{delegate.name}</strong></span>}
                     </div>
                     {item.notes && <p className="text-xs text-muted-foreground mt-1.5 bg-muted/50 rounded-lg p-2">{getField(item, "notes")}</p>}
-                    {isPurchaseCancelled && (
-                      <div className="mt-2 bg-red-50 border border-red-200 rounded-lg p-2.5 space-y-1">
-                        <p className="text-xs font-semibold text-red-700">⛔ تم إلغاء شراءه من قبل المندوب</p>
-                        {item.purchaseCancelledByName && (
-                          <p className="text-xs text-red-600">المندوب: <strong>{item.purchaseCancelledByName}</strong></p>
-                        )}
-                        {item.purchaseCancelReason && (
-                          <p className="text-xs text-red-600">السبب: {item.purchaseCancelReason}</p>
-                        )}
-                      </div>
-                    )}
+
                     {(isCancelled || isRejected) && item.managementRejectionReason && (
                       <p className={`text-xs mt-1 ${isRejected ? "text-red-500" : "text-gray-400"}`}>
                         {isCancelled
@@ -681,6 +681,72 @@ const visibleItems = useMemo(() => {
         disabled={resubmitItemRevisionMut.isPending}
       >
         إعادة إرسال الصنف
+      </Button>
+    </div>
+    )}
+  </div>
+)}
+
+{item.status === "purchase_cancelled" && (
+  <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-3">
+    <p className="text-sm font-medium text-red-800">
+      ⛔ تعذّر شراء هذا الصنف من قبل المندوب
+    </p>
+
+    {item.purchaseCancelledByName && (
+      <p className="text-xs text-red-700">المندوب: <strong>{item.purchaseCancelledByName}</strong></p>
+    )}
+
+    {item.purchaseCancelReason && (
+      <div className="text-sm text-red-700 bg-white p-2 rounded border">
+        <strong>السبب:</strong>
+        <br />
+        {item.purchaseCancelReason}
+      </div>
+    )}
+
+    {(isAdminOrOwner || String(po.requestedById) === String(userId)) && (
+    <div className="flex flex-wrap gap-2">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          setEditingItem(item);
+          setEditForm({
+            itemName: item.itemName || "",
+            description: item.description || "",
+            quantity: item.quantity || 1,
+            estimatedUnitCost: item.estimatedUnitCost?.toString() || "",
+            unit: item.unit || "",
+            photoUrl: item.photoUrl || "",
+            notes: item.notes || "",
+          });
+        }}
+      >
+        تعديل الصنف
+      </Button>
+
+      <Button
+        size="sm"
+        onClick={() => resubmitCancelledPurchaseMut.mutate({ itemId: item.id })}
+        disabled={resubmitCancelledPurchaseMut.isPending}
+      >
+        {resubmitCancelledPurchaseMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+        إعادة إرسال للمندوب للشراء
+      </Button>
+
+      <Button
+        size="sm"
+        variant="destructive"
+        onClick={() => {
+          if (confirm("هل أنت متأكد من إلغاء هذا الصنف نهائياً؟ لا يمكن التراجع عن هذا الإجراء.")) {
+            finalizeCancelledItemMut.mutate({ itemId: item.id });
+          }
+        }}
+        disabled={finalizeCancelledItemMut.isPending}
+      >
+        {finalizeCancelledItemMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+        إلغاء نهائي
       </Button>
     </div>
     )}
