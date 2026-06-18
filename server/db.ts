@@ -16,7 +16,9 @@ import {
   warehouseReceipts,
   warehouseReturns,
   type InsertWarehouseReceipt,
-  type InsertWarehouseReturn
+  type InsertWarehouseReturn,
+  ticketConfirmations,
+  type InsertTicketConfirmation
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -416,6 +418,22 @@ export async function addTicketStatusHistory(data: { ticketId: number; fromStatu
   const db = await getDb();
   if (!db) return;
   await db.insert(ticketStatusHistory).values(data);
+}
+
+// ============================================================
+// TICKET CONFIRMATIONS (requester confirms completion after closure)
+// ============================================================
+export async function createTicketConfirmation(data: InsertTicketConfirmation) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(ticketConfirmations).values(data);
+}
+
+export async function getTicketConfirmation(ticketId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ticketConfirmations).where(eq(ticketConfirmations.ticketId, ticketId)).orderBy(desc(ticketConfirmations.createdAt)).limit(1);
+  return result[0] || null;
 }
 
 export async function getTicketHistory(ticketId: number) {
