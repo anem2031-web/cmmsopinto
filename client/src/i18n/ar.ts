@@ -212,6 +212,8 @@ const ar = {
     purchased: "تم الشراء",
     received: "تم الاستلام",
     cancelled: "ملغي",
+    purchase_cancelled: "تم إلغاء شراءه",
+    needs_item_revision: "بحاجة لمراجعة",
   },
 
   // Priorities
