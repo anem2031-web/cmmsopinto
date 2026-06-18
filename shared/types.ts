@@ -38,6 +38,7 @@ export const STATUS_LABELS: Record<string, string> = {
   repaired: "تم الإصلاح",
   verified: "تم التحقق",
   closed: "مغلق",
+  requester_confirmed: "تم تأكيد الإنهاء من مقدم الطلب",
 };
 
 export const PO_STATUS_LABELS: Record<string, string> = {
@@ -102,6 +103,7 @@ export const STATUS_COLORS: Record<string, string> = {
   repaired: "bg-lime-100 text-lime-700",
   verified: "bg-sky-100 text-sky-700",
   closed: "bg-gray-100 text-gray-700",
+  requester_confirmed: "bg-emerald-100 text-emerald-700",
 };
 
 export const ROLE_PERMISSIONS: Record<string, string[]> = {
