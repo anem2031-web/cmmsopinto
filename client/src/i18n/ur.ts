@@ -204,6 +204,8 @@ const ur: any = {
     purchased: "خریدا گیا",
     received: "موصول",
     cancelled: "منسوخ",
+      purchase_cancelled: "خریداری منسوخ",
+    needs_item_revision: "نظرثانی درکار",
   },
 
   priority: {
