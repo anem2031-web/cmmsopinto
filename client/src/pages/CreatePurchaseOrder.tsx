@@ -586,10 +586,12 @@ const handleCatalogSelect = (catalogItem: any) => {
       <div className="space-y-2">
         <Label>{t.purchaseOrders.itemName} *</Label>
 
-        <Input
+        <Textarea
           dir="auto"
           value={item.itemName}
           readOnly={item.sourceType === "catalog"}
+          maxLength={300}
+          rows={2}
           onClick={() => {
             if (item.sourceType === "catalog") {
               setCatalogTargetIndex(idx);
@@ -597,9 +599,12 @@ const handleCatalogSelect = (catalogItem: any) => {
             }
           }}
           onChange={e =>
-            updateItem(idx, "itemName", e.target.value)
+            updateItem(idx, "itemName", e.target.value.slice(0, 300))
           }
         />
+        <p className="text-[11px] text-muted-foreground text-left">
+          {item.itemName.length} / 300
+        </p>
       </div>
 
       {/* الوصف */}
@@ -609,11 +614,15 @@ const handleCatalogSelect = (catalogItem: any) => {
         <Textarea
           dir="auto"
           value={item.description}
+          maxLength={1500}
           onChange={e =>
-            updateItem(idx, "description", e.target.value)
+            updateItem(idx, "description", e.target.value.slice(0, 1500))
           }
           rows={2}
         />
+        <p className="text-[11px] text-muted-foreground text-left">
+          {item.description.length} / 1500
+        </p>
       </div>
 
       {/* الكمية والوحدة والصورة */}
@@ -762,17 +771,22 @@ const handleCatalogSelect = (catalogItem: any) => {
 
       </div> {/* إغلاق grid grid-cols-2 md:grid-cols-3 */}
 
-      {/* الملاحظات */}
+      {/* المبررات */}
       <div className="space-y-2">
         <Label>{t.purchaseOrders.justification}</Label>
 
-        <Input
+        <Textarea
           dir="auto"
           value={item.notes}
+          maxLength={200}
+          rows={2}
           onChange={e =>
-            updateItem(idx, "notes", e.target.value)
+            updateItem(idx, "notes", e.target.value.slice(0, 200))
           }
         />
+        <p className="text-[11px] text-muted-foreground text-left">
+          {item.notes.length} / 200
+        </p>
       </div>
 
     </CardContent>
