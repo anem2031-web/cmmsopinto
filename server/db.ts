@@ -651,10 +651,33 @@ async function getWebPush() {
   return _webPush;
 }
 
-export async function createNotification(data: { userId: number; title: string; message: string; type?: string; relatedTicketId?: number; relatedPOId?: number }) {
+export async function createNotification(data: { userId: number; title: string; message: string; type?: string; relatedTicketId?: number; relatedPOId?: number; allowSeniorManagement?: boolean }) {
   const db = await getDb();
   if (!db) return;
-  await db.insert(notifications).values(data as any);
+
+  // ── Senior Management notification policy ───────────────────────────────
+  // دور "الإدارة العليا" (senior_management) لا يستقبل أي إشعارات إطلاقاً،
+  // باستثناء حالة واحدة فقط: طلب شراء بانتظار اعتماده بعد موافقة الحسابات.
+  // أي استدعاء آخر (حالي أو مستقبلي) يستهدف هذا الدور يُحظر تلقائياً هنا،
+  // ما لم يُمرَّر allowSeniorManagement: true صراحةً من نقطة الاستدعاء المصرّح بها.
+  if (!data.allowSeniorManagement) {
+    const recipient = await getUserById(data.userId);
+    if (recipient?.role === "senior_management") {
+      console.warn(
+        `[Notifications] Blocked notification to senior_management (userId=${data.userId}): "${data.title}" — not in the allowed exception list.`
+      );
+      return;
+    }
+  }
+
+  await db.insert(notifications).values({
+    userId: data.userId,
+    title: data.title,
+    message: data.message,
+    type: data.type as any,
+    relatedTicketId: data.relatedTicketId,
+    relatedPOId: data.relatedPOId,
+  });
 
   // Send Web Push notification asynchronously (fire-and-forget)
   getWebPush().then(wp => {
