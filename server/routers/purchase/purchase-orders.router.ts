@@ -377,7 +377,7 @@ export const purchaseOrdersRouter = router({
     })),
   })).mutation(async ({ input, ctx }) => {
     if (input.items.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "يجب إضافة صنف واحد على الأقل" });
-    if (input.items.length > 15) throw new TRPCError({ code: "BAD_REQUEST", message: `الحد الأقصى 15 صنف لكل طلب شراء` });
+    if (input.items.length > 20) throw new TRPCError({ code: "BAD_REQUEST", message: `الحد الأقصى 20 صنف لكل طلب شراء` });
 
     const poNumber = await db.getNextPONumber();
     const poId = await db.createPurchaseOrder({
@@ -456,7 +456,7 @@ export const purchaseOrdersRouter = router({
     if (String(po.requestedById) !== String(ctx.user.id) && !["admin", "owner"].includes(ctx.user.role)) {
       throw new TRPCError({ code: "FORBIDDEN", message: "فقط منشئ المسودة يمكنه تعديلها" });
     }
-    if (input.items.length > 15) throw new TRPCError({ code: "BAD_REQUEST", message: "الحد الأقصى 15 صنف" });
+    if (input.items.length > 20) throw new TRPCError({ code: "BAD_REQUEST", message: "الحد الأقصى 20 صنف" });
 
     // تحديث ملاحظات الطلب
     await db.updatePurchaseOrder(input.id, { notes: input.notes || null });
@@ -522,12 +522,12 @@ export const purchaseOrdersRouter = router({
       delegateId: z.number().optional(),
     })),
   })).mutation(async ({ input, ctx }) => {
-    // ✅ Batching Limit: Max 15 items per PO
+    // ✅ Batching Limit: Max 20 items per PO
     if (input.items.length === 0) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "يجب إضافة صنف واحد على الأقل" });
     }
-    if (input.items.length > 15) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: `الحد الأقصى 15 صنف لكل طلب شراء. لديك ${input.items.length} صنف` });
+    if (input.items.length > 20) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: `الحد الأقصى 20 صنف لكل طلب شراء. لديك ${input.items.length} صنف` });
     }
     const poNumber = await db.getNextPONumber();
     const poId = await db.createPurchaseOrder({
@@ -599,7 +599,7 @@ export const purchaseOrdersRouter = router({
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
     const po = await db.getPurchaseOrderById(input.id);
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
-    if (!["owner", "admin", "maintenance_manager", "purchase_manager"].includes(ctx.user.role)) {
+    if (!["owner", "admin"].includes(ctx.user.role)) {
       throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لحذف طلبات الشراء" });
     }
     if (["funded", "partially_purchased", "completed"].includes(po.status)) {
@@ -620,12 +620,43 @@ export const purchaseOrdersRouter = router({
   deleteItem: protectedProcedure.input(z.object({ id: z.number(), purchaseOrderId: z.number() })).mutation(async ({ input, ctx }) => {
     const po = await db.getPurchaseOrderById(input.purchaseOrderId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND" });
-    if (!["draft", "pending_review", "pending_estimate", "pending_accounting", "revision_needed"].includes(po.status)) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن حذف صنف من طلب معتمد" });
-    }
+
     const item = await db.getPOItemById(input.id);
+    if (!item) throw new TRPCError({ code: "NOT_FOUND" });
+
+    const isCreator = po.requestedById === ctx.user.id;
+    // الأدوار المسموح لها بحذف صنف من طلب الشراء بشكل عام (تطابق صلاحية editItem)
+    const isPrivilegedRole = ["owner", "admin", "maintenance_manager"].includes(ctx.user.role);
+
+    // استثناء منشئ الطلب: يقدر يحذف صنفاً من طلبه فقط في حالتين:
+    // 1) طلب مراجعة من المندوب (على الصنف needs_item_revision أو على كامل الطلب revision_needed)
+    // 2) إلغاء شراء الصنف من قبل المندوب (purchase_cancelled)
+    const isRevisionCase = item.status === "needs_item_revision" || po.status === "revision_needed";
+    const isPurchaseCancelledCase = item.status === "purchase_cancelled";
+    const creatorException = isCreator && (isRevisionCase || isPurchaseCancelledCase);
+
+    const editableStatuses = ["draft", "pending_review", "pending_estimate", "pending_accounting", "revision_needed"];
+    const isEditableStatus = editableStatuses.includes(po.status);
+
+    if (!creatorException) {
+      if (!isPrivilegedRole) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لحذف أصناف طلب الشراء" });
+      }
+      if (!isEditableStatus) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن حذف صنف من طلب معتمد" });
+      }
+    }
+
+    // عند طلب المراجعة على كامل الطلب (revision_needed)، الحذف مقصور على منشئ الطلب فقط
+    if (po.status === "revision_needed" && !isCreator) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "فقط منشئ الطلب يمكنه حذف الأصناف عند طلب المراجعة"
+      });
+    }
+
     await db.deletePOItem(input.id);
-    await db.createAuditLog({ userId: ctx.user.id, action: "delete_po_item", entityType: "purchase_order_item", entityId: input.id, oldValues: { itemName: item?.itemName, quantity: item?.quantity } });
+    await db.createAuditLog({ userId: ctx.user.id, action: "delete_po_item", entityType: "purchase_order_item", entityId: input.id, oldValues: { itemName: item.itemName, quantity: item.quantity } });
     return { success: true };
   }),
 
@@ -643,33 +674,42 @@ export const purchaseOrdersRouter = router({
   })).mutation(async ({ input, ctx }) => {
     const po = await db.getPurchaseOrderById(input.purchaseOrderId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND" });
-    // الحالات المسموح فيها بالتعديل العادي
+
+    const oldItem = await db.getPOItemById(input.id);
+    if (!oldItem) {
+      throw new TRPCError({ code: "NOT_FOUND" });
+    }
+
+    const isCreator = po.requestedById === ctx.user.id;
+    // الأدوار المسموح لها بتعديل طلب الشراء / الصنف بشكل عام
+    const isPrivilegedRole = ["owner", "admin", "maintenance_manager"].includes(ctx.user.role);
+
+    // استثناء منشئ الطلب: يقدر يعدّل طلبه فقط في حالتين:
+    // 1) طلب مراجعة من المندوب (على الصنف نفسه needs_item_revision أو على كامل الطلب revision_needed)
+    // 2) إلغاء شراء الصنف من قبل المندوب (purchase_cancelled)
+    const isRevisionCase = oldItem.status === "needs_item_revision" || po.status === "revision_needed";
+    const isPurchaseCancelledCase = oldItem.status === "purchase_cancelled";
+    const creatorException = isCreator && (isRevisionCase || isPurchaseCancelledCase);
+
+    // الحالات المسموح فيها بالتعديل العادي (لأصحاب الأدوار المسموح لها)
     const editableStatuses = ['draft', 'pending_review', 'pending_estimate', 'pending_accounting', 'revision_needed'];
     const isEditableStatus = editableStatuses.includes(po.status);
 
-    // استثناء: الطلب معتمد/في المراجعة لكن الصنف نفسه في needs_item_revision أو purchase_cancelled → نسمح للمنشئ بالتعديل
-    const oldItem = await db.getPOItemById(input.id);
-    const isItemInRevision = oldItem?.status === "needs_item_revision" || oldItem?.status === "purchase_cancelled";
-    const isCreator = po.requestedById === ctx.user.id;
-
-    if (!isEditableStatus && !(isItemInRevision && isCreator)) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن تعديل صنف في طلب معتمد أو ممول" });
+    if (!creatorException) {
+      if (!isPrivilegedRole) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لتعديل أصناف طلب الشراء" });
+      }
+      if (!isEditableStatus) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن تعديل صنف في طلب معتمد أو ممول" });
+      }
     }
 
-    // Enforce creator-only editing when status is 'revision_needed'
+    // عند طلب المراجعة على كامل الطلب (revision_needed)، التعديل مقصور على منشئ الطلب فقط
     if (po.status === 'revision_needed' && !isCreator) {
       throw new TRPCError({
         code: "FORBIDDEN",
         message: "فقط منشئ الطلب يمكنه تعديل الأصناف عند طلب المراجعة"
       });
-    }
-
-    if (!oldItem) {
-      throw new TRPCError({ code: "NOT_FOUND" });
-    }
-
-    if (!oldItem) {
-      throw new TRPCError({ code: "NOT_FOUND" });
     }
 
     if (
@@ -683,7 +723,6 @@ export const purchaseOrdersRouter = router({
         message: "تم تعديل الصنف بواسطة مستخدم آخر، قم بتحديث الصفحة",
       });
     }
-    if (!oldItem) throw new TRPCError({ code: "NOT_FOUND" });
     const updates: any = {};
     if (input.itemName !== undefined) updates.itemName = input.itemName;
     if (input.description !== undefined) updates.description = input.description;
@@ -1338,6 +1377,9 @@ list: protectedProcedure.input(z.object({
   })).mutation(async ({ input, ctx }) => {
     const po = await db.getPurchaseOrderById(input.id);
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
+    if (!["owner", "admin", "maintenance_manager"].includes(ctx.user.role)) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لتعديل طلب الشراء" });
+    }
     if (!["pending_estimate", "pending_accounting"].includes(po.status)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن تعديل طلب شراء معتمد" });
     }
