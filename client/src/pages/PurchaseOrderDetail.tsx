@@ -222,10 +222,14 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   const isWarehouse = role === "warehouse" || isAdminOrOwner;
   const isManager = role === "maintenance_manager" || role === "purchase_manager" || isAdminOrOwner;
   const canCancelItem = role === "senior_management" || role === "maintenance_manager" || isAdminOrOwner;
+  // الأدوار المسموح لها بتعديل أصناف طلب الشراء بشكل عام (يطابق صلاحية editItem في السيرفر)
+  const canEditItems = role === "maintenance_manager" || isAdminOrOwner;
+  const isRequester = String(po?.requestedById) === String(userId);
 const visibleItems = useMemo(() => {
   if (!po?.items) return [];
 
-  if (isAdminOrOwner) return po.items;
+  // owner/admin/maintenance_manager لديهم صلاحية تعديل الأصناف بشكل عام، فيرون كل الأصناف
+  if (isAdminOrOwner || role === "maintenance_manager") return po.items;
 
   if (role === "delegate") {
     return po.items.filter(
@@ -242,8 +246,7 @@ const visibleItems = useMemo(() => {
     role === "accountant" ||
     role === "senior_management" ||
     role === "warehouse" ||
-    role === "purchase_manager" ||
-    role === "maintenance_manager"
+    role === "purchase_manager"
   ) {
     return po.items.filter(
       (item: any) =>
@@ -491,8 +494,11 @@ const visibleItems = useMemo(() => {
                       <img src={item.photoUrl} alt="" className={`w-16 h-16 rounded-lg object-cover border ${isCancelled ? "opacity-40 grayscale" : ""}`} />
                     </button>
                   )}
-                  {/* Edit button - only for editable statuses */}
-                  {po && role !== "delegate" && ['draft', 'pending_review', 'pending_estimate', 'pending_accounting', 'revision_needed'].includes(po.status) && ['pending', 'estimated', 'approved'].includes(item.status) && (
+                  {/* Edit button - only for editable statuses, and only for allowed roles */}
+                  {po && (
+                    (canEditItems && ['draft', 'pending_review', 'pending_estimate', 'pending_accounting'].includes(po.status)) ||
+                    (isRequester && po.status === 'revision_needed')
+                  ) && ['pending', 'estimated', 'approved'].includes(item.status) && (
                     <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={() => {
                       setEditingItem(item);
                       setEditForm({ itemName: item.itemName, description: item.description || "", quantity: item.quantity, estimatedUnitCost: item.estimatedUnitCost || "", unit: item.unit || "", photoUrl: item.photoUrl || "", notes: item.notes || "" });
@@ -650,7 +656,7 @@ const visibleItems = useMemo(() => {
       </div>
     )}
 
-    {(isAdminOrOwner || String(po.requestedById) === String(userId)) && (
+    {(isAdminOrOwner || role === "maintenance_manager" || String(po.requestedById) === String(userId)) && (
     <div className="flex gap-2">
       <Button
         variant="outline"
@@ -705,7 +711,7 @@ const visibleItems = useMemo(() => {
       </div>
     )}
 
-    {(isAdminOrOwner || String(po.requestedById) === String(userId)) && (
+    {(isAdminOrOwner || role === "maintenance_manager" || String(po.requestedById) === String(userId)) && (
     <div className="flex flex-wrap gap-2">
       <Button
         variant="outline"
