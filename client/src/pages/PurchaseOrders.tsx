@@ -45,7 +45,7 @@ export default function PurchaseOrders() {
   const [requestedById, setRequestedById] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const canDelete = user && ["owner", "admin", "maintenance_manager", "purchase_manager"].includes(user.role);
+  const canDelete = user && ["owner", "admin"].includes(user.role);
   const canFilterByUser = user && FULL_ACCESS_ROLES.includes(user.role);
 
   const [deleteOpen, setDeleteOpen] = useState(false);
