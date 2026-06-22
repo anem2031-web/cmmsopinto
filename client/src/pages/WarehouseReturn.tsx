@@ -9,9 +9,11 @@ import { Badge } from "@/components/ui/badge";
 import { ArrowRight, Search, Package, RotateCcw, Loader2, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import BarcodeScanner from "@/components/BarcodeScanner";
+import { useTranslation } from "@/contexts/LanguageContext";
 
 export default function WarehouseReturn() {
   const [, navigate] = useLocation();
+  const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [returnedQuantity, setReturnedQuantity] = useState(1);
@@ -34,13 +36,13 @@ export default function WarehouseReturn() {
       setSelectedItem(data);
       setStep("confirm");
     },
-    onError: () => toast.error("الصنف غير موجود في المخزون"),
+    onError: () => toast.error(t.inventory.itemNotInStock),
   });
 
   // Create return
   const returnMut = trpc.warehouseReturns.create.useMutation({
     onSuccess: (data: any) => {
-      toast.success(`تم إنشاء المرتجع ${data.returnNumber} بنجاح`);
+      toast.success(`${t.common.savedSuccessfully} — ${data.returnNumber}`);
       navigate("/inventory");
     },
     onError: (err: any) => toast.error(err.message),
@@ -54,11 +56,11 @@ export default function WarehouseReturn() {
 
   const handleSubmit = () => {
     if (!selectedItem || !reason.trim()) {
-      toast.error("يرجى إدخال سبب الإرجاع");
+      toast.error(t.inventory.returnReasonRequired);
       return;
     }
     if (!receiptId || !purchaseOrderId || !purchaseOrderItemId) {
-      toast.error("يرجى تحديد فاتورة الاستلام وطلب الشراء");
+      toast.error(t.inventory.invoiceAndPoRequired);
       return;
     }
     returnMut.mutate({
@@ -89,12 +91,12 @@ export default function WarehouseReturn() {
           {/* Barcode Scanner */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">مسح الباركود</CardTitle>
+              <CardTitle className="text-base">{t.common.search}</CardTitle>
             </CardHeader>
             <CardContent>
               <BarcodeScanner
                 onScan={(code) => scanMut.mutate({ code })}
-                placeholder="امسح باركود الصنف أو أدخله يدوياً"
+                placeholder={t.inventory.scanOrEnterBarcode}
               />
             </CardContent>
           </Card>
@@ -102,14 +104,14 @@ export default function WarehouseReturn() {
           {/* Text Search */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">البحث بالاسم</CardTitle>
+              <CardTitle className="text-base">{t.common.search}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex gap-2">
                 <Input
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="اسم الصنف أو الرمز الداخلي..."
+                  placeholder={t.inventory.searchItemPlaceholder}
                 />
                 {searching && <Loader2 className="w-5 h-5 animate-spin self-center text-muted-foreground" />}
               </div>
@@ -127,7 +129,7 @@ export default function WarehouseReturn() {
                         <p className="text-xs text-muted-foreground font-mono">{item.internalCode}</p>
                       </div>
                       <Badge variant={item.quantity > 0 ? "default" : "destructive"}>
-                        الرصيد: {item.quantity} {item.unit}
+                        {item.quantity} {item.unit}
                       </Badge>
                     </button>
                   ))}
@@ -135,7 +137,7 @@ export default function WarehouseReturn() {
               )}
 
               {searchResults && searchResults.length === 0 && searchQuery.length >= 2 && (
-                <p className="text-sm text-muted-foreground text-center py-2">لا توجد نتائج</p>
+                <p className="text-sm text-muted-foreground text-center py-2">{t.common.noData}</p>
               )}
             </CardContent>
           </Card>
@@ -155,7 +157,7 @@ export default function WarehouseReturn() {
                     <p className="text-xs text-muted-foreground font-mono">{selectedItem.internalCode}</p>
                   </div>
                 </div>
-                <Badge>الرصيد: {selectedItem.quantity} {selectedItem.unit}</Badge>
+                <Badge>{selectedItem.quantity} {selectedItem.unit}</Badge>
               </div>
             </CardContent>
           </Card>
@@ -163,20 +165,20 @@ export default function WarehouseReturn() {
           {/* Receipt Info */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">بيانات الفاتورة وطلب الشراء</CardTitle>
+              <CardTitle className="text-sm">{t.purchaseOrders.invoicePhoto}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-1">
-                <Label>رقم فاتورة الاستلام *</Label>
+                <Label>{t.inventory.invoiceIdPlaceholder} *</Label>
                 <Input
                   type="number"
-                  placeholder="رقم ID الفاتورة"
+                  placeholder={t.inventory.invoiceIdPlaceholder}
                   onChange={e => setReceiptId(parseInt(e.target.value) || null)}
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label>رقم ID طلب الشراء *</Label>
+                  <Label>{t.purchaseOrders.poNumber} *</Label>
                   <Input
                     type="number"
                     placeholder="ID"
@@ -184,7 +186,7 @@ export default function WarehouseReturn() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label>رقم ID الصنف في الطلب *</Label>
+                  <Label>{t.purchaseOrders.items} *</Label>
                   <Input
                     type="number"
                     placeholder="ID"
@@ -198,11 +200,11 @@ export default function WarehouseReturn() {
           {/* Return Details */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">تفاصيل الإرجاع</CardTitle>
+              <CardTitle className="text-sm">{t.common.details}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-1">
-                <Label>الكمية المُرجَعة *</Label>
+                <Label>{t.purchaseOrders.quantity} *</Label>
                 <Input
                   type="number"
                   min={1}
@@ -210,17 +212,14 @@ export default function WarehouseReturn() {
                   value={returnedQuantity}
                   onChange={e => setReturnedQuantity(parseInt(e.target.value) || 1)}
                 />
-                <p className="text-xs text-muted-foreground">
-                  المتبقي بعد الإرجاع: {selectedItem.quantity - returnedQuantity} {selectedItem.unit}
-                </p>
               </div>
 
               <div className="space-y-1">
-                <Label>سبب الإرجاع *</Label>
+                <Label>{t.inventory.returnReasonPlaceholder} *</Label>
                 <Input
                   value={reason}
                   onChange={e => setReason(e.target.value)}
-                  placeholder="صنف معطوب / خطأ في الكمية / ..."
+                  placeholder={t.inventory.returnReasonPlaceholder}
                 />
               </div>
             </CardContent>
@@ -229,7 +228,7 @@ export default function WarehouseReturn() {
           {/* Actions */}
           <div className="flex gap-3">
             <Button variant="outline" onClick={() => setStep("search")} className="flex-1">
-              رجوع
+              {t.common.back}
             </Button>
             <Button
               onClick={handleSubmit}
