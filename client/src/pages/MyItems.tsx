@@ -21,21 +21,40 @@ import { useTranslation, useLanguage } from "@/contexts/LanguageContext";
 
 type ItemStatus = "pending" | "estimated" | "approved" | "purchased" | "received";
 
-function numberToArabicWords(num: number): string {
-  if (num === 0) return "صفر ريال";
-  const ones = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة"];
-  const teens = ["عشرة", "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر", "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"];
-  const tens = ["", "", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"];
-  const hundreds = ["", "مائة", "مائتان", "ثلاثمائة", "أربعمائة", "خمسمائة", "ستمائة", "سبعمائة", "ثمانمائة", "تسعمائة"];
-  const n = Math.floor(num);
-  const parts: string[] = [];
-  if (n >= 1000) { const t = Math.floor(n / 1000); parts.push(t === 1 ? "ألف" : t === 2 ? "ألفان" : ones[t] + " آلاف"); }
-  const rem = n % 1000;
-  if (rem >= 100) parts.push(hundreds[Math.floor(rem / 100)]);
-  const r = rem % 100;
-  if (r >= 10 && r < 20) parts.push(teens[r - 10]);
-  else { if (r % 10 > 0) parts.push(ones[r % 10]); if (r >= 20) parts.push(tens[Math.floor(r / 10)]); }
-  return parts.join(" و") + " ريال";
+function numberToWords(num: number, language: string): string {
+  if (language === "ar") {
+    if (num === 0) return "صفر ريال";
+    const ones = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة"];
+    const teens = ["عشرة", "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر", "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"];
+    const tens = ["", "", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"];
+    const hundreds = ["", "مائة", "مائتان", "ثلاثمائة", "أربعمائة", "خمسمائة", "ستمائة", "سبعمائة", "ثمانمائة", "تسعمائة"];
+    const n = Math.floor(num);
+    const parts: string[] = [];
+    if (n >= 1000) { const t = Math.floor(n / 1000); parts.push(t === 1 ? "ألف" : t === 2 ? "ألفان" : ones[t] + " آلاف"); }
+    const rem = n % 1000;
+    if (rem >= 100) parts.push(hundreds[Math.floor(rem / 100)]);
+    const r = rem % 100;
+    if (r >= 10 && r < 20) parts.push(teens[r - 10]);
+    else { if (r % 10 > 0) parts.push(ones[r % 10]); if (r >= 20) parts.push(tens[Math.floor(r / 10)]); }
+    return parts.join(" و") + " ريال";
+  }
+  if (language === "en") {
+    if (num === 0) return "Zero SAR";
+    const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+      "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+    const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+    const n = Math.floor(num);
+    const parts: string[] = [];
+    if (n >= 1000) parts.push(ones[Math.floor(n / 1000)] + " Thousand");
+    const rem = n % 1000;
+    if (rem >= 100) parts.push(ones[Math.floor(rem / 100)] + " Hundred");
+    const r = rem % 100;
+    if (r > 0 && r < 20) parts.push(ones[r]);
+    else if (r >= 20) parts.push(tens[Math.floor(r / 10)] + (r % 10 > 0 ? "-" + ones[r % 10] : ""));
+    return parts.join(" ") + " SAR";
+  }
+  // Urdu fallback — show numeric
+  return `${num.toLocaleString("ur-PK")} روپے`;
 }
 
 export default function MyItems() {
@@ -44,7 +63,7 @@ export default function MyItems() {
   const [, setLocation] = useLocation();
   const { t, language } = useTranslation();
   const locale = language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-US";
-  const currency = language === "en" ? "SAR" : "ر.س";
+  const currency = t.common.currency;
 
   const { data: myItems, isLoading, refetch } = trpc.purchaseOrders.myItems.useQuery(undefined, {
     enabled: user?.role === "delegate" || user?.role === "admin" || user?.role === "owner",
@@ -64,9 +83,9 @@ export default function MyItems() {
       a.download = `my-items-${new Date().toISOString().slice(0, 10)}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success(language === "ar" ? "تم تصدير PDF بنجاح" : "PDF exported successfully");
+      toast.success(t.myItems.exportPdfSuccess);
     } catch {
-      toast.error(language === "ar" ? "فشل تصدير PDF" : "PDF export failed");
+      toast.error(t.myItems.exportPdfFailed);
     } finally {
       setExportingPdf(false);
     }
@@ -85,11 +104,11 @@ export default function MyItems() {
       a.download = `pricing-${new Date().toISOString().slice(0, 10)}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success(language === "ar" ? "تم تصدير PDF بنجاح" : "PDF exported successfully");
+      toast.success(t.myItems.exportPdfSuccess);
       setShowPricingExportButton(false);
       setPricingExportPoId(null);
     } catch (err) {
-      toast.error(language === "ar" ? "فشل تصدير PDF" : "PDF export failed");
+      toast.error(t.myItems.exportPdfFailed);
     } finally {
       setExportingPricingPdf(false);
     }
@@ -160,18 +179,17 @@ export default function MyItems() {
         // رُفع مباشرة — حدّث الـ URL فوراً
         if (field === "invoice") setInvoiceUrl(result.url);
         else setPurchasedUrl(result.url);
-        toast.success("✅ تم رفع الصورة");
+        toast.success("✅ " + t.common.upload);
       } else {
-        // حُفظ offline — أعطِ المستخدم تأكيداً فورياً
         const placeholder = `__offline__${field}__${Date.now()}`;
         if (field === "invoice") setInvoiceUrl(placeholder);
         else setPurchasedUrl(placeholder);
-        toast.success("💾 تم حفظ الصورة — ستُرفع تلقائياً عند عودة الإنترنت", {
+        toast.success("💾 " + t.myItems.offlinePurchaseQueued, {
           duration: 5000,
         });
       }
     } catch {
-      toast.error("فشل حفظ الصورة، حاول مجدداً");
+      toast.error(t.myItems.savePhotoFailed);
     }
     setUploadingField(null);
   };
@@ -299,22 +317,22 @@ export default function MyItems() {
             {isOnline ? (
               <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-0.5">
                 <Wifi className="w-3 h-3" />
-                متصل
+                {t.common.active}
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-0.5">
                 <WifiOff className="w-3 h-3" />
-                غير متصل — يعمل بوضع عدم الاتصال
+                {t.common.inactive}
               </span>
             )}
             {pendingCount > 0 && (
               <span
                 className="inline-flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2.5 py-0.5 cursor-pointer hover:bg-blue-100 transition-colors"
                 onClick={() => isOnline && syncPending()}
-                title="اضغط للمزامنة الآن"
+                title={t.myItems.syncNow}
               >
                 <CloudUpload className="w-3 h-3" />
-                {isSyncing ? "جاري الرفع..." : `${pendingCount} صورة بانتظار الرفع`}
+                {isSyncing ? t.myItems.syncing : `${pendingCount} ${t.myItems.pendingUpload}`}
               </span>
             )}
           </div>
@@ -329,7 +347,7 @@ export default function MyItems() {
               disabled={exportingPricingPdf}
             >
               {exportingPricingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-              {language === "ar" ? "تصدير التسعير" : "Export Pricing"}
+              {t.myItems.exportPricing}
             </Button>
           )}
           <Button
@@ -340,7 +358,7 @@ export default function MyItems() {
             disabled={exportingPdf || !myItems || (myItems as any[]).length === 0}
           >
             {exportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-            {language === "ar" ? "تصدير PDF" : "Export PDF"}
+            {t.myItems.exportPdf}
           </Button>
         </div>
       </div>
@@ -476,7 +494,7 @@ export default function MyItems() {
                     <span className="font-bold text-lg">{(parseFloat(estimateCost) * estimateDialog.quantity).toLocaleString(locale)} {currency}</span>
                   </div>
                   <p className="text-xs text-muted-foreground text-left">
-                    ({numberToArabicWords(parseFloat(estimateCost) * estimateDialog.quantity)})
+                    ({numberToWords(parseFloat(estimateCost) * estimateDialog.quantity, language)})
                   </p>
                 </div>
               )}
@@ -521,7 +539,7 @@ export default function MyItems() {
                     {invoiceUrl.startsWith("__offline__") ? (
                       <div className="w-full h-32 rounded-lg border bg-amber-50 border-amber-200 flex flex-col items-center justify-center gap-1">
                         <CloudUpload className="w-6 h-6 text-amber-600" />
-                        <span className="text-xs text-amber-700 font-medium">محفوظة — ستُرفع عند الاتصال</span>
+                        <span className="text-xs text-amber-700 font-medium">{t.myItems.offlinePurchaseQueued}</span>
                       </div>
                     ) : (
                       <img src={invoiceUrl} alt="" className="w-full h-32 object-cover rounded-lg border" />
@@ -538,7 +556,7 @@ export default function MyItems() {
                     input.click();
                   }} disabled={uploadingField === "invoice"}>
                     {uploadingField === "invoice" ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
-                    {uploadingField === "invoice" ? "جاري الضغط والحفظ..." : t.common.upload}
+                    {uploadingField === "invoice" ? t.myItems.compressingAndSaving : t.common.upload}
                   </Button>
                 )}
               </div>
@@ -550,7 +568,7 @@ export default function MyItems() {
                     {purchasedUrl.startsWith("__offline__") ? (
                       <div className="w-full h-32 rounded-lg border bg-amber-50 border-amber-200 flex flex-col items-center justify-center gap-1">
                         <CloudUpload className="w-6 h-6 text-amber-600" />
-                        <span className="text-xs text-amber-700 font-medium">محفوظة — ستُرفع عند الاتصال</span>
+                        <span className="text-xs text-amber-700 font-medium">{t.myItems.offlinePurchaseQueued}</span>
                       </div>
                     ) : (
                       <img src={purchasedUrl} alt="" className="w-full h-32 object-cover rounded-lg border" />
@@ -567,16 +585,15 @@ export default function MyItems() {
                     input.click();
                   }} disabled={uploadingField === "purchased"}>
                     {uploadingField === "purchased" ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
-                    {uploadingField === "purchased" ? "جاري الضغط والحفظ..." : t.common.upload}
+                    {uploadingField === "purchased" ? t.myItems.compressingAndSaving : t.common.upload}
                   </Button>
                 )}
               </div>
 
-              {/* تحذير: الصور معلقة ولا يمكن إرسال الطلب حتى تُرفع */}
               {(invoiceUrl.startsWith("__offline__") || purchasedUrl.startsWith("__offline__")) && (
                 <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
                   <WifiOff className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>الصور محفوظة محلياً. سيُرسل تأكيد الشراء تلقائياً بمجرد عودة الإنترنت.</span>
+                  <span>{t.myItems.offlinePurchaseQueued}</span>
                 </div>
               )}
 
@@ -585,9 +602,8 @@ export default function MyItems() {
                 onClick={() => {
                   if (!invoiceUrl) { toast.error(t.common.upload); return; }
                   if (!purchasedUrl) { toast.error(t.common.upload); return; }
-                  // إذا كانت الصور offline — لا ترسل الطلب الآن، المزامنة ستكمل
                   if (invoiceUrl.startsWith("__offline__") || purchasedUrl.startsWith("__offline__")) {
-                    toast.info("سيُرسل تأكيد الشراء تلقائياً عند عودة الإنترنت");
+                    toast.info(t.myItems.offlinePurchaseQueued);
                     setPurchaseDialog(null);
                     return;
                   }
@@ -601,7 +617,7 @@ export default function MyItems() {
               >
                 {confirmPurchaseMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                 {(invoiceUrl.startsWith("__offline__") || purchasedUrl.startsWith("__offline__"))
-                  ? "حفظ وإرسال لاحقاً"
+                  ? t.myItems.saveAndSendLater
                   : t.purchaseOrders.confirmPurchase}
               </Button>
             </div>
