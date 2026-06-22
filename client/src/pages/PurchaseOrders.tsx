@@ -86,15 +86,22 @@ export default function PurchaseOrders() {
   const locale = language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-US";
   const currency = t.common.currency;
 
-  // البحث الديناميكي: رقم الطلب، اسم المنشئ، عدد الأصناف، أسماء الأصناف، الحالة، الملاحظات، التاريخ
+  // البحث الديناميكي: رقم الطلب، اسم المنشئ، عدد الأصناف، أسماء الأصناف (مترجمة)، الحالة، الملاحظات، التاريخ
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const filteredPos = (pos ?? []).filter((po: any) => {
     if (!normalizedSearch) return true;
+    // اختر الأسماء بلغة المستخدم الحالية، وإلا ارجع للأصلية
+    const localizedNames: string[] =
+      language === "en" && (po.itemNames_en ?? []).length > 0 ? po.itemNames_en :
+      language === "ur" && (po.itemNames_ur ?? []).length > 0 ? po.itemNames_ur :
+      language === "ar" && (po.itemNames_ar ?? []).length > 0 ? po.itemNames_ar :
+      (po.itemNames ?? []);
     const haystack: string[] = [
       po.poNumber,
       po.requestedByName,
       String(po.itemCount ?? ""),
-      ...(po.itemNames ?? []),
+      ...localizedNames,
+      ...(po.itemNames ?? []), // أضف الأصلي دائماً للبحث الشامل
       getPOStatusLabel(po.status),
       po.notes,
       po.totalEstimatedCost != null ? String(po.totalEstimatedCost) : "",
