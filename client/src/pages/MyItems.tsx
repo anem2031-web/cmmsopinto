@@ -18,6 +18,7 @@ import { Wifi, WifiOff, CloudUpload } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { useTranslation, useLanguage } from "@/contexts/LanguageContext";
+import { getLocalizedItemField } from "@/hooks/useContentTranslation";
 
 type ItemStatus = "pending" | "estimated" | "approved" | "purchased" | "received";
 
@@ -227,8 +228,8 @@ export default function MyItems() {
         <CardContent className="p-4">
           <div className="flex items-start justify-between gap-3 mb-3">
             <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-sm truncate">{item.itemName}</h3>
-              {item.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{item.description}</p>}
+              <h3 className="font-semibold text-sm truncate">{getLocalizedItemField(item, "itemName", language)}</h3>
+              {item.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{getLocalizedItemField(item, "description", language)}</p>}
             </div>
             <Badge className="shrink-0 text-[10px] gap-1">
               {item.status}
@@ -262,13 +263,13 @@ export default function MyItems() {
 
           {item.photoUrl && (
             <div className="mb-3">
-              <img src={item.photoUrl} alt={item.itemName} className="w-full h-24 object-cover rounded-lg border" />
+              <img src={item.photoUrl} alt={getLocalizedItemField(item, "itemName", language)} className="w-full h-24 object-cover rounded-lg border" />
             </div>
           )}
 
           {item.notes && (
             <p className="text-xs text-muted-foreground bg-muted/30 rounded-lg p-2 mb-3">
-              <FileText className="w-3 h-3 inline ml-1" />{item.notes}
+              <FileText className="w-3 h-3 inline ml-1" />{getLocalizedItemField(item, "notes", language)}
             </p>
           )}
 
@@ -525,7 +526,7 @@ export default function MyItems() {
           {purchaseDialog && (
             <div className="space-y-4">
               <div className="bg-muted/50 rounded-lg p-3">
-                <p className="font-medium text-sm">{purchaseDialog.itemName}</p>
+                <p className="font-medium text-sm">{getLocalizedItemField(purchaseDialog, "itemName", language)}</p>
                 <p className="text-xs text-muted-foreground mt-1">{t.purchaseOrders.quantity}: {purchaseDialog.quantity} {purchaseDialog.unit || ""}</p>
                 {purchaseDialog.estimatedTotalCost && (
                   <p className="text-xs text-muted-foreground mt-1">{t.purchaseOrders.estimatedTotal}: {parseFloat(purchaseDialog.estimatedTotalCost).toLocaleString(locale)} {currency}</p>
