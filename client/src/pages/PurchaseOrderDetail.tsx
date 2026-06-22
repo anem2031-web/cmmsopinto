@@ -19,7 +19,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { useTranslatedField } from "@/hooks/useTranslatedField";
-import { useStaticLabels } from "@/hooks/useContentTranslation";
+import { useStaticLabels, getLocalizedItemField, useEntityTranslation } from "@/hooks/useContentTranslation";
 import DropZone, { type UploadedFile } from "@/components/DropZone";
 
 const PO_STATUS_COLORS: Record<string, string> = {
@@ -108,6 +108,22 @@ export default function PurchaseOrderDetail() {
 
   const { data: po, isLoading, refetch } = trpc.purchaseOrders.getById.useQuery({ id: poId }, { enabled: !!poId });
   const { data: users } = trpc.users.list.useQuery();
+
+  // ── ترجمة حقول طلب الشراء (ملاحظات، اعتماد حسابات، اعتماد إدارة، سبب الرفض)
+  const { translations: poTranslations } = useEntityTranslation(
+    "PO",
+    po?.id,
+    ["notes", "accountingNotes", "managementNotes", "rejectionReason"],
+    po?.originalLanguage
+  );
+
+  // دالة مساعدة: تُرجع الحقل المترجم للطلب أو النص الأصلي
+  const getPoField = (fieldName: string, originalValue: string | null | undefined) =>
+    poTranslations[fieldName] || originalValue || "";
+
+  // دالة مساعدة: تُرجع الحقل المترجم للصنف (يستخدم الأعمدة المباشرة)
+  const getItemField = (item: any, fieldName: string) =>
+    getLocalizedItemField(item, fieldName, language);
 
   const estimateMut = trpc.purchaseOrders.estimateCost.useMutation({ onSuccess: () => { toast.success(t.common.save); refetch(); }, onError: (e) => toast.error(e.message) });
   const reviewItemsMut = trpc.purchaseOrders.reviewItems.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); }, onError: (e) => toast.error(e.message) });
@@ -1276,7 +1292,7 @@ const visibleItems = useMemo(() => {
         <Card>
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground mb-1">{t.purchaseOrders.justification}:</p>
-            <p className="text-sm">{po.notes}</p>
+            <p className="text-sm">{getPoField("notes", po.notes)}</p>
           </CardContent>
         </Card>
       )}
