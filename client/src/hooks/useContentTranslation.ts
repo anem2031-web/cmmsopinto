@@ -117,6 +117,23 @@ export function getTranslatedField(
 }
 
 /**
+ * Get a localized field from an entity that has direct translated columns
+ * e.g. item.itemName_en / item.itemName_ar / item.itemName_ur
+ * Falls back to the original field if no translation exists
+ */
+export function getLocalizedItemField(
+  item: Record<string, any>,
+  fieldName: string,
+  language: string
+): string {
+  const translated = item[`${fieldName}_${language}`];
+  if (translated && typeof translated === "string" && translated.trim().length > 0) {
+    return translated.trim();
+  }
+  return item[fieldName] || "";
+}
+
+/**
  * Helper to get translated status/priority/category labels
  * These use the static i18n system, not the dynamic translation engine
  */
