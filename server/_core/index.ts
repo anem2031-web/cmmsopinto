@@ -23,6 +23,7 @@ import { runPMAutomationJob } from "../jobs/pm-automation";
 import { runPMWorkOrderReminderJob } from "../jobs/pm-reminder";
 import { runSlaOverduePushJob } from "../jobs/sla-overdue-push";
 import { runBackupCleanupJob } from "../jobs/backup-cleanup";
+import { runConstructionAutomation } from "../jobs/construction-automation";
 import { getDb } from "../db";
 import { generatePMWorkOrderPDF } from "../pmWorkOrderPdfService";
 import { generateTicketPDF } from "../ticketPdfService";
@@ -524,6 +525,13 @@ async function startServer() {
     runBackupCleanupJob();
     setInterval(runBackupCleanupJob, ONE_DAY_MS);
   }, 25000);
+
+  // Construction Automation Engine: runs every 5 minutes
+  const FIVE_MINUTES = 5 * 60 * 1000;
+  setTimeout(() => {
+    runConstructionAutomation();
+    setInterval(runConstructionAutomation, FIVE_MINUTES);
+  }, 30000);
 
   // ============================================================
   // GLOBAL EXPRESS ERROR HANDLER (TASK 3)

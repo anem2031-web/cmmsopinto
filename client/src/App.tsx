@@ -47,6 +47,11 @@ import AssetDetail from "./pages/AssetDetail";
 import AssetCategories from "./pages/AssetCategories";
 import WarehouseReceive from "./pages/WarehouseReceive";
 import WarehouseReturn from "./pages/WarehouseReturn";
+import ConstructionDashboard from "./pages/construction/ConstructionDashboard";
+import ProjectsList from "./pages/construction/ProjectsList";
+import ProjectDetail from "./pages/construction/ProjectDetail";
+import ProjectForm from "./pages/construction/ProjectForm";
+import ConstructionReports from "./pages/construction/ConstructionReports";
 
 function Router() {
   return (
@@ -99,6 +104,13 @@ function Router() {
             <Route path="/warehouse/return" component={WarehouseReturn} />
             <Route path="/inspection-dashboard" component={Dashboard} />
             <Route path="/catalog" component={CatalogDashboard} />
+            {/* Construction Module */}
+            <Route path="/construction" component={ConstructionDashboard} />
+            <Route path="/construction/projects" component={ProjectsList} />
+            <Route path="/construction/projects/new" component={ProjectForm} />
+            <Route path="/construction/projects/:id/edit" component={ProjectForm} />
+            <Route path="/construction/projects/:id" component={ProjectDetail} />
+            <Route path="/construction/reports" component={ConstructionReports} />
             <Route path="/404" component={NotFound} />
             <Route component={NotFound} />
           </Switch>

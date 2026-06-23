@@ -29,7 +29,8 @@ import {
   HardDrive, CalendarClock, ScanSearch, DoorOpen, Nfc, Tag,
   ChevronDown, Search, X, Building2, UserCog, Download, Smartphone, DollarSign,
   RotateCcw, BookOpen, Lightbulb
-} from "lucide-react";
+,
+  HardHat, FolderKanban} from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -191,6 +192,16 @@ const NAV_SECTIONS: NavSection[] = [
       { icon: Shield,    labelKey: "nav.auditLog",           path: "/audit-log" },
       { icon: Database,  labelKey: "backup.title",           path: "/backup" },
       { icon: Languages, labelKey: "nav.translationMonitor", path: "/translation-monitor" },
+    ],
+  },
+  {
+    id: "construction",
+    labelKey: "nav.sections.construction",
+    icon: HardHat,
+    items: [
+      { icon: Building2,    labelKey: "nav.construction.dashboard", path: "/construction" },
+      { icon: FolderKanban, labelKey: "nav.construction.projects",  path: "/construction/projects" },
+      { icon: BarChart3,    labelKey: "nav.construction.reports",   path: "/construction/reports" },
     ],
   },
 ];

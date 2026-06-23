@@ -52,6 +52,7 @@ import { backupsRouter } from "./system/backups.router";
 import { preventiveRouter } from "./system/preventive.router";
 import { catalogRouter } from "./catalog.router";
 import { improvementIdeasRouter } from "./improvement-ideas/improvement-ideas.router";
+import { constructionRouter } from "./construction/index";
 
 export const appRouter = router({
   system: systemRouter,
@@ -114,6 +115,9 @@ purchaseOrders: router({
 
   // ── مركز التحسين والتطوير ──
   improvementIdeas: improvementIdeasRouter,
+
+  // ── وحدة الإنشاءات ──
+  construction: constructionRouter,
 });
 
 export type AppRouter = typeof appRouter;

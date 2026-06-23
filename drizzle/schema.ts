@@ -999,3 +999,424 @@ export const improvementIdeas = mysqlTable("improvement_ideas", {
 });
 export type ImprovementIdea = typeof improvementIdeas.$inferSelect;
 export type InsertImprovementIdea = typeof improvementIdeas.$inferInsert;
+
+// CONSTRUCTION MODULE — 16 TABLES
+// ============================================================
+
+// ── Enums ───────────────────────────────────────────────────
+export const constructionProjectStatuses = ["planning", "active", "on_hold", "completed", "cancelled"] as const;
+export const constructionPriorities = ["low", "medium", "high", "critical"] as const;
+export const constructionPhaseStatuses = ["pending", "active", "on_hold", "completed"] as const;
+export const constructionTaskStatuses = ["new", "in_progress", "pending_approval", "pending_materials", "on_hold", "completed"] as const;
+export const constructionHoldReasons = ["weather", "pending_approval", "subcontractor", "administrative", "other"] as const;
+export const constructionMemberRoles = ["manager", "supervisor", "engineer", "technician", "subcontractor", "viewer"] as const;
+export const constructionFieldTypes = ["text", "number", "date", "dropdown", "user", "file", "rating", "url"] as const;
+export const constructionTriggerTypes = ["status_change", "date_passed", "task_completed", "phase_completed", "member_overloaded", "daily_schedule"] as const;
+export const constructionActionTypes = ["create_purchase_order", "send_notification", "create_report", "update_status", "reassign_task", "check_inventory"] as const;
+export const constructionGoalTypes = ["completion", "budget", "quality", "safety"] as const;
+export const constructionGoalStatuses = ["on_track", "at_risk", "behind", "completed"] as const;
+export const constructionWeatherTypes = ["sunny", "cloudy", "rainy", "stormy", "windy"] as const;
+export const constructionDependencyTypes = ["finish_to_start", "start_to_start", "finish_to_finish", "start_to_finish"] as const;
+export const constructionChangeReasons = ["design_change", "client_request", "site_condition", "error_correction", "other"] as const;
+export const constructionChangeStatuses = ["pending", "approved", "rejected"] as const;
+export const constructionIncidentTypes = ["near_miss", "minor_injury", "major_injury", "property_damage", "safety_violation", "inspection"] as const;
+export const constructionSeverities = ["low", "medium", "high", "critical"] as const;
+export const constructionTimeLogTypes = ["auto", "manual"] as const;
+
+// ── 1. Projects ─────────────────────────────────────────────
+export const constructionProjects = mysqlTable("construction_projects", {
+  id: int("id").autoincrement().primaryKey(),
+  projectNumber: varchar("projectNumber", { length: 20 }).notNull().unique(),
+  name: varchar("name", { length: 300 }).notNull(),
+  nameEn: varchar("nameEn", { length: 300 }),
+  description: text("description"),
+  status: mysqlEnum("status", [...constructionProjectStatuses]).default("planning").notNull(),
+  priority: mysqlEnum("priority", [...constructionPriorities]).default("medium").notNull(),
+  siteId: int("siteId"),
+  sectionId: int("sectionId"),
+  ownerId: int("ownerId").notNull(),
+  managerId: int("managerId"),
+  budgetPlanned: decimal("budgetPlanned", { precision: 15, scale: 2 }),
+  budgetActual: decimal("budgetActual", { precision: 15, scale: 2 }),
+  startDatePlanned: varchar("startDatePlanned", { length: 10 }),
+  endDatePlanned: varchar("endDatePlanned", { length: 10 }),
+  startDateActual: varchar("startDateActual", { length: 10 }),
+  endDateActual: varchar("endDateActual", { length: 10 }),
+  progressPercent: decimal("progressPercent", { precision: 5, scale: 2 }).default("0"),
+  coverImageUrl: text("coverImageUrl"),
+  isArchived: boolean("isArchived").default(false).notNull(),
+  createdById: int("createdById").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_cp_status").on(t.status),
+  index("idx_cp_siteId").on(t.siteId),
+  index("idx_cp_managerId").on(t.managerId),
+]);
+export type ConstructionProject = typeof constructionProjects.$inferSelect;
+export type InsertConstructionProject = typeof constructionProjects.$inferInsert;
+
+// ── 2. Phases ───────────────────────────────────────────────
+export const constructionPhases = mysqlTable("construction_phases", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  name: varchar("name", { length: 300 }).notNull(),
+  nameEn: varchar("nameEn", { length: 300 }),
+  description: text("description"),
+  orderIndex: int("orderIndex").default(0).notNull(),
+  status: mysqlEnum("status", [...constructionPhaseStatuses]).default("pending").notNull(),
+  progressPercent: decimal("progressPercent", { precision: 5, scale: 2 }).default("0"),
+  startDatePlanned: varchar("startDatePlanned", { length: 10 }),
+  endDatePlanned: varchar("endDatePlanned", { length: 10 }),
+  startDateActual: varchar("startDateActual", { length: 10 }),
+  endDateActual: varchar("endDateActual", { length: 10 }),
+  budgetPlanned: decimal("budgetPlanned", { precision: 15, scale: 2 }),
+  budgetActual: decimal("budgetActual", { precision: 15, scale: 2 }),
+  createdById: int("createdById").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_cph_projectId").on(t.projectId),
+  index("idx_cph_status").on(t.status),
+  index("idx_cph_orderIndex").on(t.orderIndex),
+]);
+export type ConstructionPhase = typeof constructionPhases.$inferSelect;
+export type InsertConstructionPhase = typeof constructionPhases.$inferInsert;
+
+// ── 3. Activities ───────────────────────────────────────────
+export const constructionActivities = mysqlTable("construction_activities", {
+  id: int("id").autoincrement().primaryKey(),
+  phaseId: int("phaseId").notNull(),
+  projectId: int("projectId").notNull(),
+  name: varchar("name", { length: 300 }).notNull(),
+  nameEn: varchar("nameEn", { length: 300 }),
+  description: text("description"),
+  orderIndex: int("orderIndex").default(0).notNull(),
+  status: mysqlEnum("status", [...constructionPhaseStatuses]).default("pending").notNull(),
+  progressPercent: decimal("progressPercent", { precision: 5, scale: 2 }).default("0"),
+  startDatePlanned: varchar("startDatePlanned", { length: 10 }),
+  endDatePlanned: varchar("endDatePlanned", { length: 10 }),
+  startDateActual: varchar("startDateActual", { length: 10 }),
+  endDateActual: varchar("endDateActual", { length: 10 }),
+  budgetPlanned: decimal("budgetPlanned", { precision: 15, scale: 2 }),
+  budgetActual: decimal("budgetActual", { precision: 15, scale: 2 }),
+  responsibleId: int("responsibleId"),
+  createdById: int("createdById").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_ca_phaseId").on(t.phaseId),
+  index("idx_ca_projectId").on(t.projectId),
+  index("idx_ca_status").on(t.status),
+]);
+export type ConstructionActivity = typeof constructionActivities.$inferSelect;
+export type InsertConstructionActivity = typeof constructionActivities.$inferInsert;
+
+// ── 4. Tasks ────────────────────────────────────────────────
+export const constructionTasks = mysqlTable("construction_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  taskNumber: varchar("taskNumber", { length: 20 }).notNull().unique(),
+  activityId: int("activityId").notNull(),
+  phaseId: int("phaseId").notNull(),
+  projectId: int("projectId").notNull(),
+  title: varchar("title", { length: 300 }).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", [...constructionTaskStatuses]).default("new").notNull(),
+  priority: mysqlEnum("priority", [...constructionPriorities]).default("medium").notNull(),
+  holdReason: mysqlEnum("holdReason", [...constructionHoldReasons]),
+  holdNote: text("holdNote"),
+  progressPercent: decimal("progressPercent", { precision: 5, scale: 2 }).default("0"),
+  startDatePlanned: varchar("startDatePlanned", { length: 10 }),
+  endDatePlanned: varchar("endDatePlanned", { length: 10 }),
+  startDateActual: varchar("startDateActual", { length: 10 }),
+  endDateActual: varchar("endDateActual", { length: 10 }),
+  assignedToId: int("assignedToId"),
+  assignedById: int("assignedById"),
+  assignedAt: timestamp("assignedAt"),
+  estimatedHours: decimal("estimatedHours", { precision: 8, scale: 2 }),
+  actualHours: decimal("actualHours", { precision: 8, scale: 2 }),
+  estimatedCost: decimal("estimatedCost", { precision: 15, scale: 2 }),
+  actualCost: decimal("actualCost", { precision: 15, scale: 2 }),
+  sprintPoints: int("sprintPoints").default(0),
+  locationLat: decimal("locationLat", { precision: 10, scale: 8 }),
+  locationLng: decimal("locationLng", { precision: 11, scale: 8 }),
+  locationDetail: varchar("locationDetail", { length: 300 }),
+  isCriticalPath: boolean("isCriticalPath").default(false).notNull(),
+  // TODO: Connect to inventory module later — inventoryRequestId links to inventory_requests table
+  inventoryRequestId: int("inventoryRequestId"),
+  completedAt: timestamp("completedAt"),
+  completedById: int("completedById"),
+  createdById: int("createdById").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_ct_projectId").on(t.projectId),
+  index("idx_ct_phaseId").on(t.phaseId),
+  index("idx_ct_activityId").on(t.activityId),
+  index("idx_ct_status").on(t.status),
+  index("idx_ct_assignedToId").on(t.assignedToId),
+  index("idx_ct_priority").on(t.priority),
+  index("idx_ct_endDatePlanned").on(t.endDatePlanned),
+]);
+export type ConstructionTask = typeof constructionTasks.$inferSelect;
+export type InsertConstructionTask = typeof constructionTasks.$inferInsert;
+
+// ── 5. Task Comments ────────────────────────────────────────
+export const constructionTaskComments = mysqlTable("construction_task_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId").notNull(),
+  projectId: int("projectId").notNull(),
+  userId: int("userId").notNull(),
+  userName: varchar("userName", { length: 200 }).notNull(),
+  userRole: varchar("userRole", { length: 50 }).notNull(),
+  comment: text("comment").notNull(),
+  attachmentUrls: json("attachmentUrls"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_ctc_taskId").on(t.taskId),
+  index("idx_ctc_projectId").on(t.projectId),
+]);
+export type ConstructionTaskComment = typeof constructionTaskComments.$inferSelect;
+export type InsertConstructionTaskComment = typeof constructionTaskComments.$inferInsert;
+
+// ── 6. Task Dependencies ────────────────────────────────────
+export const constructionTaskDependencies = mysqlTable("construction_task_dependencies", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId").notNull(),
+  dependsOnTaskId: int("dependsOnTaskId").notNull(),
+  dependencyType: mysqlEnum("dependencyType", [...constructionDependencyTypes]).default("finish_to_start").notNull(),
+  lagDays: int("lagDays").default(0),
+  createdById: int("createdById").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => [
+  index("idx_ctd_taskId").on(t.taskId),
+  index("idx_ctd_dependsOnTaskId").on(t.dependsOnTaskId),
+]);
+export type ConstructionTaskDependency = typeof constructionTaskDependencies.$inferSelect;
+export type InsertConstructionTaskDependency = typeof constructionTaskDependencies.$inferInsert;
+
+// ── 7. Project Members ──────────────────────────────────────
+export const constructionProjectMembers = mysqlTable("construction_project_members", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  userId: int("userId").notNull(),
+  role: mysqlEnum("role", [...constructionMemberRoles]).default("viewer").notNull(),
+  canEdit: boolean("canEdit").default(false).notNull(),
+  canDelete: boolean("canDelete").default(false).notNull(),
+  canApprove: boolean("canApprove").default(false).notNull(),
+  joinedAt: timestamp("joinedAt").defaultNow().notNull(),
+  addedById: int("addedById").notNull(),
+}, (t) => [
+  index("idx_cpm_projectId").on(t.projectId),
+  index("idx_cpm_userId").on(t.userId),
+]);
+export type ConstructionProjectMember = typeof constructionProjectMembers.$inferSelect;
+export type InsertConstructionProjectMember = typeof constructionProjectMembers.$inferInsert;
+
+// ── 8. Time Logs ────────────────────────────────────────────
+export const constructionTimeLogs = mysqlTable("construction_time_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId").notNull(),
+  projectId: int("projectId").notNull(),
+  userId: int("userId").notNull(),
+  startTime: timestamp("startTime"),
+  endTime: timestamp("endTime"),
+  durationMinutes: int("durationMinutes"),
+  description: text("description"),
+  logType: mysqlEnum("logType", [...constructionTimeLogTypes]).default("manual").notNull(),
+  hourlyRate: decimal("hourlyRate", { precision: 10, scale: 2 }),
+  totalCost: decimal("totalCost", { precision: 10, scale: 2 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_ctl_taskId").on(t.taskId),
+  index("idx_ctl_projectId").on(t.projectId),
+  index("idx_ctl_userId").on(t.userId),
+]);
+export type ConstructionTimeLog = typeof constructionTimeLogs.$inferSelect;
+export type InsertConstructionTimeLog = typeof constructionTimeLogs.$inferInsert;
+
+// ── 9. Custom Fields ────────────────────────────────────────
+export const constructionCustomFields = mysqlTable("construction_custom_fields", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  name: varchar("name", { length: 200 }).notNull(),
+  fieldType: mysqlEnum("fieldType", [...constructionFieldTypes]).notNull(),
+  options: json("options"),
+  isRequired: boolean("isRequired").default(false).notNull(),
+  orderIndex: int("orderIndex").default(0).notNull(),
+  createdById: int("createdById").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_ccf_projectId").on(t.projectId),
+]);
+export type ConstructionCustomField = typeof constructionCustomFields.$inferSelect;
+export type InsertConstructionCustomField = typeof constructionCustomFields.$inferInsert;
+
+// ── 10. Field Values ────────────────────────────────────────
+export const constructionFieldValues = mysqlTable("construction_field_values", {
+  id: int("id").autoincrement().primaryKey(),
+  fieldId: int("fieldId").notNull(),
+  taskId: int("taskId").notNull(),
+  value: text("value"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_cfv_taskId").on(t.taskId),
+  index("idx_cfv_fieldId").on(t.fieldId),
+]);
+export type ConstructionFieldValue = typeof constructionFieldValues.$inferSelect;
+export type InsertConstructionFieldValue = typeof constructionFieldValues.$inferInsert;
+
+// ── 11. Automations ─────────────────────────────────────────
+export const constructionAutomations = mysqlTable("construction_automations", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  name: varchar("name", { length: 200 }).notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  triggerType: mysqlEnum("triggerType", [...constructionTriggerTypes]).notNull(),
+  triggerCondition: json("triggerCondition"),
+  actionType: mysqlEnum("actionType", [...constructionActionTypes]).notNull(),
+  actionConfig: json("actionConfig"),
+  lastRunAt: timestamp("lastRunAt"),
+  runCount: int("runCount").default(0),
+  createdById: int("createdById").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_caut_projectId").on(t.projectId),
+  index("idx_caut_isActive").on(t.isActive),
+  index("idx_caut_triggerType").on(t.triggerType),
+]);
+export type ConstructionAutomation = typeof constructionAutomations.$inferSelect;
+export type InsertConstructionAutomation = typeof constructionAutomations.$inferInsert;
+
+// ── 12. Goals ───────────────────────────────────────────────
+export const constructionGoals = mysqlTable("construction_goals", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  title: varchar("title", { length: 300 }).notNull(),
+  description: text("description"),
+  goalType: mysqlEnum("goalType", [...constructionGoalTypes]).default("completion").notNull(),
+  targetValue: decimal("targetValue", { precision: 10, scale: 2 }),
+  currentValue: decimal("currentValue", { precision: 10, scale: 2 }).default("0"),
+  unit: varchar("unit", { length: 50 }),
+  dueDate: varchar("dueDate", { length: 10 }),
+  status: mysqlEnum("status", [...constructionGoalStatuses]).default("on_track").notNull(),
+  createdById: int("createdById").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_cg_projectId").on(t.projectId),
+  index("idx_cg_status").on(t.status),
+]);
+export type ConstructionGoal = typeof constructionGoals.$inferSelect;
+export type InsertConstructionGoal = typeof constructionGoals.$inferInsert;
+
+// ── 13. Daily Reports ───────────────────────────────────────
+export const constructionDailyReports = mysqlTable("construction_daily_reports", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  reportDate: varchar("reportDate", { length: 10 }).notNull(),
+  weather: mysqlEnum("weather", [...constructionWeatherTypes]).default("sunny").notNull(),
+  workerCount: int("workerCount").default(0),
+  workCompleted: text("workCompleted"),
+  obstacles: text("obstacles"),
+  materialsUsed: text("materialsUsed"),
+  safetyNotes: text("safetyNotes"),
+  tomorrowPlan: text("tomorrowPlan"),
+  photoUrls: json("photoUrls"),
+  submittedById: int("submittedById").notNull(),
+  submittedAt: timestamp("submittedAt").defaultNow().notNull(),
+  approvedById: int("approvedById"),
+  approvedAt: timestamp("approvedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_cdr_projectId").on(t.projectId),
+  index("idx_cdr_reportDate").on(t.reportDate),
+]);
+export type ConstructionDailyReport = typeof constructionDailyReports.$inferSelect;
+export type InsertConstructionDailyReport = typeof constructionDailyReports.$inferInsert;
+
+// ── 14. Quantity Tracking ───────────────────────────────────
+export const constructionQuantityTracking = mysqlTable("construction_quantity_tracking", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId").notNull(),
+  projectId: int("projectId").notNull(),
+  materialName: varchar("materialName", { length: 300 }).notNull(),
+  unit: varchar("unit", { length: 50 }).notNull(),
+  quantityPlanned: decimal("quantityPlanned", { precision: 12, scale: 3 }).default("0"),
+  quantityActual: decimal("quantityActual", { precision: 12, scale: 3 }).default("0"),
+  unitCostPlanned: decimal("unitCostPlanned", { precision: 12, scale: 2 }),
+  unitCostActual: decimal("unitCostActual", { precision: 12, scale: 2 }),
+  // TODO: Connect to inventory module later
+  inventoryItemId: int("inventoryItemId"),
+  notes: text("notes"),
+  createdById: int("createdById").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_cqt_taskId").on(t.taskId),
+  index("idx_cqt_projectId").on(t.projectId),
+]);
+export type ConstructionQuantityTracking = typeof constructionQuantityTracking.$inferSelect;
+export type InsertConstructionQuantityTracking = typeof constructionQuantityTracking.$inferInsert;
+
+// ── 15. Change Orders ───────────────────────────────────────
+export const constructionChangeOrders = mysqlTable("construction_change_orders", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  phaseId: int("phaseId"),
+  activityId: int("activityId"),
+  changeNumber: varchar("changeNumber", { length: 20 }).notNull().unique(),
+  title: varchar("title", { length: 300 }).notNull(),
+  description: text("description").notNull(),
+  reason: mysqlEnum("reason", [...constructionChangeReasons]).notNull(),
+  impactDays: int("impactDays").default(0),
+  impactCost: decimal("impactCost", { precision: 15, scale: 2 }).default("0"),
+  status: mysqlEnum("status", [...constructionChangeStatuses]).default("pending").notNull(),
+  requestedById: int("requestedById").notNull(),
+  approvedById: int("approvedById"),
+  approvedAt: timestamp("approvedAt"),
+  rejectionReason: text("rejectionReason"),
+  attachmentUrls: json("attachmentUrls"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_cco_projectId").on(t.projectId),
+  index("idx_cco_status").on(t.status),
+]);
+export type ConstructionChangeOrder = typeof constructionChangeOrders.$inferSelect;
+export type InsertConstructionChangeOrder = typeof constructionChangeOrders.$inferInsert;
+
+// ── 16. Safety Logs ─────────────────────────────────────────
+export const constructionSafetyLogs = mysqlTable("construction_safety_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  logDate: varchar("logDate", { length: 10 }).notNull(),
+  incidentType: mysqlEnum("incidentType", [...constructionIncidentTypes]).notNull(),
+  severity: mysqlEnum("severity", [...constructionSeverities]).default("low").notNull(),
+  title: varchar("title", { length: 300 }).notNull(),
+  description: text("description").notNull(),
+  location: varchar("location", { length: 300 }),
+  involvedPersons: text("involvedPersons"),
+  immediateAction: text("immediateAction"),
+  correctiveAction: text("correctiveAction"),
+  photoUrls: json("photoUrls"),
+  reportedById: int("reportedById").notNull(),
+  investigatedById: int("investigatedById"),
+  isClosed: boolean("isClosed").default(false).notNull(),
+  closedAt: timestamp("closedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => [
+  index("idx_csl_projectId").on(t.projectId),
+  index("idx_csl_logDate").on(t.logDate),
+  index("idx_csl_severity").on(t.severity),
+  index("idx_csl_incidentType").on(t.incidentType),
+]);
+export type ConstructionSafetyLog = typeof constructionSafetyLogs.$inferSelect;
+export type InsertConstructionSafetyLog = typeof constructionSafetyLogs.$inferInsert;

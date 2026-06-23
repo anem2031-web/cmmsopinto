@@ -51,7 +51,19 @@ const ur: any = {
       adminTools: "ایڈمن ٹولز",
       catalog: "کیٹلاگ",
       notificationsSection: "اطلاعات",
+      construction: "تعمیراتی یونٹ",
     },
+    construction: {
+      dashboard: "ڈیش بورڈ",
+      projects: "منصوبے",
+      reports: "رپورٹیں",
+    },
+  },
+
+  construction: {
+    dashboard: "ڈیش بورڈ",
+    projects: "منصوبے",
+    reports: "رپورٹیں",
   },
 
   common: {

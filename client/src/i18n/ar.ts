@@ -52,6 +52,12 @@ const ar = {
       adminTools: "أدوات المسؤول",
       notificationsSection: "الإشعارات",
       catalog: "الكتالوج",
+      construction: "وحدة الإنشاءات",
+    },
+    construction: {
+      dashboard: "لوحة التحكم",
+      projects: "المشاريع",
+      reports: "التقارير",
     },
     catalog: "الكتالوج",
   },

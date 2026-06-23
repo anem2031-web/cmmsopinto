@@ -52,8 +52,20 @@ const en: TranslationKeys = {
       adminTools: "Admin Tools",
       notificationsSection: "Notifications",
       catalog: "Catalog",
+      construction: "Construction Unit",
+    },
+    construction: {
+      dashboard: "Dashboard",
+      projects: "Projects",
+      reports: "Reports",
     },
     catalog: "Catalog",
+  },
+
+  construction: {
+    dashboard: "Dashboard",
+    projects: "Projects",
+    reports: "Reports",
   },
 
   common: {
