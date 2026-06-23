@@ -92,7 +92,7 @@ export const phasesRouter = router({
         createdById: ctx.user.id,
       };
       const result = await db.insert(constructionPhases).values(data);
-      return { id: Number((result as any).insertId) };
+      return { id: Number((result as any)?.insertId ?? (result as any)?.[0]?.insertId ?? 0) };
     }),
 
   update: protectedProcedure
