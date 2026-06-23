@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { trpc } from "@/lib/trpc";
 import { useParams, useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,8 +17,8 @@ import ProjectKanban from "./ProjectKanban";
 import ProjectGantt from "./ProjectGantt";
 import ProjectMembers from "./ProjectMembers";
 import DailyReportTab from "./DailyReportTab";
-import ProjectWhiteboard from "./ProjectWhiteboard";
-import ProjectMindMap from "./ProjectMindMap";
+const ProjectWhiteboard = lazy(() => import("./ProjectWhiteboard"));
+const ProjectMindMap = lazy(() => import("./ProjectMindMap"));
 import ProjectAutomations from "./ProjectAutomations";
 import PhaseManager from "../../components/construction/PhaseManager";
 
