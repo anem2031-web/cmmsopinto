@@ -241,8 +241,8 @@ export const timeLogsRouter = router({
     .query(async ({ input }) => {
       const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
       const [summary] = await db.select({
-        totalMinutes: sql<number>`SUM(duration_minutes)`,
-        totalCost: sql<number>`SUM(total_cost)`,
+        totalMinutes: sql<number>`SUM(durationMinutes)`,
+        totalCost: sql<number>`SUM(totalCost)`,
         logCount: count(),
       }).from(constructionTimeLogs).where(eq(constructionTimeLogs.projectId, input.projectId));
       return summary;
@@ -270,7 +270,7 @@ export const customFieldsRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
-      const [last] = await db.select({ maxOrder: sql<number>`MAX(order_index)` })
+      const [last] = await db.select({ maxOrder: sql<number>`COALESCE(MAX(\`orderIndex\`), -1)` })
         .from(constructionCustomFields).where(eq(constructionCustomFields.projectId, input.projectId));
       const result = await db.insert(constructionCustomFields).values({
         ...input,
@@ -679,12 +679,12 @@ export const constructionReportsRouter = router({
     .query(async ({ input }) => {
       const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
       const [byReason] = await db.select({
-        weather: sql<number>`SUM(CASE WHEN hold_reason = 'weather' THEN 1 ELSE 0 END)`,
-        pending_approval: sql<number>`SUM(CASE WHEN hold_reason = 'pending_approval' THEN 1 ELSE 0 END)`,
-        subcontractor: sql<number>`SUM(CASE WHEN hold_reason = 'subcontractor' THEN 1 ELSE 0 END)`,
-        administrative: sql<number>`SUM(CASE WHEN hold_reason = 'administrative' THEN 1 ELSE 0 END)`,
-        other: sql<number>`SUM(CASE WHEN hold_reason = 'other' THEN 1 ELSE 0 END)`,
-        overdue: sql<number>`SUM(CASE WHEN end_date_planned < CURDATE() AND status NOT IN ('completed') THEN 1 ELSE 0 END)`,
+        weather: sql<number>`SUM(CASE WHEN holdReason = 'weather' THEN 1 ELSE 0 END)`,
+        pending_approval: sql<number>`SUM(CASE WHEN holdReason = 'pending_approval' THEN 1 ELSE 0 END)`,
+        subcontractor: sql<number>`SUM(CASE WHEN holdReason = 'subcontractor' THEN 1 ELSE 0 END)`,
+        administrative: sql<number>`SUM(CASE WHEN holdReason = 'administrative' THEN 1 ELSE 0 END)`,
+        other: sql<number>`SUM(CASE WHEN holdReason = 'other' THEN 1 ELSE 0 END)`,
+        overdue: sql<number>`SUM(CASE WHEN endDatePlanned < CURDATE() AND status NOT IN ('completed') THEN 1 ELSE 0 END)`,
       }).from(constructionTasks).where(eq(constructionTasks.projectId, input.projectId));
       return byReason;
     }),
@@ -698,8 +698,8 @@ export const constructionReportsRouter = router({
         assignedToId: constructionTasks.assignedToId,
         total: count(),
         completed: sql<number>`SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END)`,
-        overdue: sql<number>`SUM(CASE WHEN end_date_planned < CURDATE() AND status NOT IN ('completed') THEN 1 ELSE 0 END)`,
-        totalHours: sql<number>`SUM(actual_hours)`,
+        overdue: sql<number>`SUM(CASE WHEN endDatePlanned < CURDATE() AND status NOT IN ('completed') THEN 1 ELSE 0 END)`,
+        totalHours: sql<number>`SUM(actualHours)`,
       }).from(constructionTasks)
         .where(eq(constructionTasks.projectId, input.projectId))
         .groupBy(constructionTasks.assignedToId);
@@ -731,8 +731,8 @@ export const constructionReportsRouter = router({
       return db.select({
         materialName: constructionQuantityTracking.materialName,
         unit: constructionQuantityTracking.unit,
-        totalPlanned: sql<number>`SUM(quantity_planned)`,
-        totalActual: sql<number>`SUM(quantity_actual)`,
+        totalPlanned: sql<number>`SUM(quantityPlanned)`,
+        totalActual: sql<number>`SUM(quantityActual)`,
       }).from(constructionQuantityTracking)
         .where(eq(constructionQuantityTracking.projectId, input.projectId))
         .groupBy(constructionQuantityTracking.materialName, constructionQuantityTracking.unit);
@@ -745,9 +745,9 @@ export const constructionReportsRouter = router({
       const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
       const [stats] = await db.select({
         total: count(),
-        open: sql<number>`SUM(CASE WHEN is_closed = 0 THEN 1 ELSE 0 END)`,
+        open: sql<number>`SUM(CASE WHEN isClosed = 0 THEN 1 ELSE 0 END)`,
         critical: sql<number>`SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END)`,
-        injuries: sql<number>`SUM(CASE WHEN incident_type IN ('minor_injury','major_injury') THEN 1 ELSE 0 END)`,
+        injuries: sql<number>`SUM(CASE WHEN incidentType IN ('minor_injury','major_injury') THEN 1 ELSE 0 END)`,
       }).from(constructionSafetyLogs).where(eq(constructionSafetyLogs.projectId, input.projectId));
       return stats;
     }),
