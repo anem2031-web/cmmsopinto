@@ -75,17 +75,26 @@ export default function Login() {
               </AlertDescription>
             </Alert>
           )}
-          <div className="flex flex-col items-center gap-4 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-              <Wrench className="w-8 h-8 text-primary" />
+          <div className="flex flex-col items-center gap-5 text-center">
+            {/* الأيقونة */}
+            <div className="w-20 h-20 rounded-3xl bg-primary flex items-center justify-center shadow-lg shadow-primary/25">
+              <Wrench className="w-10 h-10 text-primary-foreground" />
             </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">
+            <div className="space-y-2">
+              {/* CMMS كعنوان رئيسي بارز */}
+              <div className="flex items-center justify-center">
+                <span className="text-2xl font-black tracking-[0.15em] text-primary">CMMS</span>
+              </div>
+              {/* اسم النظام */}
+              <h1 className="text-xl font-bold tracking-tight leading-snug">
                 {t.appName}
               </h1>
-              <p className="text-sm text-muted-foreground mt-2">
-                {t.loginDesc}
-              </p>
+              {/* فاصل أنيق */}
+              <div className="flex items-center gap-3 justify-center">
+                <div className="h-px w-12 bg-primary/20" />
+                <p className="text-xs text-muted-foreground">{t.loginDesc}</p>
+                <div className="h-px w-12 bg-primary/20" />
+              </div>
             </div>
           </div>
 
