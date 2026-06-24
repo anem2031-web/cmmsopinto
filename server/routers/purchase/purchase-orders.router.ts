@@ -127,8 +127,10 @@ export const purchaseOrdersRouter = router({
     if (item.status !== "delivered_to_warehouse") {
       throw new TRPCError({ code: "BAD_REQUEST", message: "هذا الصنف لم يتم توريده للمستودع بعد" });
     }
+    const deliveryNumber = await db.getNextDeliveryNumber();
     await db.updatePOItem(input.itemId, {
       status: "delivered_to_requester",
+      deliveryNumber,
       deliveredAt: new Date(),
       deliveredById: ctx.user.id,
       deliveredToId: input.deliveredToId || null,
@@ -161,7 +163,17 @@ export const purchaseOrdersRouter = router({
       }
     }
     await db.createAuditLog({ userId: ctx.user.id, action: "deliver_to_requester", entityType: "po_item", entityId: input.itemId });
-    return { success: true };
+    return { success: true, deliveryNumber };
+  }),
+
+  incrementPrintCount: warehouseProcedure.input(z.object({
+    itemId: z.number(),
+  })).mutation(async ({ input }) => {
+    const item = await db.getPOItemById(input.itemId);
+    if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "الصنف غير موجود" });
+    const newCount = (item.printCount ?? 0) + 1;
+    await db.updatePOItem(input.itemId, { printCount: newCount });
+    return { printCount: newCount };
   }),
 
   confirmDeliveryToWarehouse: warehouseProcedure.input(z.object({

@@ -18,7 +18,8 @@ import {
   type InsertWarehouseReceipt,
   type InsertWarehouseReturn,
   ticketConfirmations,
-  type InsertTicketConfirmation
+  type InsertTicketConfirmation,
+  deliveryDocuments
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -2115,6 +2116,19 @@ export async function getNextInventoryCode(): Promise<string> {
   return `INV-${year}-${String(next).padStart(4, "0")}`;
 }
 
+export async function getNextDeliveryNumber(): Promise<string> {
+  const db = await getDb();
+  if (!db) return `DLV-${new Date().getFullYear()}-0001`;
+  const year = new Date().getFullYear();
+  const rows = await db.select({ id: purchaseOrderItems.id })
+    .from(purchaseOrderItems)
+    .where(like(purchaseOrderItems.deliveryNumber, `DLV-${year}-%`))
+    .orderBy(desc(purchaseOrderItems.id))
+    .limit(1);
+  const next = rows.length > 0 ? parseInt(rows[0].id.toString()) + 1 : 1;
+  return `DLV-${year}-${String(next).padStart(4, "0")}`;
+}
+
 export async function getNextReturnNumber(): Promise<string> {
   const db = await getDb();
   if (!db) return `RTN-${new Date().getFullYear()}-0001`;
@@ -2216,3 +2230,51 @@ export async function getInventoryTransactions(inventoryId?: number) {
     ? db.select().from(inventoryTransactions).where(eq(inventoryTransactions.inventoryId, inventoryId)).orderBy(desc(inventoryTransactions.createdAt))
     : db.select().from(inventoryTransactions).orderBy(desc(inventoryTransactions.createdAt));
 }
+
+// ── Delivery Documents ─────────────────────────────────────────────────────
+
+export async function createDeliveryDocument(data: {
+  deliveryNumber: string;
+  poItemId: number;
+  itemName: string;
+  deliveredByName: string;
+  deliveredToName: string;
+  quantity: number;
+  unit?: string;
+  supplierName?: string;
+  actualUnitCost?: string;
+  poNumber?: string;
+  warehousePhotoUrl?: string;
+  notes?: string;
+  pdfKey?: string;
+  pdfUrl?: string;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+  const [result] = await db.insert(deliveryDocuments).values(data);
+  return result;
+}
+
+export async function updateDeliveryDocumentPdf(id: number, pdfKey: string, pdfUrl: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(deliveryDocuments).set({ pdfKey, pdfUrl }).where(eq(deliveryDocuments.id, id));
+}
+
+export async function incrementDeliveryDocPrintCount(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(deliveryDocuments)
+    .set({ printCount: sql`${deliveryDocuments.printCount} + 1` })
+    .where(eq(deliveryDocuments.id, id));
+  const rows = await db.select({ printCount: deliveryDocuments.printCount })
+    .from(deliveryDocuments).where(eq(deliveryDocuments.id, id)).limit(1);
+  return rows[0]?.printCount ?? 1;
+}
+
+export async function getDeliveryDocuments() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(deliveryDocuments).orderBy(desc(deliveryDocuments.createdAt));
+}
+

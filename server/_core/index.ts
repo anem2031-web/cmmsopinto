@@ -256,8 +256,13 @@ async function startServer() {
         return res.status(400).json({ error: "Invalid key" });
       }
       const { stream, contentType } = await storageGetStream(normalizedKey);
-      res.setHeader("Content-Type", contentType || "image/webp");
+      res.setHeader("Content-Type", contentType || "application/octet-stream");
       res.setHeader("Cache-Control", "public, max-age=86400");
+      // إذا طُلب التنزيل، أضف Content-Disposition
+      if (req.query.download === "1") {
+        const filename = req.query.filename as string || normalizedKey.split("/").pop() || "file";
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      }
       (stream as any).pipe(res);
     } catch (error: any) {
       console.error("Media proxy error:", error);

@@ -46,7 +46,38 @@ export default function PurchaseCycle() {
   const confirmPurchaseMut = trpc.purchaseOrders.confirmItemPurchase.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.purchased); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
   const cancelPurchaseMut = trpc.purchaseOrders.cancelItemPurchase.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.cancelPurchaseSuccess); refetchAll(); setCancelDialog(null); setCancelNote(""); }, onError: (e: any) => toast.error(e.message) });
   const confirmWarehouseMut = trpc.purchaseOrders.confirmDeliveryToWarehouse.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.deliveredToWarehouse); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
-  const confirmDeliveryMut = trpc.purchaseOrders.confirmDeliveryToRequester.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.deliveredToRequester); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
+  const confirmDeliveryMut = trpc.purchaseOrders.confirmDeliveryToRequester.useMutation({
+    onSuccess: (data) => {
+      toast.success(t.purchaseOrders.deliveredToRequester);
+      refetchAll();
+      setDeliveryPrintData((prev: any) => {
+        if (prev) {
+          const fullData = { ...prev, deliveryNumber: data?.deliveryNumber };
+          printDeliveryReceipt(fullData);
+          // حفظ الوثيقة — نستخدم setTimeout لأن setState callback ليس المكان المناسب لـ mutate
+          setTimeout(() => {
+            generateDocMut.mutate({
+              deliveryNumber: data?.deliveryNumber ?? "",
+              poItemId: fullData.itemId,
+              itemName: fullData.itemName,
+              deliveredByName: fullData.deliveredByName,
+              deliveredToName: fullData.deliveredToName,
+              quantity: fullData.quantity,
+              unit: fullData.unit,
+              supplierName: fullData.supplierName,
+              actualUnitCost: fullData.actualUnitCost,
+              poNumber: fullData.poNumber,
+              warehousePhotoUrl: fullData.warehousePhotoUrl,
+              notes: fullData.notes,
+              deliveredAt: fullData.deliveredAt,
+            });
+          }, 0);
+        }
+        return null;
+      });
+    },
+    onError: (e: any) => { toast.error(e.message); setDeliveryPrintData(null); },
+  });
 
   // Estimate state
   const [estimateValues, setEstimateValues] = useState<Record<number, string>>({});
@@ -57,6 +88,14 @@ export default function PurchaseCycle() {
   const [cancelNote, setCancelNote] = useState("");
   const [warehouseDialog, setWarehouseDialog] = useState<any>(null);
   const [deliveryDialog, setDeliveryDialog] = useState<any>(null);
+  const [deliveryPrintData, setDeliveryPrintData] = useState<any>(null);
+
+  // Delivery documents tab
+  const deliveryDocsQuery = trpc.deliveryDocuments.list.useQuery();
+  const generateDocMut = trpc.deliveryDocuments.generate.useMutation({
+    onSuccess: () => { deliveryDocsQuery.refetch(); },
+  });
+  const incrementDocPrintMut = trpc.deliveryDocuments.incrementPrint.useMutation();
 
   // Upload states
   const [uploading, setUploading] = useState<string | null>(null);
@@ -205,6 +244,320 @@ export default function PurchaseCycle() {
     );
   };
 
+  // ── تبويب الوثائق ─────────────────────────────────────────
+  const DeliveryDocumentsTab = () => {
+    const docs = deliveryDocsQuery.data ?? [];
+
+    const handleDownload = (doc: any) => {
+      incrementDocPrintMut.mutate({ id: doc.id });
+      // توليد PDF مباشرة في المتصفح بدون سيرفر
+      const imgTag = doc.warehousePhotoUrl
+        ? `<div class="photo-wrap"><p class="photo-label">صورة الصنف</p><img src="${doc.warehousePhotoUrl}" style="width:140px;height:140px;object-fit:cover;border-radius:8px;border:1px solid #dde3ea" /></div>`
+        : "";
+
+      const html = `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head><meta charset="UTF-8"/><title>${doc.deliveryNumber}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Cairo',Arial,sans-serif;background:#fff;color:#1a1a1a;padding:32px 40px;font-size:13px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1e3a5f;padding-bottom:14px;margin-bottom:20px}
+  .header-title{font-size:20px;font-weight:700;color:#1e3a5f}
+  .header-sub{font-size:11px;color:#555;margin-top:4px}
+  .header-meta{text-align:left;font-size:11px;color:#555;line-height:2}
+  .badge{display:inline-block;background:#1e3a5f;color:#fff;padding:3px 10px;border-radius:4px;font-size:13px;font-weight:700}
+  .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+  .party-box{border:1px solid #dde3ea;border-radius:8px;padding:12px 14px}
+  .party-role{font-size:10px;color:#777;margin-bottom:4px}
+  .party-name{font-size:15px;font-weight:700;color:#1e3a5f}
+  .section{margin-bottom:16px}
+  .section-title{font-size:12px;font-weight:700;color:#1e3a5f;background:#eef3f9;padding:5px 10px;border-radius:4px;margin-bottom:10px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px}
+  .field{display:flex;flex-direction:column;gap:2px}
+  .field-label{font-size:10px;color:#777}
+  .field-value{font-size:13px;font-weight:600;color:#111}
+  .sig-section{margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:32px}
+  .sig-box{border-top:1px solid #bbb;padding-top:8px;text-align:center;font-size:11px;color:#555}
+  .footer{margin-top:24px;border-top:1px solid #eee;padding-top:10px;display:flex;justify-content:space-between;font-size:10px;color:#aaa}
+  .print-count{font-size:11px;color:#888;background:#f4f6fa;border:1px solid #dde3ea;border-radius:20px;padding:2px 12px}
+  @media print{@page{margin:10mm}}
+</style></head>
+<body>
+  <div class="header">
+    <div>
+      <div class="header-title">🚚 وثيقة تسليم مواد</div>
+      <div class="header-sub">نظام إدارة الصيانة المتكامل</div>
+    </div>
+    <div class="header-meta">
+      <div>التاريخ: <strong>${new Date(doc.createdAt).toLocaleDateString("ar-SA",{year:"numeric",month:"long",day:"numeric"})}</strong></div>
+      <div><span class="badge">${doc.deliveryNumber}</span></div>
+      ${doc.poNumber ? `<div>أمر شراء: <strong>${doc.poNumber}</strong></div>` : ""}
+    </div>
+  </div>
+  <div class="parties">
+    <div class="party-box"><div class="party-role">المُسلِّم</div><div class="party-name">${doc.deliveredByName}</div></div>
+    <div class="party-box"><div class="party-role">المُستلِم (الفني)</div><div class="party-name">${doc.deliveredToName}</div></div>
+  </div>
+  <div class="section">
+    <div class="section-title">بيانات الصنف</div>
+    <div class="grid">
+      <div class="field"><span class="field-label">اسم الصنف</span><span class="field-value">${doc.itemName}</span></div>
+      <div class="field"><span class="field-label">الكمية المسلَّمة</span><span class="field-value">${doc.quantity} ${doc.unit||""}</span></div>
+      ${doc.supplierName ? `<div class="field"><span class="field-label">المورد</span><span class="field-value">${doc.supplierName}</span></div>` : ""}
+      ${doc.actualUnitCost ? `<div class="field"><span class="field-label">تكلفة الوحدة</span><span class="field-value">${parseFloat(doc.actualUnitCost).toLocaleString()} ر.س</span></div>` : ""}
+      ${doc.notes ? `<div class="field" style="grid-column:1/-1"><span class="field-label">ملاحظات</span><span class="field-value">${doc.notes}</span></div>` : ""}
+    </div>
+    ${imgTag}
+  </div>
+  <div class="sig-section">
+    <div class="sig-box">توقيع المُسلِّم<br/>${doc.deliveredByName}</div>
+    <div class="sig-box">توقيع المُستلِم<br/>${doc.deliveredToName}</div>
+  </div>
+  <div class="footer">
+    <span>وثيقة آلية — نظام CMMS</span>
+    <span class="print-count">عدد مرات الطباعة: <strong>${doc.printCount + 1}</strong></span>
+  </div>
+  <script>window.onload=()=>{window.print();window.onafterprint=()=>window.close();}<\/script>
+</body></html>`;
+
+      const win = window.open("", "_blank", "width=860,height=780");
+      if (win) { win.document.write(html); win.document.close(); }
+    };
+
+    if (deliveryDocsQuery.isLoading) {
+      return <Card><CardContent className="p-8 text-center text-muted-foreground">جاري التحميل...</CardContent></Card>;
+    }
+
+    if (docs.length === 0) {
+      return (
+        <Card>
+          <CardContent className="p-8 text-center text-muted-foreground">
+            <FileText className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p className="font-medium">لا توجد وثائق تسليم بعد</p>
+            <p className="text-xs mt-1">ستظهر هنا كل وثيقة عند تأكيد تسليم مادة للفني</p>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    return (
+      <div className="space-y-3">
+        <div className="text-sm text-muted-foreground">{docs.length} وثيقة محفوظة</div>
+        {docs.map((doc: any) => (
+          <Card key={doc.id} className="hover:shadow-md transition-shadow border-r-4 border-r-primary/60">
+            <CardContent className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0 space-y-1">
+                  {/* العنوان = اسم الصنف */}
+                  <p className="font-semibold text-base truncate">{doc.itemName}</p>
+                  <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                    {/* رقم الوثيقة */}
+                    <span className="bg-primary/10 text-primary font-bold px-2 py-0.5 rounded">
+                      {doc.deliveryNumber}
+                    </span>
+                    {/* التاريخ */}
+                    <span>{new Date(doc.createdAt).toLocaleDateString("ar-SA", { year: "numeric", month: "short", day: "numeric" })}</span>
+                    <span>المُسلِّم: {doc.deliveredByName}</span>
+                    <span>المُستلِم: {doc.deliveredToName}</span>
+                    <span>الكمية: {doc.quantity} {doc.unit || ""}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    طُبعت {doc.printCount} {doc.printCount === 1 ? "مرة" : "مرات"}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 shrink-0"
+                  onClick={() => handleDownload(doc)}
+                  disabled={false}
+                >
+                  <FileText className="w-4 h-4" />
+                  "تنزيل PDF"
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  };
+
+  // ── وثيقة تسليم المواد للفني ──────────────────────────────
+  const printDeliveryReceipt = (data: {
+    itemName: string;
+    quantity: number;
+    unit: string;
+    supplierName?: string;
+    actualUnitCost?: string;
+    warehousePhotoUrl?: string;
+    deliveredByName: string;
+    deliveredToName: string;
+    notes?: string;
+    poNumber?: string;
+    deliveryNumber?: string;
+    deliveredAt: string;
+    itemId: number;
+    initialPrintCount?: number;
+  }) => {
+    const imgTag = data.warehousePhotoUrl
+      ? `<div class="photo-wrap"><p class="photo-label">صورة الصنف</p><img src="${data.warehousePhotoUrl}" alt="صورة الصنف" /></div>`
+      : "";
+
+    const docTitle = (data.deliveryNumber || "سند-تسليم") + " — " + data.itemName;
+    const initialCount = (data.initialPrintCount ?? 0) + 1;
+
+    const html = `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8"/>
+<title>${docTitle}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Cairo', Arial, sans-serif; background: #f4f6fa; color: #1a1a1a; font-size: 13px; }
+
+  /* ── toolbar (hidden in print) ── */
+  .toolbar { background: #1e3a5f; padding: 12px 24px; display: flex; align-items: center; gap: 12px; }
+  .toolbar-title { color: #fff; font-size: 14px; font-weight: 700; flex: 1; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px; border-radius: 6px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; border: none; }
+  .btn-print { background: #fff; color: #1e3a5f; }
+  .btn-pdf   { background: #e8f0fe; color: #1e3a5f; }
+  .btn:hover { opacity: .88; }
+
+  /* ── page ── */
+  .page { background: #fff; max-width: 740px; margin: 24px auto; padding: 36px 44px; border-radius: 10px; box-shadow: 0 2px 12px rgba(0,0,0,.1); }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1e3a5f; padding-bottom: 14px; margin-bottom: 20px; }
+  .header-title { font-size: 20px; font-weight: 700; color: #1e3a5f; }
+  .header-sub { font-size: 11px; color: #555; margin-top: 4px; }
+  .header-meta { text-align: left; font-size: 11px; color: #555; line-height: 2; }
+  .badge { display: inline-block; background: #1e3a5f; color: #fff; padding: 3px 10px; border-radius: 4px; font-size: 13px; font-weight: 700; }
+  .section { margin-bottom: 16px; }
+  .section-title { font-size: 12px; font-weight: 700; color: #1e3a5f; background: #eef3f9; padding: 5px 10px; border-radius: 4px; margin-bottom: 10px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; }
+  .field { display: flex; flex-direction: column; gap: 2px; }
+  .field-label { font-size: 10px; color: #777; }
+  .field-value { font-size: 13px; font-weight: 600; color: #111; }
+  .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .party-box { border: 1px solid #dde3ea; border-radius: 8px; padding: 12px 14px; }
+  .party-role { font-size: 10px; color: #777; margin-bottom: 4px; }
+  .party-name { font-size: 15px; font-weight: 700; color: #1e3a5f; }
+  .photo-wrap { margin-top: 8px; }
+  .photo-label { font-size: 10px; color: #777; margin-bottom: 6px; }
+  .photo-wrap img { width: 140px; height: 140px; object-fit: cover; border-radius: 8px; border: 1px solid #dde3ea; }
+  .sig-section { margin-top: 32px; display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+  .sig-box { border-top: 1px solid #bbb; padding-top: 8px; text-align: center; font-size: 11px; color: #555; }
+  .footer { margin-top: 24px; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; font-size: 10px; color: #aaa; }
+  .print-count { font-size: 11px; color: #888; background: #f4f6fa; border: 1px solid #dde3ea; border-radius: 20px; padding: 2px 12px; }
+
+  @media print {
+    .toolbar { display: none !important; }
+    body { background: #fff; }
+    .page { box-shadow: none; margin: 0; padding: 20px 28px; border-radius: 0; }
+    @page { margin: 10mm; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <span class="toolbar-title">🚚 ${docTitle}</span>
+  <button class="btn btn-print" onclick="doPrint()">🖨️ طباعة</button>
+  <button class="btn btn-pdf"   onclick="doSavePDF()">⬇️ تنزيل PDF</button>
+</div>
+
+<div class="page" id="doc">
+  <div class="header">
+    <div>
+      <div class="header-title">🚚 وثيقة تسليم مواد</div>
+      <div class="header-sub">نظام إدارة الصيانة المتكامل</div>
+    </div>
+    <div class="header-meta">
+      <div>التاريخ: <strong>${data.deliveredAt}</strong></div>
+      ${data.deliveryNumber ? "<div><span class=\"badge\">" + data.deliveryNumber + "</span></div>" : ""}
+      ${data.poNumber ? "<div>أمر شراء: <strong>" + data.poNumber + "</strong></div>" : ""}
+    </div>
+  </div>
+
+  <div class="parties">
+    <div class="party-box">
+      <div class="party-role">المُسلِّم</div>
+      <div class="party-name">${data.deliveredByName}</div>
+    </div>
+    <div class="party-box">
+      <div class="party-role">المُستلِم (الفني)</div>
+      <div class="party-name">${data.deliveredToName}</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">بيانات الصنف</div>
+    <div class="grid">
+      <div class="field"><span class="field-label">اسم الصنف</span><span class="field-value">${data.itemName}</span></div>
+      <div class="field"><span class="field-label">الكمية المسلَّمة</span><span class="field-value">${data.quantity} ${data.unit || ""}</span></div>
+      ${data.supplierName ? "<div class=\"field\"><span class=\"field-label\">المورد</span><span class=\"field-value\">" + data.supplierName + "</span></div>" : ""}
+      ${data.actualUnitCost ? "<div class=\"field\"><span class=\"field-label\">تكلفة الوحدة</span><span class=\"field-value\">" + parseFloat(data.actualUnitCost).toLocaleString() + " ر.س</span></div>" : ""}
+      ${data.notes ? "<div class=\"field\" style=\"grid-column:1/-1\"><span class=\"field-label\">ملاحظات</span><span class=\"field-value\">" + data.notes + "</span></div>" : ""}
+    </div>
+    ${imgTag}
+  </div>
+
+  <div class="sig-section">
+    <div class="sig-box">توقيع المُسلِّم<br/>${data.deliveredByName}</div>
+    <div class="sig-box">توقيع المُستلِم<br/>${data.deliveredToName}</div>
+  </div>
+
+  <div class="footer">
+    <span>وثيقة آلية — نظام CMMS</span>
+    <span class="print-count" id="pc">عدد مرات الطباعة: <strong>${initialCount}</strong></span>
+  </div>
+</div>
+
+<script>
+  const ITEM_ID = ${data.itemId};
+  let printCount = ${initialCount};
+
+  async function incrementCount() {
+    try {
+      const res = await fetch('/api/trpc/purchaseOrders.incrementPrintCount', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ json: { itemId: ITEM_ID } })
+      });
+      const json = await res.json();
+      printCount = json?.result?.data?.json?.printCount ?? printCount;
+      document.getElementById('pc').innerHTML = 'عدد مرات الطباعة: <strong>' + printCount + '</strong>';
+    } catch(e) { console.warn('count update failed', e); }
+  }
+
+  function doPrint() {
+    incrementCount();
+    window.print();
+  }
+
+  function doSavePDF() {
+    incrementCount();
+    document.title = '${docTitle}';
+    const style = document.createElement('style');
+    style.textContent = '.toolbar{display:none!important}';
+    document.head.appendChild(style);
+    window.print();
+    setTimeout(() => style.remove(), 1000);
+  }
+<\/script>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank", "width=860,height=780");
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+    }
+  };
+
+
+
   return (
     <div className="space-y-6" dir={isRTL ? "rtl" : "ltr"}>
       {/* Hidden file input */}
@@ -223,7 +576,7 @@ export default function PurchaseCycle() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="estimate" className="gap-1.5">
             <Clock className="w-4 h-4" />
             <span className="hidden sm:inline">التسعير</span>
@@ -243,6 +596,10 @@ export default function PurchaseCycle() {
             <Truck className="w-4 h-4" />
             <span className="hidden sm:inline">{t.purchaseOrders.step3Delivery}</span>
             {pendingDelivery.length > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">{pendingDelivery.length}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="documents" className="gap-1.5">
+            <FileText className="w-4 h-4" />
+            <span className="hidden sm:inline">الوثائق</span>
           </TabsTrigger>
         </TabsList>
 
@@ -374,6 +731,11 @@ export default function PurchaseCycle() {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        {/* ==================== TAB 5: Delivery Documents ==================== */}
+        <TabsContent value="documents" className="mt-4">
+          <DeliveryDocumentsTab />
         </TabsContent>
       </Tabs>
 
@@ -689,6 +1051,22 @@ export default function PurchaseCycle() {
               className="gap-1.5"
               disabled={confirmDeliveryMut.isPending}
               onClick={() => {
+                // حفظ بيانات الطباعة قبل الإرسال
+                const selectedUser = allUsers.find((u: any) => String(u.id) === deliveryUserId);
+                setDeliveryPrintData({
+                  itemName: deliveryDialog.itemName,
+                  quantity: deliveryDialog.quantity,
+                  unit: deliveryDialog.unit || "",
+                  supplierName: deliveryDialog.supplierName,
+                  actualUnitCost: deliveryDialog.actualUnitCost,
+                  warehousePhotoUrl: deliveryDialog.warehousePhotoUrl ? mediaUrl(deliveryDialog.warehousePhotoUrl) : undefined,
+                  deliveredByName: user?.name || "مستخدم المستودع",
+                  deliveredToName: selectedUser?.name || "الفني",
+                  poNumber: deliveryDialog.poNumber,
+                  itemId: deliveryDialog.id,
+                  initialPrintCount: deliveryDialog.printCount ?? 0,
+                  deliveredAt: new Date().toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" }),
+                });
                 confirmDeliveryMut.mutate({
                   itemId: deliveryDialog.id,
                   deliveredToId: deliveryUserId ? parseInt(deliveryUserId) : undefined,

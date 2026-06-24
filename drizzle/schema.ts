@@ -220,6 +220,8 @@ export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   receivedById: int("receivedById"),
   receivedQuantity: int("receivedQuantity"),
   deliveredQuantity: int("deliveredQuantity"),
+  deliveryNumber: varchar("deliveryNumber", { length: 20 }),
+  printCount: int("printCount").default(0).notNull(),
   deliveredAt: timestamp("deliveredAt"),
   deliveredById: int("deliveredById"),
   deliveredToId: int("deliveredToId"),
@@ -1420,3 +1422,23 @@ export const constructionSafetyLogs = mysqlTable("construction_safety_logs", {
 ]);
 export type ConstructionSafetyLog = typeof constructionSafetyLogs.$inferSelect;
 export type InsertConstructionSafetyLog = typeof constructionSafetyLogs.$inferInsert;
+
+export const deliveryDocuments = mysqlTable("delivery_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  deliveryNumber: varchar("deliveryNumber", { length: 20 }).notNull(),
+  poItemId: int("poItemId").notNull(),
+  itemName: varchar("itemName", { length: 300 }).notNull(),
+  deliveredByName: varchar("deliveredByName", { length: 200 }).notNull(),
+  deliveredToName: varchar("deliveredToName", { length: 200 }).notNull(),
+  quantity: int("quantity").notNull(),
+  unit: varchar("unit", { length: 50 }),
+  supplierName: varchar("supplierName", { length: 300 }),
+  actualUnitCost: varchar("actualUnitCost", { length: 50 }),
+  poNumber: varchar("poNumber", { length: 100 }),
+  warehousePhotoUrl: text("warehousePhotoUrl"),
+  notes: text("notes"),
+  pdfKey: text("pdfKey"),
+  pdfUrl: text("pdfUrl"),
+  printCount: int("printCount").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});

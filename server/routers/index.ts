@@ -11,6 +11,7 @@ import { techniciansRouter } from "./technicians/technicians.router";
 import { ticketsMergedRouter } from "./tickets/index";
 
 import { purchaseOrdersRouter } from "./purchase/purchase-orders.router";
+import { deliveryDocumentsRouter } from "./purchase/delivery-documents.router";
 import { approvalsRouter } from "./purchase/approvals.router";
 import { vendorsRouter } from "./purchase/vendors.router";
 
@@ -71,6 +72,8 @@ purchaseOrders: router({
   ...purchaseOrdersRouter._def.procedures,
   ...approvalsRouter._def.procedures,
 }),
+
+  deliveryDocuments: deliveryDocumentsRouter,
   vendors: vendorsRouter,
 
   inventory: inventoryRouter,
