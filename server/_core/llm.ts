@@ -329,3 +329,53 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
 
   return (await response.json()) as InvokeResult;
 }
+
+// ============================================================
+// Claude (Anthropic) - للمساعد الذكي فقط
+// ============================================================
+export async function invokeClaudeLLM(params: {
+  messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+  maxTokens?: number;
+}): Promise<string> {
+  if (!ENV.anthropicApiKey) {
+    throw new Error("ANTHROPIC_API_KEY is not configured");
+  }
+
+  // فصل system message عن باقي الرسائل
+  const systemMsg = params.messages.find(m => m.role === "system");
+  const otherMessages = params.messages.filter(m => m.role !== "system");
+
+  const body: Record<string, unknown> = {
+    model: "claude-sonnet-4-6",
+    max_tokens: params.maxTokens ?? 4096,
+    messages: otherMessages.map(m => ({
+      role: m.role,
+      content: m.content,
+    })),
+  };
+
+  if (systemMsg) {
+    body.system = systemMsg.content;
+  }
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": ENV.anthropicApiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Claude API failed: ${response.status} ${response.statusText} – ${errorText}`);
+  }
+
+  const data = await response.json() as {
+    content: Array<{ type: string; text: string }>;
+  };
+
+  return data.content.find(c => c.type === "text")?.text ?? "لم أتمكن من الإجابة";
+}

@@ -1,42 +1,42 @@
 import { trpc } from "@/lib/trpc";
-import { mediaUrl } from "@/lib/mediaUrl";
+import { InventoryItemCard } from "@/components/InventoryItemCard";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TechnicianCombobox } from "@/components/TechnicianCombobox";
 import {
-  Package, Plus, AlertTriangle, Loader2, Truck, CheckCircle2,
-  Building2, ClipboardList, Pencil, Trash2
+  Package, Plus, AlertTriangle, Loader2,
+  Pencil, Trash2, QrCode, Printer, Search, X, ArrowDownUp, CalendarDays, Truck
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import QRCode from "qrcode";
 import { toast } from "sonner";
 import { ExportButton } from "@/components/ExportButton";
-import { useLocation } from "wouter";
 import { useTranslation, useLanguage } from "@/contexts/LanguageContext";
 
 export default function Inventory() {
-  const { t: tr } = useLanguage();
   const { user } = useAuth();
-  const [, setLocation] = useLocation();
+  const [printBarcode, setPrintBarcode] = useState<any>(null);
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+  const [deliverItem, setDeliverItem] = useState<any>(null);
+  const [deliverQty, setDeliverQty] = useState("");
+  const [deliverToId, setDeliverToId] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState<"recent" | "name" | "quantity">("recent");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const { t, language } = useTranslation();
-  const locale = language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-US";
-  const currency = language === "en" ? "SAR" : "ر.س";
 
   const { data: items, isLoading, refetch } = trpc.inventory.list.useQuery();
-  const { data: allPOs } = trpc.purchaseOrders.list.useQuery();
   const createMut = trpc.inventory.create.useMutation({
     onSuccess: () => { toast.success(t.common.save); refetch(); setOpen(false); },
     onError: (err) => toast.error(err.message),
-  });
-
-  const receiveItemMut = trpc.purchaseOrders.confirmDeliveryToWarehouse.useMutation({
-    onSuccess: () => { toast.success(t.inventory.receive); refetch(); },
-    onError: (err: any) => toast.error(err.message),
   });
 
   const utils = trpc.useUtils();
@@ -49,14 +49,24 @@ export default function Inventory() {
     onError: (err: any) => toast.error(err.message),
   });
 
+  const { data: allUsers = [] } = trpc.users.list.useQuery();
+  const deliverMut = trpc.purchaseOrders.deliverInventoryItem.useMutation({
+    onSuccess: (data: any) => {
+      toast.success(`تم التسليم بنجاح — سند ${data.deliveryNumber}`);
+      utils.inventory.list.invalidate();
+      setDeliverItem(null);
+      setDeliverQty("");
+      setDeliverToId("");
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState("pending_receive");
   const [form, setForm] = useState({ itemName: "", description: "", quantity: 0, unit: language === "en" ? "piece" : "قطعة", minQuantity: 0, location: "" });
   const [editForm, setEditForm] = useState({ itemName: "", description: "", quantity: 0, unit: "", minQuantity: 0, location: "" });
-  const [receiveData, setReceiveData] = useState<Record<number, { cost: string; supplier: string; supplierItemName: string; warehousePhotoUrl: string }>>({}); 
 
   const openEdit = (item: any) => {
     setSelectedItem(item);
@@ -67,18 +77,31 @@ export default function Inventory() {
 
   const isWarehouse = user?.role === "warehouse" || user?.role === "admin" || user?.role === "owner";
 
-  const pendingReceiveItems = (allPOs || []).flatMap((po: any) =>
-    (po.items || [])
-      .filter((item: any) => item.status === "purchased")
-      .map((item: any) => ({ ...item, poNumber: po.poNumber, poId: po.id, ticketId: po.ticketId }))
-  );
-
-  const recentlyReceived = (allPOs || []).flatMap((po: any) =>
-    (po.items || [])
-      .filter((item: any) => item.status === "received")
-      .map((item: any) => ({ ...item, poNumber: po.poNumber, poId: po.id }))
-  ).sort((a: any, b: any) => new Date(b.receivedAt || 0).getTime() - new Date(a.receivedAt || 0).getTime())
-  .slice(0, 20);
+  // ── بحث تزايدي: يطابق أي حقل ظاهر في صف الصنف ──
+  const filteredItems = (items as any[] || [])
+    .filter((item: any) => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.trim().toLowerCase();
+      const haystack = [
+        item.itemName, item.description, item.quantity, item.unit,
+        item.location, item.manufacturerBarcode, item.invoiceDate,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(q);
+    })
+    .filter((item: any) => {
+      if (!dateFrom && !dateTo) return true;
+      if (!item.invoiceDate) return false; // بدون تاريخ فاتورة، لا يُحتسب ضمن الفلتر
+      const invDate = new Date(item.invoiceDate).getTime();
+      if (dateFrom && invDate < new Date(dateFrom).setHours(0, 0, 0, 0)) return false;
+      if (dateTo && invDate > new Date(dateTo).setHours(23, 59, 59, 999)) return false;
+      return true;
+    })
+    .sort((a: any, b: any) => {
+      if (sortBy === "name") return (a.itemName || "").localeCompare(b.itemName || "", "ar");
+      if (sortBy === "quantity") return (a.quantity || 0) - (b.quantity || 0);
+      // recent (الافتراضي): الأحدث أولاً
+      return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+    });
 
   return (
     <div className="space-y-6">
@@ -118,29 +141,15 @@ export default function Inventory() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="border-orange-200 bg-orange-50/50 cursor-pointer hover:shadow-md transition-all" onClick={() => setActiveTab("pending_receive")}>
-          <CardContent className="p-3 text-center">
-            <Truck className="w-5 h-5 mx-auto text-orange-600 mb-1" />
-            <p className="text-2xl font-bold text-orange-800">{pendingReceiveItems.length}</p>
-            <p className="text-[10px] text-orange-600">{t.inventory.waitingReceive}</p>
-          </CardContent>
-        </Card>
-        <Card className="border-green-200 bg-green-50/50 cursor-pointer hover:shadow-md transition-all" onClick={() => setActiveTab("received")}>
-          <CardContent className="p-3 text-center">
-            <CheckCircle2 className="w-5 h-5 mx-auto text-green-600 mb-1" />
-            <p className="text-2xl font-bold text-green-800">{recentlyReceived.length}</p>
-            <p className="text-[10px] text-green-600">{t.inventory.receive}</p>
-          </CardContent>
-        </Card>
-        <Card className="border-blue-200 bg-blue-50/50 cursor-pointer hover:shadow-md transition-all" onClick={() => setActiveTab("stock")}>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <Card className="border-blue-200 bg-blue-50/50">
           <CardContent className="p-3 text-center">
             <Package className="w-5 h-5 mx-auto text-blue-600 mb-1" />
             <p className="text-2xl font-bold text-blue-800">{items?.length || 0}</p>
             <p className="text-[10px] text-blue-600">{t.inventory.currentStock}</p>
           </CardContent>
         </Card>
-        <Card className="border-red-200 bg-red-50/50 cursor-pointer hover:shadow-md transition-all" onClick={() => setActiveTab("stock")}>
+        <Card className="border-red-200 bg-red-50/50">
           <CardContent className="p-3 text-center">
             <AlertTriangle className="w-5 h-5 mx-auto text-red-600 mb-1" />
             <p className="text-2xl font-bold text-red-800">{items?.filter((i: any) => (i.minQuantity || 0) > 0 && i.quantity <= (i.minQuantity || 0)).length || 0}</p>
@@ -149,234 +158,154 @@ export default function Inventory() {
         </Card>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid grid-cols-3 w-full">
-          <TabsTrigger value="pending_receive" className="text-xs gap-1">
-            <Truck className="w-3 h-3" /> {t.inventory.waitingReceive}
-            {pendingReceiveItems.length > 0 && <Badge variant="destructive" className="text-[9px] h-4 px-1">{pendingReceiveItems.length}</Badge>}
-          </TabsTrigger>
-          <TabsTrigger value="received" className="text-xs gap-1">
-            <CheckCircle2 className="w-3 h-3" /> {t.inventory.receive}
-          </TabsTrigger>
-          <TabsTrigger value="stock" className="text-xs gap-1">
-            <Package className="w-3 h-3" /> {t.inventory.currentStock}
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="pending_receive" className="space-y-3 mt-4">
-          {pendingReceiveItems.length === 0 ? (
-            <Card><CardContent className="p-8 text-center">
-              <Truck className="w-10 h-10 mx-auto text-muted-foreground/30 mb-3" />
-              <p className="text-sm text-muted-foreground">{t.common.noData}</p>
-            </CardContent></Card>
-          ) : (
-            <>
-              {isWarehouse && (
-                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 flex items-center gap-2 text-xs text-orange-800">
-                  <Truck className="w-4 h-4 shrink-0" />
-                  <span>{t.inventory.waitingReceive}</span>
-                </div>
-              )}
-              {pendingReceiveItems.map((item: any) => (
-                <Card key={item.id} className="border-r-4 border-r-orange-400 hover:shadow-md transition-all">
-                  <CardContent className="p-4 space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-sm">{item.itemName}</h3>
-                        {item.description && <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>}
-                      </div>
-                      <Badge className="bg-orange-100 text-orange-800 border-orange-200 text-[10px] gap-1">
-                        <Truck className="w-3 h-3" /> {t.inventory.waitingReceive}
-                      </Badge>
-                    </div>
-
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                      <div className="bg-muted/50 rounded-lg p-2">
-                        <span className="text-muted-foreground block">{t.purchaseOrders.quantity}</span>
-                        <span className="font-bold">{item.quantity} {item.unit || (language === "en" ? "piece" : "قطعة")}</span>
-                      </div>
-                      <div className="bg-muted/50 rounded-lg p-2">
-                        <span className="text-muted-foreground block">{t.purchaseOrders.poNumber}</span>
-                        <Button variant="link" className="h-auto p-0 text-xs font-bold" onClick={() => setLocation(`/purchase-orders/${item.poId}`)}>
-                          {item.poNumber}
-                        </Button>
-                      </div>
-                      {item.estimatedUnitCost && (
-                        <div className="bg-muted/50 rounded-lg p-2">
-                          <span className="text-muted-foreground block">{t.purchaseOrders.estimatedUnitCost}</span>
-                          <span className="font-bold">{parseFloat(item.estimatedUnitCost).toLocaleString(locale)} {currency}</span>
-                        </div>
-                      )}
-                      {item.estimatedTotalCost && (
-                        <div className="bg-muted/50 rounded-lg p-2">
-                          <span className="text-muted-foreground block">{t.purchaseOrders.estimatedTotal}</span>
-                          <span className="font-bold">{parseFloat(item.estimatedTotalCost).toLocaleString(locale)} {currency}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex gap-2">
-                      {item.invoicePhotoUrl && (
-                        <div className="flex-1">
-                          <p className="text-[10px] text-muted-foreground mb-1">{t.tickets.photos}</p>
-                          <img src={mediaUrl(item.invoicePhotoUrl)} alt="invoice" className="w-full h-20 object-cover rounded-lg border cursor-pointer hover:opacity-80" onClick={() => window.open(mediaUrl(item.invoicePhotoUrl), "_blank")} />
-                        </div>
-                      )}
-                      {item.purchasedPhotoUrl && (
-                        <div className="flex-1">
-                          <p className="text-[10px] text-muted-foreground mb-1">{t.tickets.photos}</p>
-                          <img src={mediaUrl(item.purchasedPhotoUrl)} alt="item" className="w-full h-20 object-cover rounded-lg border cursor-pointer hover:opacity-80" onClick={() => window.open(mediaUrl(item.purchasedPhotoUrl), "_blank")} />
-                        </div>
-                      )}
-                    </div>
-
-                    {isWarehouse && (
-                      <div className="bg-green-50/50 border border-green-200 rounded-lg p-3 space-y-3">
-                        <p className="text-xs font-medium text-green-800 flex items-center gap-1">
-                          <ClipboardList className="w-3.5 h-3.5" /> {t.inventory.receive}
-                        </p>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <Label className="text-[11px] text-green-700">{t.inventory.actualCost} ({currency}) *</Label>
-                            <Input
-                              type="number"
-                              placeholder={t.inventory.actualCost}
-                              className="bg-white"
-                              value={receiveData[item.id]?.cost || ""}
-                              onChange={e => setReceiveData(p => ({ ...p, [item.id]: { ...p[item.id], cost: e.target.value, supplier: p[item.id]?.supplier || "", supplierItemName: p[item.id]?.supplierItemName || "", warehousePhotoUrl: p[item.id]?.warehousePhotoUrl || "" } }))}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-[11px] text-green-700">{t.inventory.supplierName} *</Label>
-                            <Input
-                              placeholder={t.inventory.supplierName}
-                              className="bg-white"
-                              value={receiveData[item.id]?.supplier || ""}
-                              onChange={e => setReceiveData(p => ({ ...p, [item.id]: { ...p[item.id], cost: p[item.id]?.cost || "", supplier: e.target.value, supplierItemName: p[item.id]?.supplierItemName || "", warehousePhotoUrl: p[item.id]?.warehousePhotoUrl || "" } }))}
-                            />
-                          </div>
-                        </div>
-                        {receiveData[item.id]?.cost && (
-                          <div className="text-xs text-green-700 bg-green-100 rounded-lg p-2">
-                            {t.purchaseOrders.actualTotal}: <strong>{(parseFloat(receiveData[item.id]?.cost || "0") * item.quantity).toLocaleString(locale)} {currency}</strong>
-                          </div>
-                        )}
-                        <Button
-                          size="sm"
-                          className="w-full gap-1.5"
-                          onClick={() => {
-                            const d = receiveData[item.id];
-                            if (!d?.cost || !d?.supplier) { toast.error(t.inventory.actualCost + " & " + t.inventory.supplierName); return; }
-                            if (!d?.supplierItemName) { toast.error("اسم الصنف كما في الفاتورة مطلوب"); return; }
-                            if (!d?.warehousePhotoUrl) { toast.error("صورة الصنف مطلوبة"); return; }
-                            receiveItemMut.mutate({ itemId: item.id, actualUnitCost: d.cost, supplierName: d.supplier, supplierItemName: d.supplierItemName, warehousePhotoUrl: d.warehousePhotoUrl });
-                          }}
-                          disabled={receiveItemMut.isPending}
-                        >
-                          {receiveItemMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                          {t.common.confirm}
-                        </Button>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </>
+      {/* خانة البحث التزايدي + الترتيب + فلتر التاريخ */}
+      <div className="flex flex-col md:flex-row gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="بحث في الأصناف..."
+            className="pr-9 pl-9"
+          />
+          {searchQuery && (
+            <button
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={() => setSearchQuery("")}
+            >
+              <X className="w-4 h-4" />
+            </button>
           )}
-        </TabsContent>
+        </div>
 
-        <TabsContent value="received" className="space-y-3 mt-4">
-          {recentlyReceived.length === 0 ? (
-            <Card><CardContent className="p-8 text-center">
-              <CheckCircle2 className="w-10 h-10 mx-auto text-muted-foreground/30 mb-3" />
-              <p className="text-sm text-muted-foreground">{t.common.noData}</p>
-            </CardContent></Card>
-          ) : (
-            recentlyReceived.map((item: any) => (
-              <Card key={item.id} className="border-r-4 border-r-green-400">
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div>
-                      <h3 className="font-semibold text-sm">{item.itemName}</h3>
-                      <p className="text-xs text-muted-foreground">{item.poNumber}</p>
-                    </div>
-                    <Badge className="bg-green-100 text-green-800 border-green-200 text-[10px]">{t.inventory.receive}</Badge>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                    <div className="bg-muted/50 rounded-lg p-2">
-                      <span className="text-muted-foreground block">{t.purchaseOrders.quantity}</span>
-                      <span className="font-bold">{item.quantity} {item.unit || (language === "en" ? "piece" : "قطعة")}</span>
-                    </div>
-                    {item.actualUnitCost && (
-                      <div className="bg-muted/50 rounded-lg p-2">
-                        <span className="text-muted-foreground block">{t.inventory.actualCost}</span>
-                        <span className="font-bold text-green-700">{parseFloat(item.actualUnitCost).toLocaleString(locale)} {currency}</span>
-                      </div>
-                    )}
-                    {item.actualTotalCost && (
-                      <div className="bg-muted/50 rounded-lg p-2">
-                        <span className="text-muted-foreground block">{t.purchaseOrders.actualTotal}</span>
-                        <span className="font-bold text-green-700">{parseFloat(item.actualTotalCost).toLocaleString(locale)} {currency}</span>
-                      </div>
-                    )}
-                    {item.supplierName && (
-                      <div className="bg-muted/50 rounded-lg p-2">
-                        <span className="text-muted-foreground block">{t.inventory.supplierName}</span>
-                        <span className="font-bold flex items-center gap-1"><Building2 className="w-3 h-3" />{item.supplierName}</span>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))
+        <Select value={sortBy} onValueChange={(v: any) => setSortBy(v)}>
+          <SelectTrigger className="w-full md:w-[170px] gap-1.5">
+            <ArrowDownUp className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <SelectValue placeholder="ترتيب حسب" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="recent">الأحدث أولاً</SelectItem>
+            <SelectItem value="name">أبجدياً (الاسم)</SelectItem>
+            <SelectItem value="quantity">الأقل كمية أولاً</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <div className="flex items-center gap-1.5">
+          <Input
+            type="date"
+            value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+            className="w-full md:w-[150px]"
+            aria-label="تاريخ الفاتورة من"
+            title="تاريخ الفاتورة من"
+          />
+          <span className="text-xs text-muted-foreground shrink-0">إلى</span>
+          <Input
+            type="date"
+            value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
+            className="w-full md:w-[150px]"
+            aria-label="تاريخ الفاتورة إلى"
+            title="تاريخ الفاتورة إلى"
+          />
+          {(dateFrom || dateTo) && (
+            <button
+              className="text-muted-foreground hover:text-destructive shrink-0"
+              onClick={() => { setDateFrom(""); setDateTo(""); }}
+              title="مسح فلتر التاريخ"
+            >
+              <X className="w-4 h-4" />
+            </button>
           )}
-        </TabsContent>
+        </div>
+      </div>
 
-        <TabsContent value="stock" className="mt-4">
-          {isLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Array.from({ length: 6 }).map((_, i) => <Card key={i}><CardContent className="p-4"><Skeleton className="h-20 w-full" /></CardContent></Card>)}
-            </div>
-          ) : !items?.length ? (
-            <Card><CardContent className="p-12 text-center">
-              <Package className="w-12 h-12 mx-auto text-muted-foreground/40 mb-4" />
-              <h3 className="font-semibold text-lg mb-1">{t.common.noData}</h3>
-            </CardContent></Card>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {(items as any[]).map((item: any) => {
+      {isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => <Card key={i}><CardContent className="p-4"><Skeleton className="h-20 w-full" /></CardContent></Card>)}
+        </div>
+      ) : !items?.length ? (
+        <Card><CardContent className="p-12 text-center">
+          <Package className="w-12 h-12 mx-auto text-muted-foreground/40 mb-4" />
+          <h3 className="font-semibold text-lg mb-1">{t.common.noData}</h3>
+        </CardContent></Card>
+      ) : !filteredItems.length ? (
+        <Card><CardContent className="p-12 text-center">
+          <Search className="w-12 h-12 mx-auto text-muted-foreground/40 mb-4" />
+          <h3 className="font-semibold text-lg mb-1">لا توجد نتائج مطابقة</h3>
+          <p className="text-sm text-muted-foreground">جرّب كلمة بحث أخرى</p>
+        </CardContent></Card>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted/50 text-xs text-muted-foreground">
+                <th className="text-right font-medium px-3 py-2">الصنف</th>
+                <th className="text-right font-medium px-3 py-2">الكود</th>
+                <th className="text-right font-medium px-3 py-2">الرصيد</th>
+                <th className="text-right font-medium px-3 py-2">الوحدة</th>
+                <th className="text-right font-medium px-3 py-2">آخر توريد</th>
+                <th className="text-right font-medium px-3 py-2">آخر صرف</th>
+                <th className="text-right font-medium px-3 py-2">آخر سعر شراء</th>
+                <th className="text-right font-medium px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredItems.map((item: any) => {
                 const isLow = (item.minQuantity || 0) > 0 && item.quantity <= (item.minQuantity || 0);
                 return (
-                  <Card key={item.id} className="hover:shadow-lg hover:border-primary/20 transition-all duration-200">
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-medium text-sm">{item.itemName}</h3>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {isLow && <Badge variant="destructive" className="text-[10px] gap-1"><AlertTriangle className="w-3 h-3" /> {t.inventory.lowStock}</Badge>}
-                          {isWarehouse && (
-                            <>
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(item)}><Pencil className="w-3.5 h-3.5" /></Button>
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => openDelete(item)}><Trash2 className="w-3.5 h-3.5" /></Button>
-                            </>
-                          )}
-                        </div>
+                  <tr
+                    key={item.id}
+                    className="border-t hover:bg-muted/30 transition-colors cursor-pointer"
+                    onClick={() => setSelectedItemId(item.id)}
+                  >
+                    <td className="px-3 py-2.5">
+                      <div className="font-medium">{item.itemName}</div>
+                      {item.description && <div className="text-xs text-muted-foreground">{item.description}</div>}
+                      {isLow && <Badge variant="destructive" className="text-[10px] gap-1 mt-1"><AlertTriangle className="w-3 h-3" /> {t.inventory.lowStock}</Badge>}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{item.internalCode || item.manufacturerBarcode || "—"}</td>
+                    <td className="px-3 py-2.5">
+                      <span className={`font-bold ${isLow ? "text-destructive" : ""}`}>{item.quantity}</span>
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground">{item.unit || item.issueUnit || "—"}</td>
+                    <td className="px-3 py-2.5 text-muted-foreground">
+                      {item.invoiceDate ? new Date(item.invoiceDate).toLocaleDateString("ar-SA") : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground">
+                      {item.lastIssuedAt ? new Date(item.lastIssuedAt).toLocaleDateString("ar-SA") : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground">
+                      {item.lastPurchasePrice ? `${parseFloat(item.lastPurchasePrice).toLocaleString()} ر.س` : "—"}
+                    </td>
+                    <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1 justify-end">
+                        {item.manufacturerBarcode && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPrintBarcode(item)} title="طباعة باركود">
+                            <QrCode className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                        {isWarehouse && (
+                          <>
+                            {item.quantity > 0 && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700" onClick={() => { setDeliverItem(item); setDeliverQty(""); setDeliverToId(""); }} title="تسليم للفني">
+                                <Truck className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(item)}><Pencil className="w-3.5 h-3.5" /></Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => openDelete(item)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                          </>
+                        )}
                       </div>
-                      {item.description && <p className="text-xs text-muted-foreground mb-2">{item.description}</p>}
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">{t.purchaseOrders.quantity}:</span>
-                        <span className={`font-bold ${isLow ? "text-destructive" : ""}`}>{item.quantity} {item.unit}</span>
-                      </div>
-                      {item.location && <div className="flex items-center justify-between text-xs text-muted-foreground mt-1"><span>{t.inventory.location}:</span><span>{item.location}</span></div>}
-                    </CardContent>
-                  </Card>
+                    </td>
+                  </tr>
                 );
               })}
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* Edit Inventory Item Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
@@ -400,6 +329,153 @@ export default function Inventory() {
         </DialogContent>
       </Dialog>
 
+      {/* ── نافذة تسليم للفني ── */}
+      <Dialog open={!!deliverItem} onOpenChange={(open) => !open && setDeliverItem(null)}>
+        <DialogContent className="max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Truck className="w-5 h-5 text-blue-600" />
+              تسليم للفني
+            </DialogTitle>
+          </DialogHeader>
+          {deliverItem && (
+            <div className="space-y-4">
+              <div className="bg-muted/50 rounded-lg p-3 space-y-1">
+                <p className="font-semibold text-sm">{deliverItem.itemName}</p>
+                <p className="text-xs text-muted-foreground">
+                  الرصيد المتاح: <strong className="text-foreground">{deliverItem.quantity} {deliverItem.unit}</strong>
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">الكمية المُسلَّمة *</Label>
+                <Input
+                  type="number"
+                  min={0.001}
+                  step={0.5}
+                  dir="ltr"
+                  placeholder="0"
+                  value={deliverQty}
+                  onChange={e => setDeliverQty(e.target.value)}
+                  className="font-mono"
+                />
+                {deliverQty && parseFloat(deliverQty) > deliverItem.quantity && (
+                  <p className="text-xs text-destructive">الكمية أكبر من الرصيد المتاح</p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">الفني المُسلَّم إليه</Label>
+                <TechnicianCombobox
+                  value={deliverToId}
+                  onValueChange={setDeliverToId}
+                  placeholder="اختر الفني..."
+                  options={(allUsers as any[])
+                    .filter((u: any) => ["technician", "supervisor", "maintenance_manager"].includes(u.role))
+                    .map((u: any) => ({ value: String(u.id), label: `${u.name} (${u.role})` }))}
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeliverItem(null)}>إلغاء</Button>
+            <Button
+              className="gap-1.5"
+              disabled={deliverMut.isPending}
+              onClick={() => {
+                const qty = parseFloat(deliverQty);
+                if (!deliverQty || isNaN(qty) || qty <= 0) {
+                  toast.error("يرجى إدخال كمية صحيحة أكبر من صفر");
+                  return;
+                }
+                if (qty > (deliverItem.quantity || 0)) {
+                  toast.error(`الكمية (${qty}) أكبر من الرصيد المتاح (${deliverItem.quantity})`);
+                  return;
+                }
+                deliverMut.mutate({
+                  inventoryId:   deliverItem.id,
+                  deliveredToId: deliverToId ? parseInt(deliverToId) : undefined,
+                  deliveryQty:   qty,
+                  deliveryUnit:  deliverItem.unit || "قطعة",
+                });
+              }}
+            >
+              {deliverMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}
+              تأكيد التسليم
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* طباعة الباركود — نفس ملصق WarehouseReceiveV2 (58×38مم) */}
+      {printBarcode && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setPrintBarcode(null)}>
+          <div className="bg-white rounded-xl p-6 max-w-xs w-full mx-4 print-hidden-wrapper" onClick={e => e.stopPropagation()}>
+            <h2 className="font-bold text-center mb-4">طباعة باركود الصنف</h2>
+            <div className="barcode-print-area flex justify-center">
+              <div
+                className="barcode-card"
+                style={{
+                  width: "56mm", height: "36mm",
+                  display: "flex", flexDirection: "row",
+                  alignItems: "center", justifyContent: "flex-start",
+                  padding: "2px", gap: "4px",
+                  background: "#fff", border: "1px solid #ccc", borderRadius: "4px",
+                }}
+              >
+                <div style={{ flexShrink: 0 }}>
+                  <BarcodeQRCanvas value={printBarcode.manufacturerBarcode} size={110} />
+                </div>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", overflow: "hidden", paddingRight: "2px" }}>
+                  <span style={{ fontFamily: "monospace", fontWeight: "bold", fontSize: "14px", color: "#000", textAlign: "right", direction: "ltr" }}>
+                    {printBarcode.manufacturerBarcode}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4 print-hidden">
+              <button
+                className="flex-1 bg-primary text-white py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1"
+                onClick={() => window.print()}
+              >
+                <Printer className="w-4 h-4" /> طباعة
+              </button>
+              <button className="flex-1 border py-2 rounded-lg text-sm" onClick={() => setPrintBarcode(null)}>
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CSS طباعة الباركود — نفس مقاس الملصق 58×38مم */}
+      {printBarcode && (
+        <style>{`
+          @media print {
+            @page { size: 58mm 38mm; margin: 0; }
+            html, body { height: 36mm !important; width: 58mm !important; overflow: hidden !important; }
+            body * { visibility: hidden; }
+            .barcode-print-area, .barcode-print-area * { visibility: visible; }
+            .barcode-print-area {
+              position: fixed !important; top: 0; left: 0; width: 100% !important; margin: 0 !important;
+            }
+            .print-hidden, .print-hidden-wrapper > h2 { display: none !important; }
+            .print-hidden-wrapper { position: static !important; padding: 0 !important; box-shadow: none !important; }
+            .barcode-card {
+              width: 56mm !important; height: 36mm !important;
+              page-break-inside: avoid;
+            }
+          }
+        `}</style>
+      )}
+
+      {/* بطاقة الصنف الرسمية */}
+      <InventoryItemCard
+        itemId={selectedItemId}
+        open={selectedItemId !== null}
+        onOpenChange={(open) => !open && setSelectedItemId(null)}
+      />
+
       {/* Delete Inventory Item Dialog */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent className="sm:max-w-[400px]">
@@ -417,4 +493,19 @@ export default function Inventory() {
       </Dialog>
     </div>
   );
+}
+
+// ── مكوّن QR Code حقيقي (نفس المستخدم في WarehouseReceiveV2) ──
+function BarcodeQRCanvas({ value, size = 110 }: { value: string; size?: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !value) return;
+    QRCode.toCanvas(canvas, value, {
+      width: size,
+      margin: 1,
+      color: { dark: "#000000", light: "#ffffff" },
+    }).catch(console.error);
+  }, [value, size]);
+  return <canvas ref={canvasRef} width={size} height={size} />;
 }

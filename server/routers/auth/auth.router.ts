@@ -38,7 +38,7 @@ export const authRouter = router({
     const sessionToken = await sdk.createSessionToken(user.openId, { name: user.name || user.username || "", expiresInMs: 1000 * 60 * 60 * 24 * 365 });
     const cookieOptions = getSessionCookieOptions(ctx.req);
     ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: 1000 * 60 * 60 * 24 * 365 });
-    await db.upsertUser({ openId: user.openId, lastSignedIn: new Date() });
+    await db.updateLastSignedIn(user.openId);
     const twoFactorSecret = await db.getTwoFactorSecret(user.id);
     const twoFactorEnforcementStatus = getTwoFactorEnforcementStatus(user, twoFactorSecret?.isEnabled || false);
 

@@ -3,7 +3,7 @@
  * Additive layer: does NOT replace existing upload logic, only adds D&D capability
  */
 import { useRef, useState, useCallback } from "react";
-import { Upload, Loader2, CheckCircle2, XCircle, RotateCcw, X, FileText, Image } from "lucide-react";
+import { Upload, Loader2, CheckCircle2, XCircle, RotateCcw, X, FileText, Image, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +30,7 @@ type DropZoneProps = {
   sublabel?: string;
   className?: string;
   disabled?: boolean;
+  enableCamera?: boolean; // إظهار زر "التقاط صورة" بجانب زر "رفع من الجهاز"
 };
 
 const DEFAULT_ACCEPT = "image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -56,10 +57,12 @@ export default function DropZone({
   sublabel,
   className,
   disabled = false,
+  enableCamera = false,
 }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const uploadFile = useCallback(async (fileEntry: UploadedFile) => {
     setFiles(prev => prev.map(f => f.id === fileEntry.id ? { ...f, status: "uploading", progress: 0 } : f));
@@ -171,49 +174,124 @@ export default function DropZone({
 
   return (
     <div className={cn("space-y-3", className)}>
-      {/* Drop Zone */}
-      <div
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onClick={() => !disabled && inputRef.current?.click()}
-        className={cn(
-          "relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 select-none",
-          isDragging
-            ? "border-primary bg-primary/10 scale-[1.01] shadow-md"
-            : "border-muted-foreground/30 hover:border-primary/60 hover:bg-muted/30",
-          disabled && "opacity-50 cursor-not-allowed"
-        )}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept={accept}
-          className="hidden"
-          onChange={handleInputChange}
-          disabled={disabled}
-        />
-
-        <div className={cn(
-          "flex flex-col items-center gap-2 transition-transform duration-200",
-          isDragging && "scale-105"
-        )}>
-          {isUploading ? (
-            <Loader2 className="w-8 h-8 text-primary animate-spin" />
-          ) : (
-            <Upload className={cn("w-8 h-8 transition-colors", isDragging ? "text-primary" : "text-muted-foreground")} />
+      {/* منطقة الرفع / الالتقاط */}
+      {enableCamera ? (
+        <div
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          className={cn(
+            "relative border-2 border-dashed rounded-xl p-4 transition-all duration-200",
+            isDragging
+              ? "border-primary bg-primary/10 scale-[1.01] shadow-md"
+              : "border-muted-foreground/30",
+            disabled && "opacity-50 cursor-not-allowed"
           )}
-          <div>
-            <p className={cn("text-sm font-medium transition-colors", isDragging ? "text-primary" : "text-foreground")}>
-              {isDragging ? "أفلت الملفات هنا" : (label || "اسحب وأفلت الملفات هنا")}
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {sublabel || `أو انقر للاختيار — الحد الأقصى ${maxSizeMB} MB لكل ملف`}
-            </p>
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept={accept}
+            className="hidden"
+            onChange={handleInputChange}
+            disabled={disabled}
+          />
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={handleInputChange}
+            disabled={disabled}
+          />
+
+          {isUploading ? (
+            <div className="flex flex-col items-center gap-2 py-4">
+              <Loader2 className="w-8 h-8 text-primary animate-spin" />
+              <p className="text-sm font-medium">جاري الرفع...</p>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              <p className="text-xs text-center text-muted-foreground">
+                {isDragging ? "أفلت الملفات هنا" : (sublabel || label || "اختر طريقة الإضافة")}
+              </p>
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => !disabled && inputRef.current?.click()}
+                  disabled={disabled}
+                  className={cn(
+                    "flex flex-col items-center gap-1.5 py-4 px-2 rounded-lg border-2 border-dashed transition-all select-none",
+                    "border-muted-foreground/30 hover:border-primary/60 hover:bg-muted/30",
+                    disabled && "cursor-not-allowed"
+                  )}
+                >
+                  <Upload className="w-6 h-6 text-muted-foreground" />
+                  <span className="text-xs font-medium">رفع من الجهاز</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => !disabled && cameraInputRef.current?.click()}
+                  disabled={disabled}
+                  className={cn(
+                    "flex flex-col items-center gap-1.5 py-4 px-2 rounded-lg border-2 border-dashed transition-all select-none",
+                    "border-muted-foreground/30 hover:border-primary/60 hover:bg-muted/30",
+                    disabled && "cursor-not-allowed"
+                  )}
+                >
+                  <Camera className="w-6 h-6 text-muted-foreground" />
+                  <span className="text-xs font-medium">التقاط صورة</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onClick={() => !disabled && inputRef.current?.click()}
+          className={cn(
+            "relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 select-none",
+            isDragging
+              ? "border-primary bg-primary/10 scale-[1.01] shadow-md"
+              : "border-muted-foreground/30 hover:border-primary/60 hover:bg-muted/30",
+            disabled && "opacity-50 cursor-not-allowed"
+          )}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept={accept}
+            className="hidden"
+            onChange={handleInputChange}
+            disabled={disabled}
+          />
+
+          <div className={cn(
+            "flex flex-col items-center gap-2 transition-transform duration-200",
+            isDragging && "scale-105"
+          )}>
+            {isUploading ? (
+              <Loader2 className="w-8 h-8 text-primary animate-spin" />
+            ) : (
+              <Upload className={cn("w-8 h-8 transition-colors", isDragging ? "text-primary" : "text-muted-foreground")} />
+            )}
+            <div>
+              <p className={cn("text-sm font-medium transition-colors", isDragging ? "text-primary" : "text-foreground")}>
+                {isDragging ? "أفلت الملفات هنا" : (label || "اسحب وأفلت الملفات هنا")}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {sublabel || `أو انقر للاختيار — الحد الأقصى ${maxSizeMB} MB لكل ملف`}
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* File List */}
       {hasFiles && (

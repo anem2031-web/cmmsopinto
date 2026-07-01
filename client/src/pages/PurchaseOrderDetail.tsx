@@ -258,7 +258,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   const isAdminOrOwner = role === "admin" || role === "owner";
   const isDelegate = role === "delegate" || isAdminOrOwner;
   const isAccountant = role === "accountant" || isAdminOrOwner;
-  const isManagement = role === "senior_management" || isAdminOrOwner;
+  const isManagement = role === "senior_management" || role === "executive_director" || isAdminOrOwner;
   const isWarehouse = role === "warehouse" || isAdminOrOwner;
   const isManager = role === "maintenance_manager" || role === "purchase_manager" || isAdminOrOwner;
   const canCancelItem = role === "senior_management" || role === "maintenance_manager" || isAdminOrOwner;
@@ -285,6 +285,7 @@ const visibleItems = useMemo(() => {
   if (
     role === "accountant" ||
     role === "senior_management" ||
+    role === "executive_director" ||
     role === "warehouse" ||
     role === "purchase_manager"
   ) {
@@ -912,7 +913,7 @@ const visibleItems = useMemo(() => {
                     <p className="text-xs font-medium text-green-800 flex items-center gap-1.5 mb-2">
                       <Package className="w-3.5 h-3.5" /> استلام من المشتريات وإضافة للمخزون
                     </p>
-                    <Button size="sm" className="w-full gap-1.5 bg-green-600 hover:bg-green-700" onClick={() => setLocation(`/warehouse/receive?poId=${po.id}`)}>
+                    <Button size="sm" className="w-full gap-1.5 bg-green-600 hover:bg-green-700" onClick={() => setLocation(`/warehouse/receive-v2?poId=${po.id}`)}>
                       <Package className="w-3.5 h-3.5" />
                       فتح صفحة الاستلام
                     </Button>
@@ -1221,7 +1222,8 @@ const visibleItems = useMemo(() => {
         </Card>
       )}
 
-      {isManagement && po.status === "pending_management" && (
+      {(role === "senior_management" || isAdminOrOwner) &&
+        po.status === "pending_management" && (
         <Card className="border-orange-200 bg-orange-50/50">
           <CardHeader className="pb-2"><CardTitle className="text-base text-orange-800">{t.purchaseOrders.managementApproval}</CardTitle></CardHeader>
           <CardContent className="space-y-3">

@@ -316,6 +316,7 @@ export default function Home() {
       delegate: "/purchase-orders",
       procurement_officer: "/purchase-orders",
       senior_management: "/reports",
+      executive_director: "/reports",
       gate_security: "/gate-security",
       operator: "/tickets",
     };
@@ -588,7 +589,7 @@ export default function Home() {
   }, [stats, role, t, language, setLocation, openSlideover]);
 
   // Roles that should see PM summary card
-  const showPMSummary = ["admin", "owner", "senior_management", "maintenance_manager", "supervisor"].includes(role);
+  const showPMSummary = ["admin", "owner", "senior_management", "executive_director", "maintenance_manager", "supervisor"].includes(role);
 
   const greeting = language === "en"
     ? `Welcome, ${user?.name || "User"}`

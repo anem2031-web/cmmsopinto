@@ -29,7 +29,7 @@ const PO_STATUS_COLORS: Record<string, string> = {
 };
 
 // الأدوار التي تملك صلاحية رؤية فلتر المستخدم
-const FULL_ACCESS_ROLES = ["owner", "admin", "maintenance_manager", "purchase_manager", "senior_management", "accountant"];
+const FULL_ACCESS_ROLES = ["owner", "admin", "maintenance_manager", "purchase_manager", "senior_management", "executive_director", "accountant"];
 
 export default function PurchaseOrders() {
   const [, setLocation] = useLocation();

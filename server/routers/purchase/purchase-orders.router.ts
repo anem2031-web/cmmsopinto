@@ -119,21 +119,54 @@ export const purchaseOrdersRouter = router({
   }),
 
   confirmDeliveryToRequester: warehouseProcedure.input(z.object({
-    itemId: z.number(),
+    itemId:        z.number(),
     deliveredToId: z.number().optional(),
+    deliveryQty:   z.number().positive("الكمية يجب أن تكون أكبر من صفر"),
+    deliveryUnit:  z.string().min(1, "الوحدة مطلوبة"),
   })).mutation(async ({ input, ctx }) => {
     const item = await db.getPOItemById(input.itemId);
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "الصنف غير موجود" });
     if (item.status !== "delivered_to_warehouse") {
       throw new TRPCError({ code: "BAD_REQUEST", message: "هذا الصنف لم يتم توريده للمستودع بعد" });
     }
+
+    // التحقق من الكمية
+    if (input.deliveryQty <= 0) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "الكمية يجب أن تكون أكبر من صفر" });
+    }
+
+    // التحقق من الكمية المتاحة — من كمية الصنف في طلب الشراء
+    const itemQty = (item as any).quantity || 0;
+    if (input.deliveryQty > itemQty) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `الكمية المطلوبة (${input.deliveryQty}) أكبر من الكمية المتاحة (${itemQty})`
+      });
+    }
+
+    // البحث عن رصيد المخزون المرتبط وخصم الكمية
+    const inventoryItem = await db.getInventoryByPOItemId(input.itemId);
+    if (inventoryItem) {
+      // خصم من المخزون
+      await db.addInventoryTransactionV2({
+        inventoryId:         inventoryItem.id,
+        type:                "out",
+        quantity:            input.deliveryQty,
+        reason:              `تسليم للفني — طلب شراء`,
+        purchaseOrderItemId: input.itemId,
+        performedById:       ctx.user.id,
+        transactionType:     "issue",
+      });
+    }
+
     const deliveryNumber = await db.getNextDeliveryNumber();
     await db.updatePOItem(input.itemId, {
-      status: "delivered_to_requester",
+      status:         "delivered_to_requester",
       deliveryNumber,
-      deliveredAt: new Date(),
-      deliveredById: ctx.user.id,
-      deliveredToId: input.deliveredToId || null,
+      deliveredAt:    new Date(),
+      deliveredById:  ctx.user.id,
+      deliveredToId:  input.deliveredToId || null,
+      receivedQuantity: input.deliveryQty,
     });
     // Check if all items delivered to requester (Path C: do not change ticket status)
     const allItems = await db.getPOItems(item.purchaseOrderId);
@@ -178,9 +211,8 @@ export const purchaseOrdersRouter = router({
 
   confirmDeliveryToWarehouse: warehouseProcedure.input(z.object({
     itemId: z.number(),
-    supplierName: z.string().min(1, "اسم المورد مطلوب"),
-    supplierItemName: z.string().optional(),
-    actualUnitCost: z.string().min(1, "تكلفة الصنف مطلوبة"),
+    receivedQuantity: z.number().min(1, "الكمية يجب أن تكون أكبر من صفر"),
+    supplierInvoiceNumber: z.string().min(1, "رقم فاتورة المورد مطلوب"),
     warehousePhotoUrl: z.string().min(1, "صورة الصنف مطلوبة"),
   })).mutation(async ({ input, ctx }) => {
     // Get the item
@@ -189,15 +221,12 @@ export const purchaseOrdersRouter = router({
     if (item.status !== "purchased") {
       throw new TRPCError({ code: "BAD_REQUEST", message: "هذا الصنف ليس في حالة \"تم الشراء\" بعد" });
     }
-    const actualTotal = parseFloat(input.actualUnitCost) * item.quantity;
     await db.updatePOItem(input.itemId, {
       status: "delivered_to_warehouse",
       receivedAt: new Date(),
       receivedById: ctx.user.id,
-      supplierName: input.supplierName,
-      supplierItemName: input.supplierItemName || item.itemName,
-      actualUnitCost: input.actualUnitCost,
-      actualTotalCost: String(actualTotal),
+      receivedQuantity: input.receivedQuantity,
+      supplierInvoiceNumber: input.supplierInvoiceNumber,
       warehousePhotoUrl: input.warehousePhotoUrl,
     });
     // Update PO status (Path C: do not change ticket status — gate security controls it)
@@ -205,8 +234,7 @@ export const purchaseOrdersRouter = router({
     const activeItemsWH = allItems.filter(i => i.status !== "rejected" && i.status !== "cancelled");
     const allInWarehouse = activeItemsWH.length > 0 && activeItemsWH.every(i => ["delivered_to_warehouse", "delivered_to_requester"].includes(i.status));
     if (allInWarehouse) {
-      const totalActual = activeItemsWH.reduce((sum, i) => sum + parseFloat(i.actualTotalCost || "0"), 0);
-      await db.updatePurchaseOrder(item.purchaseOrderId, { status: "received", totalActualCost: String(totalActual) });
+      await db.updatePurchaseOrder(item.purchaseOrderId, { status: "received" });
       const poWH = await db.getPurchaseOrderById(item.purchaseOrderId);
       if (poWH?.ticketId) {
         const ticketWH = await db.getTicketById(poWH.ticketId);
@@ -225,9 +253,9 @@ export const purchaseOrdersRouter = router({
     }
     const managersWH = await db.getManagerUsers();
     for (const mgr of managersWH) {
-      await db.createNotification({ userId: mgr.id, title: "📦 وصلت بضاعة للمستودع", message: `استلم المستودع الصنف "${item.itemName}" بتكلفة فعلية ${input.actualUnitCost} ر.س من المورد ${input.supplierName}`, type: "info", relatedPOId: item.purchaseOrderId });
+      await db.createNotification({ userId: mgr.id, title: "📦 وصلت بضاعة للمستودع", message: `استلم المستودع الصنف "${item.itemName}" بكمية ${input.receivedQuantity} — فاتورة المورد رقم ${input.supplierInvoiceNumber}`, type: "info", relatedPOId: item.purchaseOrderId });
     }
-    await db.createAuditLog({ userId: ctx.user.id, action: "deliver_to_warehouse", entityType: "po_item", entityId: input.itemId, newValues: { supplierName: input.supplierName, actualUnitCost: input.actualUnitCost } });
+    await db.createAuditLog({ userId: ctx.user.id, action: "deliver_to_warehouse", entityType: "po_item", entityId: input.itemId, newValues: { receivedQuantity: input.receivedQuantity, supplierInvoiceNumber: input.supplierInvoiceNumber } });
     return { success: true };
   }),
 
@@ -1006,6 +1034,87 @@ list: protectedProcedure.input(z.object({
       return enriched;
     }
     return [];
+  }),
+
+  // جلب أصناف المخزون الجاهزة للتسليم — مرتبطة بطلبات الشراء
+  inventoryReadyForDelivery: protectedProcedure.query(async ({ ctx }) => {
+    const isAdminOrOwner = ctx.user.role === "admin" || ctx.user.role === "owner";
+    if (!isAdminOrOwner && ctx.user.role !== "warehouse") return [];
+
+    const db2 = await (db as any).getDb();
+    if (!db2) return [];
+
+    // جلب أصناف المخزون المرتبطة بطلبات الشراء عبر warehouse_receipts
+    const rows = await db2.execute(`
+      SELECT 
+        inv.id,
+        inv.itemName,
+        inv.itemName_ar,
+        inv.itemName_en,
+        inv.quantity,
+        inv.unit,
+        inv.averageCost,
+        inv.internalCode,
+        inv.receiptId,
+        wr.purchaseOrderId,
+        wr.receiptNumber,
+        wr.vendorName,
+        po.poNumber,
+        po.ticketId
+      FROM inventory inv
+      JOIN warehouse_receipts wr ON inv.receiptId = wr.id
+      JOIN purchase_orders po ON wr.purchaseOrderId = po.id
+      WHERE inv.quantity > 0
+      ORDER BY inv.createdAt DESC
+    `);
+
+    const items = rows[0] || [];
+
+    // إضافة بيانات الفني المرتبط بالبلاغ
+    const enriched = await Promise.all((items as any[]).map(async (item: any) => {
+      if (item.ticketId) {
+        const ticket = await db.getTicketById(item.ticketId);
+        return { ...item, ticketAssignedToId: ticket?.assignedToId ?? null };
+      }
+      return { ...item, ticketAssignedToId: null };
+    }));
+
+    return enriched;
+  }),
+
+  // تسليم صنف من المخزون مباشرة للفني
+  deliverInventoryItem: warehouseProcedure.input(z.object({
+    inventoryId:   z.number(),
+    deliveredToId: z.number().optional(),
+    deliveryQty:   z.number().positive(),
+    deliveryUnit:  z.string(),
+    purchaseOrderId: z.number().optional(),
+  })).mutation(async ({ input, ctx }) => {
+    // جلب الصنف من المخزون
+    const invItem = await db.getInventoryItemById(input.inventoryId);
+    if (!invItem) throw new TRPCError({ code: "NOT_FOUND", message: "الصنف غير موجود في المخزون" });
+
+    if (input.deliveryQty > invItem.quantity) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `الكمية المطلوبة (${input.deliveryQty}) أكبر من الرصيد (${invItem.quantity})`
+      });
+    }
+
+    // خدمة موحّدة: تنفّذ الصرف + تولّد رقم سند + تسجّل الحركة + تُنشئ سند delivery_documents رسمي — دائماً
+    const deliveryResult = await db.issueDelivery({
+      inventoryId:    input.inventoryId,
+      quantity:        input.deliveryQty,
+      unit:            input.deliveryUnit,
+      performedById:   ctx.user.id,
+      deliveredToId:   input.deliveredToId,
+      notes:           "تسليم للفني",
+    });
+
+    return {
+      success: true,
+      ...deliveryResult, // deliveryNumber, itemName, quantity, unit, deliveredAt, إلخ
+    };
   }),
 
   pendingPurchaseItems: protectedProcedure.query(async ({ ctx }) => {

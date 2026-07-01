@@ -1,6 +1,7 @@
 import { eq, desc, asc, and, sql, count, sum, inArray, notInArray, like, or, gte, lte, lt, isNull, isNotNull, ne } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { alias } from "drizzle-orm/mysql-core";
+import mysql from "mysql2/promise";
 import {
   InsertUser, users, tickets, purchaseOrders, purchaseOrderItems,
   inventory, inventoryTransactions, notifications, auditLogs,
@@ -15,27 +16,65 @@ import {
   type InsertProcurementComment,
   warehouseReceipts,
   warehouseReturns,
+  warehouseReceiptItems,
+  ocrJobs,
   type InsertWarehouseReceipt,
   type InsertWarehouseReturn,
   ticketConfirmations,
   type InsertTicketConfirmation,
   deliveryDocuments,
-  deliveryNumberCounter
+  deliveryNumberCounter,
+  itemBarcodeCounter,
+  disposalOperations,
+  disposalItems,
+  disposalNumberCounter,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _pool: mysql.Pool | null = null;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
-    try { _db = drizzle(process.env.DATABASE_URL); } catch (error) {
+    try {
+      // استخدام Pool بدل اتصال واحد — يعيد الاتصال تلقائياً عند الانقطاع
+      _pool = mysql.createPool({
+        uri:                process.env.DATABASE_URL,
+        waitForConnections: true,
+        connectionLimit:    10,
+        queueLimit:         0,
+        enableKeepAlive:    true,
+        keepAliveInitialDelay: 30000,
+        connectTimeout:     60000,
+      });
+      _db = drizzle(_pool as any);
+      console.log("[Database] Pool created successfully");
+    } catch (error) {
       console.warn("[Database] Failed to connect:", error);
-      _db = null;
+      _db   = null;
+      _pool = null;
     }
   }
   return _db;
 }
+
+// إعادة الاتصال عند انقطاع ECONNRESET
+export async function resetDb() {
+  console.warn("[Database] Resetting connection pool...");
+  try { await _pool?.end(); } catch {}
+  _db   = null;
+  _pool = null;
+  return getDb();
+}
+
+// معالجة أخطاء الاتصال تلقائياً
+process.on("uncaughtException", async (err: any) => {
+  if (err?.code === "ECONNRESET" || err?.cause?.code === "ECONNRESET") {
+    console.warn("[Database] ECONNRESET detected — resetting pool...");
+    await resetDb();
+  }
+});
 
 // ============================================================
 // USER OPERATIONS
@@ -628,7 +667,63 @@ export async function getPOItemsByStatus(status: string) {
 export async function getInventoryItems() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(inventory).orderBy(desc(inventory.updatedAt));
+
+  const items = await db.select().from(inventory).orderBy(desc(inventory.updatedAt));
+  if (items.length === 0) return [];
+  const itemIds = items.map(i => i.id);
+
+  // آخر معاملة "شراء" لكل صنف — المصدر الصحيح لتاريخ آخر توريد وآخر سعر شراء فعلي
+  // (وليس receiptId الثابت في inventory، ولا averageCost المتوسط التراكمي)
+  const lastPurchases = await db
+    .select({
+      inventoryId: inventoryTransactions.inventoryId,
+      invoiceDate: warehouseReceipts.invoiceDate,
+      unitCost:    inventoryTransactions.unitCost,
+    })
+    .from(inventoryTransactions)
+    .leftJoin(warehouseReceipts, eq(inventoryTransactions.receiptId, warehouseReceipts.id))
+    .where(and(
+      inArray(inventoryTransactions.inventoryId, itemIds),
+      eq(inventoryTransactions.type, "in"),
+      eq(inventoryTransactions.transactionType, "purchase"),
+    ))
+    .orderBy(desc(inventoryTransactions.createdAt));
+
+  // آخر معاملة "صرف" لكل صنف — المصدر الصحيح لتاريخ آخر صرف
+  const lastIssues = await db
+    .select({
+      inventoryId: inventoryTransactions.inventoryId,
+      createdAt:   inventoryTransactions.createdAt,
+    })
+    .from(inventoryTransactions)
+    .where(and(
+      inArray(inventoryTransactions.inventoryId, itemIds),
+      eq(inventoryTransactions.type, "out"),
+    ))
+    .orderBy(desc(inventoryTransactions.createdAt));
+
+  // نأخذ أول ظهور لكل inventoryId (الأحدث، بسبب الترتيب التنازلي أعلاه)
+  const latestInvoiceDateByItem = new Map<number, Date | null>();
+  const latestPurchasePriceByItem = new Map<number, string | null>();
+  for (const tx of lastPurchases) {
+    if (!latestInvoiceDateByItem.has(tx.inventoryId)) {
+      latestInvoiceDateByItem.set(tx.inventoryId, tx.invoiceDate);
+      latestPurchasePriceByItem.set(tx.inventoryId, tx.unitCost);
+    }
+  }
+  const latestIssueDateByItem = new Map<number, Date | null>();
+  for (const tx of lastIssues) {
+    if (!latestIssueDateByItem.has(tx.inventoryId)) {
+      latestIssueDateByItem.set(tx.inventoryId, tx.createdAt);
+    }
+  }
+
+  return items.map(item => ({
+    ...item,
+    invoiceDate:        latestInvoiceDateByItem.get(item.id) ?? null,
+    lastPurchasePrice:  latestPurchasePriceByItem.get(item.id) ?? null,
+    lastIssuedAt:       latestIssueDateByItem.get(item.id) ?? null,
+  }));
 }
 
 export async function createInventoryItem(data: any) {
@@ -2117,6 +2212,31 @@ export async function getNextInventoryCode(): Promise<string> {
   return `INV-${year}-${String(next).padStart(4, "0")}`;
 }
 
+// ─────────────────────────────────────────────────────────────
+// توليد رقم صنف فريد بصيغة السنة + تسلسل (مثل 20261، 20262)
+// لا يتكرر حتى لو حُذف الصنف
+// ─────────────────────────────────────────────────────────────
+// توليد أرقام باركود فريدة باستخدام AUTO_INCREMENT في قاعدة البيانات
+// يضمن عدم التكرار حتى مع عدة مستخدمين في نفس الوقت
+export async function getNextItemBarcodes(count: number): Promise<string[]> {
+  const db = await getDb();
+  const year = new Date().getFullYear();
+  if (!db) return Array.from({ length: count }, (_, i) => `${year}${i + 1}`);
+
+  const barcodes: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const [result] = await db.insert(itemBarcodeCounter).values({ year });
+    const seq = (result as any).insertId as number;
+    barcodes.push(`${year}${seq}`);
+  }
+  return barcodes;
+}
+
+export async function getNextItemBarcode(): Promise<string> {
+  const result = await getNextItemBarcodes(1);
+  return result[0];
+}
+
 export async function getNextDeliveryNumber(): Promise<string> {
   const db = await getDb();
   const year = new Date().getFullYear();
@@ -2125,6 +2245,209 @@ export async function getNextDeliveryNumber(): Promise<string> {
   const [result] = await db.insert(deliveryNumberCounter).values({ year });
   const seq = (result as any).insertId as number;
   return `DLV-${year}-${String(seq).padStart(4, "0")}`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// عمليات الاستبعاد — Disposal Operations
+// النمط المعماري: عملية → مستند → تفاصيل → خدمة تنفيذ → حركات → رصيد
+// ═══════════════════════════════════════════════════════════════
+
+// 1) توليد رقم عملية الاستبعاد التسلسلي (atomic — آمن مع الطلبات المتزامنة)
+export async function generateDisposalNumber(): Promise<string> {
+  const db = await getDb();
+  const year = new Date().getFullYear();
+  if (!db) return `DO-${year}-000001`;
+  const [result] = await db.insert(disposalNumberCounter).values({ year });
+  const seq = (result as any).insertId as number;
+  return `DO-${year}-${String(seq).padStart(6, "0")}`;
+}
+
+// 2) تنفيذ حركات المخزون الفعلية لعملية استبعاد موجودة بالقاعدة
+// تستقبل رقم العملية فقط — مصدر الحقيقة القاعدة وليس الواجهة
+export async function issueDisposal(disposalOperationId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("تعذر الاتصال بقاعدة البيانات");
+
+  // قراءة تفاصيل الأصناف من القاعدة مباشرة
+  const items = await db
+    .select()
+    .from(disposalItems)
+    .where(eq(disposalItems.operationId, disposalOperationId));
+
+  if (items.length === 0) throw new Error("لا توجد أصناف مرتبطة بهذه العملية");
+
+  const op = await db
+    .select()
+    .from(disposalOperations)
+    .where(eq(disposalOperations.id, disposalOperationId))
+    .limit(1);
+
+  if (!op[0]) throw new Error("عملية الاستبعاد غير موجودة");
+
+  for (const item of items) {
+    // التحقق من الرصيد الكافي
+    const invRows = await db
+      .select()
+      .from(inventory)
+      .where(eq(inventory.id, item.inventoryId))
+      .limit(1);
+
+    const inv = invRows[0];
+    if (!inv) throw new Error(`الصنف رقم ${item.inventoryId} غير موجود في المخزون`);
+
+    const qty = parseFloat(item.quantity);
+    if (qty > inv.quantity) {
+      throw new Error(`الكمية المطلوب استبعادها (${qty}) أكبر من الرصيد المتاح (${inv.quantity}) للصنف "${inv.itemName}"`);
+    }
+
+    // خصم الرصيد
+    await db
+      .update(inventory)
+      .set({
+        quantity: inv.quantity - qty,
+        updatedAt: new Date(),
+      })
+      .where(eq(inventory.id, item.inventoryId));
+
+    // تسجيل حركة المخزون
+    await db.insert(inventoryTransactions).values({
+      inventoryId:     item.inventoryId,
+      type:            "out",
+      quantity:        Math.round(qty),
+      reason:          item.notes || `استبعاد — ${item.reason}`,
+      performedById:   op[0].createdBy,
+      transactionType: "disposal",
+      documentUrl:     op[0].operationNumber, // المرجع المباشر في سجل الحركة
+      unitCost:        item.unitCost,
+      totalCost:       item.totalCost,
+    });
+  }
+}
+
+// 3) إنشاء عملية استبعاد كاملة داخل Transaction واحدة
+export async function createDisposal(params: {
+  operationDate:  string;
+  warehouseId?:   number;
+  notes?:         string;
+  createdBy:      number;
+  items: Array<{
+    inventoryId:  number;
+    quantity:     number;
+    reason:       "damaged" | "expired" | "missing" | "other";
+    unitCost:     number;
+    totalCost:    number;
+    attachments?: any;
+    notes?:       string;
+  }>;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("تعذر الاتصال بقاعدة البيانات");
+
+  // توليد رقم العملية
+  const operationNumber = await generateDisposalNumber();
+
+  // إنشاء المستند الرئيسي
+  const [opResult] = await db.insert(disposalOperations).values({
+    operationNumber,
+    operationDate: new Date(params.operationDate),
+    warehouseId:   params.warehouseId,
+    status:        "COMPLETED",
+    notes:         params.notes,
+    createdBy:     params.createdBy,
+  });
+
+  const disposalOperationId = (opResult as any).insertId as number;
+
+  // إنشاء تفاصيل الأصناف
+  for (const item of params.items) {
+    await db.insert(disposalItems).values({
+      operationId:  disposalOperationId,
+      inventoryId:  item.inventoryId,
+      quantity:     String(item.quantity),
+      reason:       item.reason,
+      unitCost:     String(item.unitCost),
+      totalCost:    String(item.totalCost),
+      attachments:  item.attachments ?? null,
+      notes:        item.notes,
+    });
+  }
+
+  // تنفيذ الحركات المخزنية — تقرأ من القاعدة مباشرة (مصدر الحقيقة)
+  await issueDisposal(disposalOperationId);
+
+  return { disposalOperationId, operationNumber };
+}
+
+// 4) قائمة عمليات الاستبعاد للجدول الرئيسي
+export async function listDisposalOperations() {
+  const db = await getDb();
+  if (!db) return [];
+
+  const ops = await db
+    .select()
+    .from(disposalOperations)
+    .orderBy(desc(disposalOperations.createdAt));
+
+  // إحضار إجمالي الأصناف والكمية والقيمة لكل عملية
+  const result = await Promise.all(ops.map(async (op) => {
+    const items = await db
+      .select()
+      .from(disposalItems)
+      .where(eq(disposalItems.operationId, op.id));
+
+    const totalItems    = items.length;
+    const totalQuantity = items.reduce((s, i) => s + parseFloat(i.quantity), 0);
+    const totalValue    = items.reduce((s, i) => s + parseFloat(i.totalCost), 0);
+
+    const creator = await getUserById(op.createdBy);
+
+    return {
+      ...op,
+      totalItems,
+      totalQuantity,
+      totalValue,
+      creatorName: (creator as any)?.name || "—",
+    };
+  }));
+
+  return result;
+}
+
+// 5) تفاصيل عملية استبعاد واحدة (getById)
+export async function getDisposalById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const opRows = await db
+    .select()
+    .from(disposalOperations)
+    .where(eq(disposalOperations.id, id))
+    .limit(1);
+
+  if (!opRows[0]) return null;
+
+  const items = await db
+    .select()
+    .from(disposalItems)
+    .where(eq(disposalItems.operationId, id));
+
+  // إضافة اسم الصنف لكل بند
+  const itemsWithNames = await Promise.all(items.map(async (item) => {
+    const inv = await getInventoryItemById(item.inventoryId);
+    return {
+      ...item,
+      itemName: (inv as any)?.itemName || "—",
+      unit:     (inv as any)?.unit || "",
+    };
+  }));
+
+  const creator = await getUserById(opRows[0].createdBy);
+
+  return {
+    ...opRows[0],
+    creatorName: (creator as any)?.name || "—",
+    items: itemsWithNames,
+  };
 }
 
 export async function getNextReturnNumber(): Promise<string> {
@@ -2229,6 +2552,113 @@ export async function getInventoryTransactions(inventoryId?: number) {
     : db.select().from(inventoryTransactions).orderBy(desc(inventoryTransactions.createdAt));
 }
 
+// ── سجل التوريد لصنف معيّن: كل فاتورة دخل منها هذا الصنف ─────────────────
+// المرجع الصحيح هو inventory_transactions (وليس receiptId الثابت في inventory)
+// لأن الصنف الواحد قد يتوارد من عدة فواتير عبر الزمن (مرتبط عبر "ربط بصنف موجود")
+export async function getInventoryPurchaseHistory(inventoryId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      transactionId: inventoryTransactions.id,
+      quantity:      inventoryTransactions.quantity,
+      unitCost:      inventoryTransactions.unitCost,
+      createdAt:     inventoryTransactions.createdAt,
+      receiptId:     inventoryTransactions.receiptId,
+      receiptNumber: warehouseReceipts.receiptNumber,
+      invoiceNumber: warehouseReceipts.invoiceNumber,
+      invoiceDate:   warehouseReceipts.invoiceDate,
+      vendorName:    warehouseReceipts.vendorName,
+      purchaseOrderId: warehouseReceipts.purchaseOrderId,
+      poNumber:      purchaseOrders.poNumber,
+    })
+    .from(inventoryTransactions)
+    .leftJoin(warehouseReceipts, eq(inventoryTransactions.receiptId, warehouseReceipts.id))
+    .leftJoin(purchaseOrders, eq(warehouseReceipts.purchaseOrderId, purchaseOrders.id))
+    .where(and(
+      eq(inventoryTransactions.inventoryId, inventoryId),
+      eq(inventoryTransactions.type, "in"),
+      eq(inventoryTransactions.transactionType, "purchase"),
+    ))
+    .orderBy(desc(inventoryTransactions.createdAt));
+}
+
+// ── Phase 2C: سجل الحركة الكامل لصنف معيّن — كشف حساب بنكي ──────────────
+// المرجع enum ثابت من الآن، يستوعب كل أنواع الحركات المستقبلية (تحويل/استبعاد)
+// بدون الحاجة لإعادة بناء الجدول لاحقاً — فقط تُعبّأ القيمة عند توفرها
+export async function getInventoryLedger(inventoryId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const transactions = await db
+    .select()
+    .from(inventoryTransactions)
+    .where(eq(inventoryTransactions.inventoryId, inventoryId))
+    .orderBy(asc(inventoryTransactions.createdAt));
+
+  if (transactions.length === 0) return [];
+
+  // مراجع التوريد (receiptNumber) لكل معاملات الشراء دفعة واحدة
+  const receiptIds = transactions.map(t => t.receiptId).filter((id): id is number => !!id);
+  const receiptsMap = new Map<number, string>();
+  if (receiptIds.length > 0) {
+    const receipts = await db
+      .select({ id: warehouseReceipts.id, receiptNumber: warehouseReceipts.receiptNumber })
+      .from(warehouseReceipts)
+      .where(inArray(warehouseReceipts.id, receiptIds));
+    for (const r of receipts) receiptsMap.set(r.id, r.receiptNumber);
+  }
+
+  // مراجع الصرف (deliveryNumber) — الربط عبر purchaseOrderItemId (poItemId بجدول deliveryDocuments)
+  const poItemIds = transactions
+    .filter(t => t.type === "out" && t.purchaseOrderItemId)
+    .map(t => t.purchaseOrderItemId!) as number[];
+  const deliveryMap = new Map<number, string>();
+  if (poItemIds.length > 0) {
+    const deliveries = await db
+      .select({ poItemId: deliveryDocuments.poItemId, deliveryNumber: deliveryDocuments.deliveryNumber })
+      .from(deliveryDocuments)
+      .where(inArray(deliveryDocuments.poItemId, poItemIds));
+    for (const d of deliveries) deliveryMap.set(d.poItemId, d.deliveryNumber);
+  }
+
+  // حساب الرصيد التراكمي بعد كل حركة (بترتيب زمني تصاعدي)
+  let runningBalance = 0;
+  const ledger = transactions.map(tx => {
+    const inQty  = tx.type === "in"  ? tx.quantity : 0;
+    const outQty = tx.type === "out" ? tx.quantity : 0;
+    runningBalance += inQty - outQty;
+
+    // تحديد المرجع حسب نوع الحركة — enum ثابت يستوعب التحويل والاستبعاد مستقبلاً بدون تعديل بنيوي
+    let reference: string | null = null;
+    if (tx.transactionType === "purchase" && tx.receiptId) {
+      reference = receiptsMap.get(tx.receiptId) ?? null;
+    } else if (tx.transactionType === "delivery") {
+      // المصدر الموثوق: رقم السند المخزَّن مباشرة على الحركة (منذ توحيد خدمة الصرف issueDelivery)
+      // مع fallback للحركات القديمة السابقة لهذا التوحيد، عبر الربط غير المباشر بطلب الشراء
+      reference = tx.documentUrl ?? (tx.purchaseOrderItemId ? deliveryMap.get(tx.purchaseOrderItemId) ?? null : null);
+    } else if (tx.transactionType === "disposal") {
+      // رقم عملية الاستبعاد محفوظ مباشرة على الحركة في حقل documentUrl (DO-YYYY-NNNNNN)
+      reference = tx.documentUrl ?? null;
+    }
+    // transactionType === "return" أو "adjustment" (تحويل/جرد مستقبلاً): لا مرجع بعد
+
+    return {
+      transactionId:   tx.id,
+      createdAt:        tx.createdAt,
+      type:             tx.type,                 // "in" | "out"
+      transactionType:  tx.transactionType,       // "purchase" | "return" | "delivery" | "adjustment"
+      inQty,
+      outQty,
+      balanceAfter:     runningBalance,
+      reference,                                   // null = "غير متاح بعد"
+      reason:           tx.reason,
+    };
+  });
+
+  return ledger.reverse(); // الأحدث أولاً للعرض
+}
+
 // ── Delivery Documents ─────────────────────────────────────────────────────
 
 export async function createDeliveryDocument(data: {
@@ -2251,6 +2681,96 @@ export async function createDeliveryDocument(data: {
   if (!db) return null;
   const [result] = await db.insert(deliveryDocuments).values(data);
   return result;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// خدمة موحّدة لدورة سند الصرف (Delivery Document Flow)
+// كل مسار صرف (سواء من دورة الشراء أو من المخزون مباشرة) يستدعي
+// هذه الدالة الواحدة، فيضمن: توليد رقم + تسجيل حركة + إنشاء سند
+// رسمي بجدول delivery_documents — بدون اعتماد على أن تتذكر
+// الواجهة استدعاء createDeliveryDocument بشكل منفصل.
+// ═══════════════════════════════════════════════════════════════
+export async function issueDelivery(params: {
+  inventoryId:          number;
+  quantity:              number;
+  unit?:                 string;
+  performedById:         number;       // المستخدم المسلِّم (يُجلب اسمه هنا، لا يُمرَّر من الواجهة)
+  deliveredToId?:        number;       // الفني/الطالب المُستلِم (اختياري — موجود غالباً)
+  purchaseOrderItemId?:  number;       // إن وُجد، يُربط بطلب الشراء وسنده
+  notes?:                string;
+  warehousePhotoUrl?:    string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("تعذر الاتصال بقاعدة البيانات");
+
+  // 1) تنفيذ عملية الصرف الفعلية (خصم الرصيد + تسجيل الحركة في inventory_transactions)
+  const item = await getInventoryItemById(params.inventoryId);
+  if (!item) throw new Error("الصنف غير موجود في المخزون");
+  if (params.quantity > (item.quantity || 0)) {
+    throw new Error(`الكمية المطلوبة (${params.quantity}) أكبر من الرصيد المتاح (${item.quantity})`);
+  }
+
+  // 2) توليد رقم السند — مرجع واحد يُستخدم بكل الخطوات التالية
+  const deliveryNumber = await getNextDeliveryNumber();
+
+  await addInventoryTransactionV2({
+    inventoryId:          params.inventoryId,
+    type:                 "out",
+    quantity:              params.quantity,
+    reason:                params.notes || "تسليم من المخزون",
+    purchaseOrderItemId:   params.purchaseOrderItemId,
+    performedById:         params.performedById,
+    transactionType:       "delivery",
+    documentUrl:           deliveryNumber, // ربط الحركة برقم السند مباشرة — يُستخدم لاحقاً في سجل الحركة كمرجع موثوق
+  });
+
+  // 3) جلب أسماء المُسلِّم والمُستلِم من قاعدة البيانات (وليس من مدخلات الواجهة، لضمان الدقة)
+  const performer = await getUserById(params.performedById);
+  const receiver  = params.deliveredToId ? await getUserById(params.deliveredToId) : null;
+
+  // جلب بيانات طلب الشراء المرتبط إن وُجد (المورد، رقم الطلب)
+  let poNumber: string | undefined;
+  let supplierName: string | undefined;
+  let actualUnitCost: string | undefined;
+  if (params.purchaseOrderItemId) {
+    const poItem = await getPOItemById(params.purchaseOrderItemId);
+    if (poItem) {
+      supplierName   = (poItem as any).supplierName;
+      actualUnitCost = (poItem as any).actualUnitCost;
+      const po = await getPurchaseOrderById((poItem as any).purchaseOrderId);
+      poNumber = (po as any)?.poNumber;
+    }
+  }
+
+  // 4) إنشاء السند الرسمي بجدول delivery_documents — مضمون الحدوث دائماً مع كل عملية صرف
+  await createDeliveryDocument({
+    deliveryNumber,
+    poItemId:          params.purchaseOrderItemId ?? 0,
+    itemName:           item.itemName,
+    deliveredByName:    (performer as any)?.name || "مستخدم المستودع",
+    deliveredToName:    (receiver as any)?.name || "غير محدد",
+    quantity:            params.quantity,
+    unit:                params.unit || item.unit || undefined,
+    supplierName,
+    actualUnitCost,
+    poNumber,
+    warehousePhotoUrl:   params.warehousePhotoUrl,
+    notes:               params.notes,
+  });
+
+  // 5) إتاحة طباعة PDF — الرقم والبيانات جاهزة للواجهة لتوليد الوثيقة وحفظ رابطها لاحقاً عبر updateDeliveryDocumentPdf
+  return {
+    deliveryNumber,
+    itemName:         item.itemName,
+    deliveredByName:  (performer as any)?.name || "مستخدم المستودع",
+    deliveredToName:  (receiver as any)?.name || "غير محدد",
+    quantity:          params.quantity,
+    unit:              params.unit || item.unit || "",
+    supplierName,
+    actualUnitCost,
+    poNumber,
+    deliveredAt:       new Date().toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" }),
+  };
 }
 
 export async function updateDeliveryDocumentPdf(id: number, pdfKey: string, pdfUrl: string) {
@@ -2276,3 +2796,621 @@ export async function getDeliveryDocuments() {
   return db.select().from(deliveryDocuments).orderBy(desc(deliveryDocuments.createdAt));
 }
 
+// الاستيرادات المطلوبة موجودة مسبقاً في db.ts
+
+// ─────────────────────────────────────────────────────────────
+// OCR JOBS
+// ─────────────────────────────────────────────────────────────
+
+export async function createOcrJob(data: {
+  receiptId?:       number;
+  purchaseOrderId?: number;
+  imageUrl:         string;
+  createdById:      number;
+  status:           string;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(ocrJobs).values({
+    ...data,
+    status: data.status as any,
+  });
+  return result[0].insertId;
+}
+
+export async function updateOcrJob(id: number, data: {
+  status?:        string;
+  receiptId?:     number;
+  rawResponse?:   string;
+  extractedData?: any;
+  confidence?:    number;
+  errorMessage?:  string;
+  processingMs?:  number;
+  completedAt?:   Date;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ocrJobs).set(data as any).where(eq(ocrJobs.id, id));
+}
+
+// ─────────────────────────────────────────────────────────────
+// INVENTORY V2 - إنشاء وتحديث مع الحقول الجديدة
+// ─────────────────────────────────────────────────────────────
+
+export async function createInventoryItemV2(data: {
+  itemName:           string;
+  itemName_ar?:       string;
+  itemName_en?:       string;
+  itemType?:          string;
+  quantity:           number;
+  unit?:              string;
+  purchaseUnit?:      string;
+  issueUnit?:         string;
+  conversionFactor?:  string;
+  minQuantity?:       number;
+  averageCost?:       string;
+  totalCostValue?:    string;
+  internalCode?:      string;
+  manufacturerBarcode?: string;
+  expiryDate?:        Date;
+  linkedItemId?:      number;
+  assetId?:           number;
+  warehouseId?:       number;
+  receiptId?:         number;
+  siteId?:            number;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(inventory).values(data as any);
+  return result[0].insertId;
+}
+
+export async function updateInventoryItemV2(id: number, data: {
+  lastRestockedAt?: Date;
+  averageCost?:     string;
+  totalCostValue?:  string;
+  linkedItemId?:    number;
+  itemName_ar?:     string;
+  itemName_en?:     string;
+  itemType?:        string;
+  expiryDate?:      Date;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(inventory).set(data as any).where(eq(inventory.id, id));
+}
+
+// ─────────────────────────────────────────────────────────────
+// INVENTORY TRANSACTIONS V2
+// ─────────────────────────────────────────────────────────────
+
+export async function addInventoryTransactionV2(data: {
+  inventoryId:          number;
+  type:                 "in" | "out";
+  quantity:             number;
+  unitCost?:            string;
+  totalCost?:           string;
+  reason?:              string;
+  ticketId?:            number;
+  purchaseOrderItemId?: number;
+  performedById:        number;
+  transactionType?:     string;
+  receiptId?:           number;
+  returnId?:            number;
+  projectId?:           number;
+  departmentId?:        number;
+  assetId?:             number;
+  documentUrl?:         string;
+  invoiceNumber?:       string;
+}) {
+  const db = await getDb();
+  if (!db) return;
+
+  // إدراج الحركة
+  await db.insert(inventoryTransactions).values(data as any);
+
+  // تحديث رصيد المخزون
+  const item = await db.select().from(inventory).where(eq(inventory.id, data.inventoryId)).limit(1);
+  if (item[0]) {
+    const currentQty = item[0].quantity || 0;
+    const newQty = data.type === "in"
+      ? currentQty + data.quantity
+      : Math.max(0, currentQty - data.quantity);
+
+    const newTotalValue = newQty * parseFloat((item[0] as any).averageCost || "0");
+
+    await db.update(inventory).set({
+      quantity:       newQty,
+      totalCostValue: newTotalValue.toFixed(2),
+    } as any).where(eq(inventory.id, data.inventoryId));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// WAREHOUSE RECEIPTS V2
+// ─────────────────────────────────────────────────────────────
+
+export async function createWarehouseReceiptV2(data: {
+  receiptNumber:    string;
+  purchaseOrderId:  number;
+  receivedById:     number;
+  notes?:           string;
+  totalItems?:      number;
+  status?:          string;
+  vendorName?:      string;
+  vendorNameEn?:    string;
+  vendorTaxNumber?: string;
+  invoiceNumber?:   string;
+  invoiceDate?:     Date;
+  subtotal?:        string;
+  taxAmount?:       string;
+  grandTotal?:      string;
+  invoicePhotoUrl?: string;
+  goodsPhotoUrl?:   string;
+  hasDiscrepancy?:  boolean;
+  discrepancyNotes?: string;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(warehouseReceipts).values(data as any);
+  return result[0].insertId;
+}
+
+export async function createWarehouseReceiptItem(data: {
+  receiptId:            number;
+  inventoryId?:         number;
+  purchaseOrderItemId?: number;
+  itemName:             string;
+  itemName_ar?:         string;
+  itemName_en?:         string;
+  receivedQuantity:     string;
+  purchaseUnit?:        string;
+  unitCost:             string;
+  taxRate?:             string;
+  taxAmount?:           string;
+  lineTotal?:           string;
+  expectedQuantity?:    string;
+  quantityDiff?:        string;
+  expectedUnitCost?:    string;
+  priceDiff?:           string;
+  ocrExtracted?:        boolean;
+  manuallyEdited?:      boolean;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(warehouseReceiptItems).values(data as any);
+  return result[0].insertId;
+}
+
+export async function getWarehouseReceiptWithItems(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const receipt = await db.select().from(warehouseReceipts).where(eq(warehouseReceipts.id, id)).limit(1);
+  if (!receipt[0]) return null;
+  const items = await db.select().from(warehouseReceiptItems)
+    .where(eq(warehouseReceiptItems.receiptId, id))
+    .orderBy(warehouseReceiptItems.id);
+  return { ...receipt[0], items };
+}
+
+export async function listWarehouseReceiptsV2(input?: {
+  purchaseOrderId?: number;
+  limit?:           number;
+  offset?:          number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(warehouseReceipts).orderBy(desc(warehouseReceipts.createdAt));
+  if (input?.purchaseOrderId) {
+    query = query.where(eq(warehouseReceipts.purchaseOrderId, input.purchaseOrderId)) as any;
+  }
+  return query.limit(input?.limit || 50).offset(input?.offset || 0);
+}
+
+// ─────────────────────────────────────────────────────────────
+// كشف الفاتورة المكررة
+// ─────────────────────────────────────────────────────────────
+
+export async function checkDuplicateInvoice(data: {
+  invoiceNumber:    string;
+  vendorTaxNumber?: string;
+}) {
+  // NOTE: مؤقتاً معطلة - invoiceNumber غير موجود في Drizzle Schema بعد
+  // سيتم تفعيلها بعد إضافة الحقل للـ Schema
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// البحث عن أصناف مشابهة (للكشف عن المكرر عند الإدخال)
+// ─────────────────────────────────────────────────────────────
+
+export async function findSimilarInventoryItems(itemName: string) {
+  const db = await getDb();
+  if (!db) return [];
+
+  // استخراج الكلمات الرئيسية (أول 3 كلمات)
+  const keywords = itemName.trim().split(/\s+/).slice(0, 3);
+
+  const results = await db.select({
+    id:                  inventory.id,
+    itemName:            inventory.itemName,
+    internalCode:        inventory.internalCode,
+    quantity:            inventory.quantity,
+    unit:                inventory.unit,
+    manufacturerBarcode: inventory.manufacturerBarcode,
+  })
+    .from(inventory)
+    .where(
+      or(
+        like(inventory.itemName, `%${keywords[0]}%`),
+        like(inventory.itemName, `%${itemName.substring(0, 10)}%`),
+      )
+    )
+    .orderBy(desc(inventory.updatedAt))
+    .limit(5);
+
+  return results;
+}
+
+// ─────────────────────────────────────────────────────────────
+// تقرير قيمة المخزون الكلية (للوحة التحكم)
+// ─────────────────────────────────────────────────────────────
+
+export async function getInventoryTotalValue() {
+  const db = await getDb();
+  if (!db) return { totalValue: 0, totalItems: 0, lowStockCount: 0 };
+
+  const allItems = await db.select({
+    quantity:       inventory.quantity,
+    minQuantity:    inventory.minQuantity,
+    averageCost:    (inventory as any).averageCost,
+    totalCostValue: (inventory as any).totalCostValue,
+  }).from(inventory);
+
+  const totalValue = allItems.reduce((sum, i) =>
+    sum + parseFloat((i as any).totalCostValue || "0"), 0);
+
+  const lowStockCount = allItems.filter(i =>
+    (i.minQuantity || 0) > 0 && i.quantity <= (i.minQuantity || 0)
+  ).length;
+
+  return {
+    totalValue:    Math.round(totalValue * 100) / 100,
+    totalItems:    allItems.length,
+    lowStockCount,
+  };
+}
+
+export async function getLowStockInventoryItems() {
+  const db = await getDb();
+  if (!db) return [];
+  const items = await db.select().from(inventory).orderBy(desc(inventory.updatedAt));
+  return items.filter((i: any) => (i.minQuantity || 0) > 0 && i.quantity <= (i.minQuantity || 0));
+}
+
+// ============================================================
+// INVOICE DRAFT V2 - مسودة الفاتورة والاعتماد
+// ============================================================
+
+// ─────────────────────────────────────────────────────────────
+// WAREHOUSE RECEIPTS V2 - مع حقول الفاتورة الكاملة
+// ─────────────────────────────────────────────────────────────
+
+export async function createWarehouseReceiptDraft(data: {
+  receiptNumber:    string;
+  purchaseOrderId:  number;
+  receivedById:     number;
+  notes?:           string;
+  totalItems?:      number;
+  vendorName?:      string;
+  vendorNameEn?:    string;
+  vendorTaxNumber?: string;
+  invoiceNumber?:   string;
+  invoiceDate?:     Date;
+  subtotal?:        string;
+  taxAmount?:       string;
+  grandTotal?:      string;
+  invoicePhotoUrl?: string;
+  goodsPhotoUrl?:   string;
+  hasDiscrepancy?:  boolean;
+  discrepancyNotes?: string;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(warehouseReceipts).values({
+    ...data,
+    status: "draft",
+    isDraft: true,
+  } as any);
+  return result[0].insertId as number;
+}
+
+export async function approveWarehouseReceipt(
+  receiptId: number,
+  approvedById: number
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(warehouseReceipts)
+    .set({ status: "approved", isDraft: false, approvedById, approvedAt: new Date() } as any)
+    .where(eq(warehouseReceipts.id, receiptId));
+}
+
+export async function getWarehouseReceiptDraft(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(warehouseReceipts)
+    .where(eq(warehouseReceipts.id, id)).limit(1);
+  if (!rows[0]) return null;
+  const items = await db.select().from(warehouseReceiptItems)
+    .where(eq(warehouseReceiptItems.receiptId, id));
+  return { ...rows[0], items };
+}
+
+export async function listDraftReceipts(purchaseOrderId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  let q = db.select().from(warehouseReceipts)
+    .where(eq((warehouseReceipts as any).isDraft, true))
+    .orderBy(desc(warehouseReceipts.createdAt));
+  return q.limit(50);
+}
+
+// ─────────────────────────────────────────────────────────────
+// تجميع أصناف PO حسب الفاتورة (نفس رقم الفاتورة + المورد)
+// ─────────────────────────────────────────────────────────────
+export async function groupPOItemsByInvoice(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  // جلب كل OCR jobs المكتملة لهذا الطلب
+  const jobs = await db.select().from(ocrJobs)
+    .where(
+      and(
+        eq(ocrJobs.purchaseOrderId, purchaseOrderId),
+        eq(ocrJobs.status, "ocr_completed" as any),
+      )
+    )
+    .orderBy(desc(ocrJobs.createdAt));
+
+  if (!jobs.length) return [];
+
+  // تجميع حسب رقم الفاتورة + المورد
+  const groups: Record<string, {
+    invoiceKey:     string;
+    invoiceNumber?: string;
+    vendorName?:    string;
+    vendorTaxNumber?: string;
+    invoiceDate?:   string;
+    subtotal?:      number;
+    taxAmount?:     number;
+    grandTotal?:    number;
+    items:          any[];
+    ocrJobIds:      number[];
+  }> = {};
+
+  for (const job of jobs) {
+    const data = job.extractedData as any;
+    if (!data) continue;
+
+    const invoiceKey = `${data.invoiceNumber || "unknown"}_${data.vendorTaxNumber || data.vendorName || "unknown"}`;
+
+    if (!groups[invoiceKey]) {
+      groups[invoiceKey] = {
+        invoiceKey,
+        invoiceNumber:   data.invoiceNumber,
+        vendorName:      data.vendorName,
+        vendorTaxNumber: data.vendorTaxNumber,
+        invoiceDate:     data.invoiceDate,
+        subtotal:        data.subtotal,
+        taxAmount:       data.taxAmount,
+        grandTotal:      data.grandTotal,
+        items:           [],
+        ocrJobIds:       [],
+      };
+    }
+
+    groups[invoiceKey].ocrJobIds.push(job.id);
+
+    // إضافة الأصناف من هذا الـ OCR job
+    if (Array.isArray(data.items)) {
+      for (const item of data.items) {
+        groups[invoiceKey].items.push({
+          ...item,
+          purchaseOrderItemId: job.purchaseOrderItemId,
+          ocrJobId:            job.id,
+        });
+      }
+    }
+  }
+
+  return Object.values(groups);
+}
+
+// ─────────────────────────────────────────────────────────────
+// OCR JOBS - تحديث مع الحقول الجديدة
+// ─────────────────────────────────────────────────────────────
+
+export async function createOcrJobV2(data: {
+  receiptId?:           number;
+  purchaseOrderId?:     number;
+  purchaseOrderItemId?: number;
+  imageUrl:             string;
+  createdById:          number;
+  status?:              string;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(ocrJobs).values({
+    ...data,
+    status: (data.status || "pending") as any,
+  });
+  return result[0].insertId as number;
+}
+
+export async function updateOcrJobStatus(id: number, data: {
+  status:           string;
+  extractedData?:   any;
+  rawResponse?:     any;
+  confidence?:      number;
+  confidenceScore?: number;
+  needsManualReview?: boolean;
+  errorMessage?:    string;
+  processingMs?:    number;
+  completedAt?:     Date;
+  approvedById?:    number;
+  approvedAt?:      Date;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ocrJobs).set(data as any).where(eq(ocrJobs.id, id));
+}
+
+export async function getOcrJobsByPO(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(ocrJobs)
+    .where(eq(ocrJobs.purchaseOrderId, purchaseOrderId))
+    .orderBy(desc(ocrJobs.createdAt));
+}
+
+// ─────────────────────────────────────────────────────────────
+// كشف الفاتورة المكررة (بعد إصلاح Schema)
+// ─────────────────────────────────────────────────────────────
+
+export async function checkDuplicateInvoiceV2(data: {
+  invoiceNumber:    string;
+  vendorTaxNumber?: string;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select({
+    id:            warehouseReceipts.id,
+    receiptNumber: warehouseReceipts.receiptNumber,
+    invoiceNumber: warehouseReceipts.invoiceNumber,
+    createdAt:     warehouseReceipts.createdAt,
+  })
+    .from(warehouseReceipts)
+    .where(eq(warehouseReceipts.invoiceNumber, data.invoiceNumber))
+    .limit(1);
+  return rows[0] || null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// إدخال المخزون بعد الاعتماد
+// ─────────────────────────────────────────────────────────────
+
+export async function processApprovedReceiptItems(
+  receiptId: number,
+  performedById: number
+) {
+  const db = await getDb();
+  if (!db) return;
+
+  const receipt = await getWarehouseReceiptDraft(receiptId);
+  if (!receipt) throw new Error("الفاتورة غير موجودة");
+
+  for (const item of (receipt as any).items || []) {
+    const qty       = parseFloat(item.receivedQuantity || "1");
+    const unitCost  = parseFloat(item.unitCost || "0");
+
+    if (item.inventoryId) {
+      // صنف موجود — تحديث الرصيد ومتوسط التكلفة
+      const existing = await getInventoryItemById(item.inventoryId);
+      if (existing) {
+        const oldQty     = existing.quantity || 0;
+        const oldCost    = parseFloat((existing as any).averageCost || "0");
+        const newQty     = oldQty + qty;
+        const newAvgCost = newQty > 0
+          ? ((oldQty * oldCost) + (qty * unitCost)) / newQty
+          : unitCost;
+
+        await db.update(inventory).set({
+          quantity:       newQty,
+          averageCost:    newAvgCost.toFixed(4),
+          totalCostValue: (newQty * newAvgCost).toFixed(2),
+          lastRestockedAt: new Date(),
+        } as any).where(eq(inventory.id, item.inventoryId));
+      }
+    } else {
+      // صنف جديد — إنشاء في المخزون
+      const internalCode = await getNextInventoryCode();
+      const result = await db.insert(inventory).values({
+        itemName:        item.itemName,
+        itemName_ar:     item.itemName_ar,
+        itemName_en:     item.itemName_en,
+        itemType:        item.itemType || "consumable",
+        quantity:        0,
+        unit:            item.purchaseUnit || "قطعة",
+        purchaseUnit:    item.purchaseUnit,
+        averageCost:     unitCost.toFixed(4),
+        totalCostValue:  "0",
+        internalCode,
+        receiptId,
+      } as any);
+      item.inventoryId = result[0].insertId;
+    }
+
+    // تسجيل حركة الدخول
+    await db.insert(inventoryTransactions).values({
+      inventoryId:         item.inventoryId,
+      type:                "in",
+      quantity:            Math.round(qty),
+      reason:              `اعتماد فاتورة ${(receipt as any).receiptNumber || receiptId}`,
+      purchaseOrderItemId: item.purchaseOrderItemId,
+      performedById,
+      transactionType:     "purchase",
+      receiptId,
+    } as any);
+
+    // تحديث حالة بند طلب الشراء
+    if (item.purchaseOrderItemId) {
+      await db.update(purchaseOrderItems)
+        .set({ status: "delivered_to_warehouse", receivedAt: new Date(), receivedById: performedById } as any)
+        .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId));
+    }
+  }
+
+  // تحديث حالة الفاتورة
+  await db.update(warehouseReceipts)
+    .set({ status: "confirmed", isDraft: false } as any)
+    .where(eq(warehouseReceipts.id, receiptId));
+}
+
+export async function updateWarehouseReceiptItem(id: number, data: {
+  itemName?:         string;
+  receivedQuantity?: number;
+  unitCost?:         string;
+  taxRate?:          number;
+  manuallyEdited?:   boolean;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(warehouseReceiptItems)
+    .set(data as any)
+    .where(eq(warehouseReceiptItems.id, id));
+}
+
+export async function getInventoryByPOItemId(purchaseOrderItemId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  // ابحث عن آخر حركة دخول مرتبطة بهذا الصنف
+  const txRows = await db.select({
+    inventoryId: inventoryTransactions.inventoryId,
+  })
+    .from(inventoryTransactions)
+    .where(
+      and(
+        eq(inventoryTransactions.purchaseOrderItemId, purchaseOrderItemId),
+        eq(inventoryTransactions.type, "in" as any),
+      )
+    )
+    .orderBy(desc(inventoryTransactions.id))
+    .limit(1);
+
+  if (!txRows[0]) return null;
+  const rows = await db.select().from(inventory)
+    .where(eq(inventory.id, txRows[0].inventoryId))
+    .limit(1);
+  return rows[0] || null;
+}

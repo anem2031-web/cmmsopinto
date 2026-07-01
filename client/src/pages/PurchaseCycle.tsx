@@ -14,74 +14,257 @@ import { TechnicianCombobox } from "@/components/TechnicianCombobox";
 import {
   ShoppingCart, Package, Truck, CheckCircle2, Camera, Loader2,
   Clock, ArrowLeft, ArrowRight, Image as ImageIcon, FileText,
-  AlertCircle, User, Hash, Calendar, Ban
+  AlertCircle, User, Hash, Calendar, Ban, Archive, Sparkles
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 
-export default function PurchaseCycle() {
-  const { t, language } = useTranslation();
-  const { user } = useAuth();
-  const isRTL = language === "ar" || language === "ur";
-  const role = user?.role || "";
-  const isAdminOrOwner = role === "admin" || role === "owner";
-  const isDelegate = role === "delegate" || isAdminOrOwner;
-  const isWarehouse = role === "warehouse" || isAdminOrOwner;
+// ── مكوّنات مستقلة (خارج الـ component لمنع إعادة الإنشاء) ──────
 
-  // Determine active tab based on role
-  const defaultTab = isAdminOrOwner ? "purchase" : isDelegate ? "purchase" : isWarehouse ? "warehouse" : "purchase";
-  const [activeTab, setActiveTab] = useState(defaultTab);
+const PAGE_SIZE = 10;
 
-  // Data queries - admin/owner always enabled
-  const { data: pendingEstimate = [], refetch: refetchEstimate } = trpc.purchaseOrders.pendingEstimateItems.useQuery(undefined, { enabled: isDelegate || isAdminOrOwner });
-  const { data: pendingPurchase = [], refetch: refetchPurchase } = trpc.purchaseOrders.pendingPurchaseItems.useQuery(undefined, { enabled: isDelegate || isAdminOrOwner });
-  const { data: pendingWarehouse = [], refetch: refetchWarehouse } = trpc.purchaseOrders.pendingWarehouseItems.useQuery(undefined, { enabled: isWarehouse || isAdminOrOwner });
-  const { data: pendingDelivery = [], refetch: refetchDelivery } = trpc.purchaseOrders.pendingDeliveryItems.useQuery(undefined, { enabled: isWarehouse || isAdminOrOwner });
-  const { data: allUsers = [] } = trpc.users.list.useQuery();
+function Pagination({ total, page, setPage }: { total: number; page: number; setPage: (p: number) => void }) {
+  const pages = Math.ceil(total / PAGE_SIZE);
+  if (pages <= 1) return null;
+  return (
+    <div className="flex items-center justify-center gap-1 mt-3">
+      <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>
+        ←
+      </Button>
+      {Array.from({ length: Math.min(pages, 5) }, (_, i) => {
+        const p = page <= 3 ? i + 1 : page - 2 + i;
+        if (p < 1 || p > pages) return null;
+        return (
+          <Button key={p} variant={p === page ? "default" : "outline"} size="sm" className="w-8 h-8 p-0" onClick={() => setPage(p)}>
+            {p}
+          </Button>
+        );
+      })}
+      <Button variant="outline" size="sm" disabled={page === pages} onClick={() => setPage(page + 1)}>
+        →
+      </Button>
+    </div>
+  );
+}
 
-  const refetchAll = () => { refetchEstimate(); refetchPurchase(); refetchWarehouse(); refetchDelivery(); };
+// ── مكوّن خانة البحث والتاريخ ───────────────────────────────
+function FilterBar({
+  search, setSearch, from, setFrom, to, setTo, placeholder = "بحث..."
+}: {
+  search: string; setSearch: (v: string) => void;
+  from?: string; setFrom?: (v: string) => void;
+  to?: string;   setTo?:   (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2 mb-3">
+      <div className="relative flex-1 min-w-[180px]">
+        <input
+          className="w-full border rounded-md px-3 py-1.5 text-sm pr-8 focus:outline-none focus:ring-1 focus:ring-primary"
+          placeholder={placeholder}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">🔍</span>
+      </div>
+      {setFrom && (
+        <input type="date" className="border rounded-md px-2 py-1.5 text-sm" value={from} onChange={e => { setFrom(e.target.value); }} />
+      )}
+      {setTo && (
+        <input type="date" className="border rounded-md px-2 py-1.5 text-sm" value={to} onChange={e => { setTo(e.target.value); }} />
+      )}
+      {(search || from || to) && (
+        <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => { setSearch(""); if(setFrom) setFrom(""); if(setTo) setTo(""); }}>
+          مسح
+        </Button>
+      )}
+    </div>
+  );
+}
 
-  // Mutations
-  const estimateCostMut = trpc.purchaseOrders.estimateCost.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.pricingSaved); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
-  const confirmPurchaseMut = trpc.purchaseOrders.confirmItemPurchase.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.purchased); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
-  const cancelPurchaseMut = trpc.purchaseOrders.cancelItemPurchase.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.cancelPurchaseSuccess); refetchAll(); setCancelDialog(null); setCancelNote(""); }, onError: (e: any) => toast.error(e.message) });
-  const confirmWarehouseMut = trpc.purchaseOrders.confirmDeliveryToWarehouse.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.deliveredToWarehouse); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
-  const confirmDeliveryMut = trpc.purchaseOrders.confirmDeliveryToRequester.useMutation({
-    onSuccess: (data) => {
-      toast.success(t.purchaseOrders.deliveredToRequester);
-      refetchAll();
-      setDeliveryPrintData((prev: any) => {
-        if (prev) {
-          const fullData = { ...prev, deliveryNumber: data?.deliveryNumber };
-          printDeliveryReceipt(fullData);
-          // حفظ الوثيقة — نستخدم setTimeout لأن setState callback ليس المكان المناسب لـ mutate
-          setTimeout(() => {
-            generateDocMut.mutate({
-              deliveryNumber: data?.deliveryNumber ?? "",
-              poItemId: fullData.itemId,
-              itemName: fullData.itemName,
-              deliveredByName: fullData.deliveredByName,
-              deliveredToName: fullData.deliveredToName,
-              quantity: fullData.quantity,
-              unit: fullData.unit,
-              supplierName: fullData.supplierName,
-              actualUnitCost: fullData.actualUnitCost,
-              poNumber: fullData.poNumber,
-              warehousePhotoUrl: fullData.warehousePhotoUrl,
-              notes: fullData.notes,
-              deliveredAt: fullData.deliveredAt,
-            });
-          }, 0);
-        }
-        return null;
-      });
-    },
-    onError: (e: any) => { toast.error(e.message); setDeliveryPrintData(null); },
+
+function DeliveryDocumentsTab({ deliveryDocsQuery, searchDocs, setSearchDocs, docRecipient, setDocRecipient, docDateFrom, setDocDateFrom, docDateTo, setDocDateTo, pageDocs, setPageDocs, incrementDocPrintMut }: any) {
+  const docs = deliveryDocsQuery.data ?? [];
+
+  // فلتر الوثائق
+  const recipients = [...new Set(docs.map((d: any) => d.deliveredToName).filter(Boolean))];
+  const filteredDocs = docs.filter((doc: any) => {
+    const q = searchDocs.trim().toLowerCase();
+    if (q) {
+      const fields = Object.values(doc).map(v => String(v ?? "").toLowerCase());
+      if (!fields.some(f => f.includes(q))) return false;
+    }
+    if (docRecipient !== "all" && doc.deliveredToName !== docRecipient) return false;
+    if (docDateFrom || docDateTo) {
+      const d = new Date(doc.createdAt);
+      if (docDateFrom && d < new Date(docDateFrom)) return false;
+      if (docDateTo   && d > new Date(docDateTo + "T23:59:59")) return false;
+    }
+    return true;
   });
+  const pagedDocs = filteredDocs.slice((pageDocs-1)*PAGE_SIZE, pageDocs*PAGE_SIZE);
 
-  // Estimate state
-  const [estimateValues, setEstimateValues] = useState<Record<number, string>>({});
+  const handleDownload = (doc: any) => {
+    incrementDocPrintMut.mutate({ id: doc.id });
+    // توليد PDF مباشرة في المتصفح بدون سيرفر
+    const imgTag = doc.warehousePhotoUrl
+      ? `<div class="photo-wrap"><p class="photo-label">صورة الصنف</p><img src="${doc.warehousePhotoUrl}" style="width:140px;height:140px;object-fit:cover;border-radius:8px;border:1px solid #dde3ea" /></div>`
+      : "";
 
+    const html = `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head><meta charset="UTF-8"/><title>${doc.deliveryNumber}</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Cairo',Arial,sans-serif;background:#fff;color:#1a1a1a;padding:32px 40px;font-size:13px}
+.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1e3a5f;padding-bottom:14px;margin-bottom:20px}
+.header-title{font-size:20px;font-weight:700;color:#1e3a5f}
+.header-sub{font-size:11px;color:#555;margin-top:4px}
+.header-meta{text-align:left;font-size:11px;color:#555;line-height:2}
+.badge{display:inline-block;background:#1e3a5f;color:#fff;padding:3px 10px;border-radius:4px;font-size:13px;font-weight:700}
+.parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.party-box{border:1px solid #dde3ea;border-radius:8px;padding:12px 14px}
+.party-role{font-size:10px;color:#777;margin-bottom:4px}
+.party-name{font-size:15px;font-weight:700;color:#1e3a5f}
+.section{margin-bottom:16px}
+.section-title{font-size:12px;font-weight:700;color:#1e3a5f;background:#eef3f9;padding:5px 10px;border-radius:4px;margin-bottom:10px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px}
+.field{display:flex;flex-direction:column;gap:2px}
+.field-label{font-size:10px;color:#777}
+.field-value{font-size:13px;font-weight:600;color:#111}
+.sig-section{margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:32px}
+.sig-box{border-top:1px solid #bbb;padding-top:8px;text-align:center;font-size:11px;color:#555}
+.footer{margin-top:24px;border-top:1px solid #eee;padding-top:10px;display:flex;justify-content:space-between;font-size:10px;color:#aaa}
+.print-count{font-size:11px;color:#888;background:#f4f6fa;border:1px solid #dde3ea;border-radius:20px;padding:2px 12px}
+@media print{@page{margin:10mm}}
+</style></head>
+<body>
+<div class="header">
+  <div>
+    <div class="header-title">🚚 وثيقة تسليم مواد</div>
+    <div class="header-sub">نظام إدارة الصيانة المتكامل</div>
+  </div>
+  <div class="header-meta">
+    <div>التاريخ: <strong>${new Date(doc.createdAt).toLocaleDateString("ar-SA",{year:"numeric",month:"long",day:"numeric"})}</strong></div>
+    <div><span class="badge">${doc.deliveryNumber}</span></div>
+    ${doc.poNumber ? `<div>أمر شراء: <strong>${doc.poNumber}</strong></div>` : ""}
+  </div>
+</div>
+<div class="parties">
+  <div class="party-box"><div class="party-role">المُسلِّم</div><div class="party-name">${doc.deliveredByName}</div></div>
+  <div class="party-box"><div class="party-role">المُستلِم (الفني)</div><div class="party-name">${doc.deliveredToName}</div></div>
+</div>
+<div class="section">
+  <div class="section-title">بيانات الصنف</div>
+  <div class="grid">
+    <div class="field"><span class="field-label">اسم الصنف</span><span class="field-value">${doc.itemName}</span></div>
+    <div class="field"><span class="field-label">الكمية المسلَّمة</span><span class="field-value">${doc.quantity} ${doc.unit||""}</span></div>
+    ${doc.supplierName ? `<div class="field"><span class="field-label">المورد</span><span class="field-value">${doc.supplierName}</span></div>` : ""}
+    ${doc.actualUnitCost ? `<div class="field"><span class="field-label">تكلفة الوحدة</span><span class="field-value">${parseFloat(doc.actualUnitCost).toLocaleString()} ر.س</span></div>` : ""}
+    ${doc.notes ? `<div class="field" style="grid-column:1/-1"><span class="field-label">ملاحظات</span><span class="field-value">${doc.notes}</span></div>` : ""}
+  </div>
+  ${imgTag}
+</div>
+<div class="sig-section">
+  <div class="sig-box">توقيع المُسلِّم<br/>${doc.deliveredByName}</div>
+  <div class="sig-box">توقيع المُستلِم<br/>${doc.deliveredToName}</div>
+</div>
+<div class="footer">
+  <span>وثيقة آلية — نظام CMMS</span>
+  <span class="print-count">عدد مرات الطباعة: <strong>${doc.printCount + 1}</strong></span>
+</div>
+<script>window.onload=()=>{window.print();window.onafterprint=()=>window.close();}<\/script>
+</body></html>`;
+
+    const win = window.open("", "_blank", "width=860,height=780");
+    if (win) { win.document.write(html); win.document.close(); }
+  };
+
+  if (deliveryDocsQuery.isLoading) {
+    return <Card><CardContent className="p-8 text-center text-muted-foreground">جاري التحميل...</CardContent></Card>;
+  }
+
+  if (docs.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-8 text-center text-muted-foreground">
+          <FileText className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p className="font-medium">لا توجد وثائق تسليم بعد</p>
+          <p className="text-xs mt-1">ستظهر هنا كل وثيقة عند تأكيد تسليم مادة للفني</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* فلاتر تبويب الوثائق */}
+      <div className="flex flex-wrap gap-2 mb-3">
+        <div className="relative flex-1 min-w-[180px]">
+          <input
+            className="w-full border rounded-md px-3 py-1.5 text-sm pr-8 focus:outline-none focus:ring-1 focus:ring-primary"
+            placeholder="بحث في الوثائق..."
+            defaultValue={searchDocs}
+            onInput={e => { setSearchDocs((e.target as HTMLInputElement).value); setPageDocs(1); }}
+          />
+          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">🔍</span>
+        </div>
+        <select
+          className="border rounded-md px-2 py-1.5 text-sm bg-white"
+          value={docRecipient}
+          onChange={e => { setDocRecipient(e.target.value); setPageDocs(1); }}
+        >
+          <option value="all">كل المستلمين</option>
+          {recipients.map((r: any) => <option key={r} value={r}>{r}</option>)}
+        </select>
+        <input type="date" className="border rounded-md px-2 py-1.5 text-sm" value={docDateFrom} onChange={e => { setDocDateFrom(e.target.value); setPageDocs(1); }} />
+        <input type="date" className="border rounded-md px-2 py-1.5 text-sm" value={docDateTo} onChange={e => { setDocDateTo(e.target.value); setPageDocs(1); }} />
+        {(searchDocs || docRecipient !== "all" || docDateFrom || docDateTo) && (
+          <button className="text-xs text-muted-foreground underline" onClick={() => { setSearchDocs(""); setDocRecipient("all"); setDocDateFrom(""); setDocDateTo(""); setPageDocs(1); }}>مسح</button>
+        )}
+      </div>
+      <div className="text-sm text-muted-foreground">{filteredDocs.length} وثيقة{filteredDocs.length !== docs.length ? ` من ${docs.length}` : ""}</div>
+      {pagedDocs.map((doc: any) => (
+        <Card key={doc.id} className="hover:shadow-md transition-shadow border-r-4 border-r-primary/60">
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0 space-y-1">
+                {/* العنوان = اسم الصنف */}
+                <p className="font-semibold text-base truncate">{doc.itemName}</p>
+                <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                  {/* رقم الوثيقة */}
+                  <span className="bg-primary/10 text-primary font-bold px-2 py-0.5 rounded">
+                    {doc.deliveryNumber}
+                  </span>
+                  {/* التاريخ */}
+                  <span>{new Date(doc.createdAt).toLocaleDateString("ar-SA", { year: "numeric", month: "short", day: "numeric" })}</span>
+                  <span>المُسلِّم: {doc.deliveredByName}</span>
+                  <span>المُستلِم: {doc.deliveredToName}</span>
+                  <span>الكمية: {doc.quantity} {doc.unit || ""}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  طُبعت {doc.printCount} {doc.printCount === 1 ? "مرة" : "مرات"}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 shrink-0"
+                onClick={() => handleDownload(doc)}
+                disabled={false}
+              >
+                <FileText className="w-4 h-4" />
+                "تنزيل PDF"
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+export default function PurchaseCycle() {
   // Dialog states
   const [purchaseDialog, setPurchaseDialog] = useState<any>(null);
   const [cancelDialog, setCancelDialog] = useState<any>(null);
@@ -100,8 +283,10 @@ export default function PurchaseCycle() {
   // Upload states
   const [uploading, setUploading] = useState<string | null>(null);
   const [purchasePhotos, setPurchasePhotos] = useState<{ purchased?: string; invoice?: string }>({});
-  const [warehouseForm, setWarehouseForm] = useState({ supplierName: "", supplierItemName: "", actualUnitCost: "", warehousePhotoUrl: "" });
+  const [warehouseForm, setWarehouseForm] = useState({ receivedQuantity: "", supplierInvoiceNumber: "", warehousePhotoUrl: "" });
   const [deliveryUserId, setDeliveryUserId] = useState<string>("");
+  const [deliveryQty, setDeliveryQty]       = useState<string>("");
+  const [deliveryUnit, setDeliveryUnit]     = useState<string>("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentUploadTarget = useRef<string>("");
@@ -142,6 +327,153 @@ export default function PurchaseCycle() {
   const sortByDate = (items: any[]) => [...items].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
   // Step indicator component
+
+  const { t, language } = useTranslation();
+  const { user } = useAuth();
+  const isRTL = language === "ar" || language === "ur";
+  const role = user?.role || "";
+  const isAdminOrOwner = role === "admin" || role === "owner";
+  const isDelegate = role === "delegate" || isAdminOrOwner;
+  const isWarehouse = role === "warehouse" || isAdminOrOwner;
+
+  // Determine active tab based on role
+  const defaultTab = isAdminOrOwner ? "purchase" : isDelegate ? "purchase" : isWarehouse ? "warehouse" : "purchase";
+  const [activeTab, setActiveTab] = useState(defaultTab);
+
+  // Data queries - admin/owner always enabled
+  const { data: pendingEstimate = [], refetch: refetchEstimate } = trpc.purchaseOrders.pendingEstimateItems.useQuery(undefined, { enabled: isDelegate || isAdminOrOwner });
+  const { data: pendingPurchase = [], refetch: refetchPurchase } = trpc.purchaseOrders.pendingPurchaseItems.useQuery(undefined, { enabled: isDelegate || isAdminOrOwner });
+  const { data: pendingWarehouse = [], refetch: refetchWarehouse } = trpc.purchaseOrders.pendingWarehouseItems.useQuery(undefined, { enabled: isWarehouse || isAdminOrOwner });
+  const { data: pendingDelivery = [], refetch: refetchDelivery } = trpc.purchaseOrders.pendingDeliveryItems.useQuery(undefined, { enabled: isWarehouse || isAdminOrOwner });
+  // أصناف المخزون الجاهزة للتسليم (من OCR الفعلي)
+  const { data: inventoryItems = [], refetch: refetchInventory } = trpc.purchaseOrders.inventoryReadyForDelivery.useQuery(undefined, { enabled: isWarehouse || isAdminOrOwner });
+  // إدخال المخزون — أصناف وصلت للمستودع وبانتظار إدخال المخزون
+  const pendingInventoryEntry = (pendingDelivery as any[]).filter((i: any) => !i.inventoryEntered);
+  // تجميع حسب رقم فاتورة المورد (وليس اسم المورد — أدق لأنه مكتوب مباشرة من الفاتورة الورقية)
+  const groupedByInvoiceNumber = (pendingDelivery as any[]).reduce((groups: any, item: any) => {
+    const key = item.supplierInvoiceNumber || "بدون رقم فاتورة";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(item);
+    return groups;
+  }, {});
+  const { data: allUsers = [] } = trpc.users.list.useQuery();
+
+  const refetchAll = () => { refetchEstimate(); refetchPurchase(); refetchWarehouse(); refetchDelivery(); };
+
+  // Mutations
+  const estimateCostMut = trpc.purchaseOrders.estimateCost.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.pricingSaved); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
+  const confirmPurchaseMut = trpc.purchaseOrders.confirmItemPurchase.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.purchased); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
+  const cancelPurchaseMut = trpc.purchaseOrders.cancelItemPurchase.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.cancelPurchaseSuccess); refetchAll(); setCancelDialog(null); setCancelNote(""); }, onError: (e: any) => toast.error(e.message) });
+  const confirmWarehouseMut = trpc.purchaseOrders.confirmDeliveryToWarehouse.useMutation({ onSuccess: () => { toast.success(t.purchaseOrders.deliveredToWarehouse); refetchAll(); }, onError: (e: any) => toast.error(e.message) });
+  const deliverInventoryMut = trpc.purchaseOrders.deliverInventoryItem.useMutation({
+    onSuccess: (data) => {
+      toast.success(t.purchaseOrders.deliveredToRequester);
+      refetchInventory();
+      refetchDelivery();
+      setDeliveryPrintData((prev: any) => {
+        if (prev) {
+          const fullData = { ...prev, deliveryNumber: data?.deliveryNumber };
+          printDeliveryReceipt(fullData);
+          setTimeout(() => {
+            generateDocMut.mutate({
+              deliveryNumber:    data?.deliveryNumber ?? "",
+              poItemId:          fullData.itemId,
+              itemName:          fullData.itemName,
+              deliveredByName:   fullData.deliveredByName,
+              deliveredToName:   fullData.deliveredToName,
+              quantity:          fullData.quantity,
+              unit:              fullData.unit,
+              supplierName:      fullData.supplierName,
+              actualUnitCost:    fullData.actualUnitCost,
+              poNumber:          fullData.poNumber,
+              warehousePhotoUrl: fullData.warehousePhotoUrl,
+              notes:             fullData.notes,
+              deliveredAt:       fullData.deliveredAt,
+            });
+          }, 0);
+        }
+        return null;
+      });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const confirmDeliveryMut = trpc.purchaseOrders.confirmDeliveryToRequester.useMutation({
+    onSuccess: (data) => {
+      toast.success(t.purchaseOrders.deliveredToRequester);
+      refetchAll();
+      setDeliveryPrintData((prev: any) => {
+        if (prev) {
+          const fullData = { ...prev, deliveryNumber: data?.deliveryNumber };
+          printDeliveryReceipt(fullData);
+          // حفظ الوثيقة — نستخدم setTimeout لأن setState callback ليس المكان المناسب لـ mutate
+          setTimeout(() => {
+            generateDocMut.mutate({
+              deliveryNumber: data?.deliveryNumber ?? "",
+              poItemId: fullData.itemId,
+              itemName: fullData.itemName,
+              deliveredByName: fullData.deliveredByName,
+              deliveredToName: fullData.deliveredToName,
+              quantity: fullData.quantity,
+              unit: fullData.unit,
+              supplierName: fullData.supplierName,
+              actualUnitCost: fullData.actualUnitCost,
+              poNumber: fullData.poNumber,
+              warehousePhotoUrl: fullData.warehousePhotoUrl,
+              notes: fullData.notes,
+              deliveredAt: fullData.deliveredAt,
+            });
+          }, 0);
+        }
+        return null;
+      });
+    },
+    onError: (e: any) => { toast.error(e.message); setDeliveryPrintData(null); },
+  });
+
+  // Estimate state
+  const [estimateValues, setEstimateValues] = useState<Record<number, string>>({});
+
+  // ── فلاتر كل تبويب ──────────────────────────────────────────
+  const [searchEstimate,   setSearchEstimate]   = useState("");
+  const [searchPurchase,   setSearchPurchase]   = useState("");
+  const [searchWarehouse,  setSearchWarehouse]  = useState("");
+  const [searchDelivery,   setSearchDelivery]   = useState("");
+  const [searchDocs,       setSearchDocs]       = useState("");
+
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo,   setDateTo]   = useState("");
+  const [docDateFrom, setDocDateFrom] = useState("");
+  const [docDateTo,   setDocDateTo]   = useState("");
+  const [docRecipient, setDocRecipient] = useState("all");
+
+  // ── صفحات ──────────────────────────────────────────────────
+  const [pageEstimate,  setPageEstimate]  = useState(1);
+  const [pagePurchase,  setPagePurchase]  = useState(1);
+  const [pageWarehouse, setPageWarehouse] = useState(1);
+  const [pageDelivery,  setPageDelivery]  = useState(1);
+  const [pageDocs,      setPageDocs]      = useState(1);
+
+  // ── دالة الفلترة الشاملة ────────────────────────────────────
+  const filterItems = (items: any[], search: string, from?: string, to?: string) => {
+    const q = search.trim().toLowerCase();
+    return items.filter(item => {
+      // فلتر البحث النصي — يبحث في كل الحقول
+      if (q) {
+        const fields = Object.values(item).map(v => String(v ?? "").toLowerCase());
+        if (!fields.some(f => f.includes(q))) return false;
+      }
+      // فلتر التاريخ
+      if (from || to) {
+        const d = new Date(item.createdAt || item.deliveredAt || item.date || 0);
+        if (from && d < new Date(from)) return false;
+        if (to   && d > new Date(to + "T23:59:59")) return false;
+      }
+      return true;
+    });
+  };
+
+  // ── مكوّن الصفحات ───────────────────────────────────────────
   const StepIndicator = ({ currentStep }: { currentStep: number }) => {
     const steps = [
       { num: 1, label: t.purchaseOrders.step1Purchase, icon: ShoppingCart },
@@ -245,144 +577,6 @@ export default function PurchaseCycle() {
   };
 
   // ── تبويب الوثائق ─────────────────────────────────────────
-  const DeliveryDocumentsTab = () => {
-    const docs = deliveryDocsQuery.data ?? [];
-
-    const handleDownload = (doc: any) => {
-      incrementDocPrintMut.mutate({ id: doc.id });
-      // توليد PDF مباشرة في المتصفح بدون سيرفر
-      const imgTag = doc.warehousePhotoUrl
-        ? `<div class="photo-wrap"><p class="photo-label">صورة الصنف</p><img src="${doc.warehousePhotoUrl}" style="width:140px;height:140px;object-fit:cover;border-radius:8px;border:1px solid #dde3ea" /></div>`
-        : "";
-
-      const html = `<!DOCTYPE html>
-<html dir="rtl" lang="ar">
-<head><meta charset="UTF-8"/><title>${doc.deliveryNumber}</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Cairo',Arial,sans-serif;background:#fff;color:#1a1a1a;padding:32px 40px;font-size:13px}
-  .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1e3a5f;padding-bottom:14px;margin-bottom:20px}
-  .header-title{font-size:20px;font-weight:700;color:#1e3a5f}
-  .header-sub{font-size:11px;color:#555;margin-top:4px}
-  .header-meta{text-align:left;font-size:11px;color:#555;line-height:2}
-  .badge{display:inline-block;background:#1e3a5f;color:#fff;padding:3px 10px;border-radius:4px;font-size:13px;font-weight:700}
-  .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
-  .party-box{border:1px solid #dde3ea;border-radius:8px;padding:12px 14px}
-  .party-role{font-size:10px;color:#777;margin-bottom:4px}
-  .party-name{font-size:15px;font-weight:700;color:#1e3a5f}
-  .section{margin-bottom:16px}
-  .section-title{font-size:12px;font-weight:700;color:#1e3a5f;background:#eef3f9;padding:5px 10px;border-radius:4px;margin-bottom:10px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px}
-  .field{display:flex;flex-direction:column;gap:2px}
-  .field-label{font-size:10px;color:#777}
-  .field-value{font-size:13px;font-weight:600;color:#111}
-  .sig-section{margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:32px}
-  .sig-box{border-top:1px solid #bbb;padding-top:8px;text-align:center;font-size:11px;color:#555}
-  .footer{margin-top:24px;border-top:1px solid #eee;padding-top:10px;display:flex;justify-content:space-between;font-size:10px;color:#aaa}
-  .print-count{font-size:11px;color:#888;background:#f4f6fa;border:1px solid #dde3ea;border-radius:20px;padding:2px 12px}
-  @media print{@page{margin:10mm}}
-</style></head>
-<body>
-  <div class="header">
-    <div>
-      <div class="header-title">🚚 وثيقة تسليم مواد</div>
-      <div class="header-sub">نظام إدارة الصيانة المتكامل</div>
-    </div>
-    <div class="header-meta">
-      <div>التاريخ: <strong>${new Date(doc.createdAt).toLocaleDateString("ar-SA",{year:"numeric",month:"long",day:"numeric"})}</strong></div>
-      <div><span class="badge">${doc.deliveryNumber}</span></div>
-      ${doc.poNumber ? `<div>أمر شراء: <strong>${doc.poNumber}</strong></div>` : ""}
-    </div>
-  </div>
-  <div class="parties">
-    <div class="party-box"><div class="party-role">المُسلِّم</div><div class="party-name">${doc.deliveredByName}</div></div>
-    <div class="party-box"><div class="party-role">المُستلِم (الفني)</div><div class="party-name">${doc.deliveredToName}</div></div>
-  </div>
-  <div class="section">
-    <div class="section-title">بيانات الصنف</div>
-    <div class="grid">
-      <div class="field"><span class="field-label">اسم الصنف</span><span class="field-value">${doc.itemName}</span></div>
-      <div class="field"><span class="field-label">الكمية المسلَّمة</span><span class="field-value">${doc.quantity} ${doc.unit||""}</span></div>
-      ${doc.supplierName ? `<div class="field"><span class="field-label">المورد</span><span class="field-value">${doc.supplierName}</span></div>` : ""}
-      ${doc.actualUnitCost ? `<div class="field"><span class="field-label">تكلفة الوحدة</span><span class="field-value">${parseFloat(doc.actualUnitCost).toLocaleString()} ر.س</span></div>` : ""}
-      ${doc.notes ? `<div class="field" style="grid-column:1/-1"><span class="field-label">ملاحظات</span><span class="field-value">${doc.notes}</span></div>` : ""}
-    </div>
-    ${imgTag}
-  </div>
-  <div class="sig-section">
-    <div class="sig-box">توقيع المُسلِّم<br/>${doc.deliveredByName}</div>
-    <div class="sig-box">توقيع المُستلِم<br/>${doc.deliveredToName}</div>
-  </div>
-  <div class="footer">
-    <span>وثيقة آلية — نظام CMMS</span>
-    <span class="print-count">عدد مرات الطباعة: <strong>${doc.printCount + 1}</strong></span>
-  </div>
-  <script>window.onload=()=>{window.print();window.onafterprint=()=>window.close();}<\/script>
-</body></html>`;
-
-      const win = window.open("", "_blank", "width=860,height=780");
-      if (win) { win.document.write(html); win.document.close(); }
-    };
-
-    if (deliveryDocsQuery.isLoading) {
-      return <Card><CardContent className="p-8 text-center text-muted-foreground">جاري التحميل...</CardContent></Card>;
-    }
-
-    if (docs.length === 0) {
-      return (
-        <Card>
-          <CardContent className="p-8 text-center text-muted-foreground">
-            <FileText className="w-10 h-10 mx-auto mb-3 opacity-30" />
-            <p className="font-medium">لا توجد وثائق تسليم بعد</p>
-            <p className="text-xs mt-1">ستظهر هنا كل وثيقة عند تأكيد تسليم مادة للفني</p>
-          </CardContent>
-        </Card>
-      );
-    }
-
-    return (
-      <div className="space-y-3">
-        <div className="text-sm text-muted-foreground">{docs.length} وثيقة محفوظة</div>
-        {docs.map((doc: any) => (
-          <Card key={doc.id} className="hover:shadow-md transition-shadow border-r-4 border-r-primary/60">
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0 space-y-1">
-                  {/* العنوان = اسم الصنف */}
-                  <p className="font-semibold text-base truncate">{doc.itemName}</p>
-                  <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                    {/* رقم الوثيقة */}
-                    <span className="bg-primary/10 text-primary font-bold px-2 py-0.5 rounded">
-                      {doc.deliveryNumber}
-                    </span>
-                    {/* التاريخ */}
-                    <span>{new Date(doc.createdAt).toLocaleDateString("ar-SA", { year: "numeric", month: "short", day: "numeric" })}</span>
-                    <span>المُسلِّم: {doc.deliveredByName}</span>
-                    <span>المُستلِم: {doc.deliveredToName}</span>
-                    <span>الكمية: {doc.quantity} {doc.unit || ""}</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    طُبعت {doc.printCount} {doc.printCount === 1 ? "مرة" : "مرات"}
-                  </div>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5 shrink-0"
-                  onClick={() => handleDownload(doc)}
-                  disabled={false}
-                >
-                  <FileText className="w-4 h-4" />
-                  "تنزيل PDF"
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    );
-  };
 
   // ── وثيقة تسليم المواد للفني ──────────────────────────────
   const printDeliveryReceipt = (data: {
@@ -576,7 +770,7 @@ export default function PurchaseCycle() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="estimate" className="gap-1.5">
             <Clock className="w-4 h-4" />
             <span className="hidden sm:inline">التسعير</span>
@@ -592,10 +786,15 @@ export default function PurchaseCycle() {
             <span className="hidden sm:inline">{t.purchaseOrders.step2Warehouse}</span>
             {pendingWarehouse.length > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">{pendingWarehouse.length}</Badge>}
           </TabsTrigger>
+          <TabsTrigger value="inventory-entry" className="gap-1.5">
+            <Archive className="w-4 h-4" />
+            <span className="hidden sm:inline">إدخال المخزون</span>
+            {Object.keys(groupedByInvoiceNumber).length > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">{pendingDelivery.length}</Badge>}
+          </TabsTrigger>
           <TabsTrigger value="delivery" className="gap-1.5">
             <Truck className="w-4 h-4" />
             <span className="hidden sm:inline">{t.purchaseOrders.step3Delivery}</span>
-            {pendingDelivery.length > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">{pendingDelivery.length}</Badge>}
+            {(inventoryItems as any[]).length > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">{(inventoryItems as any[]).length}</Badge>}
           </TabsTrigger>
           <TabsTrigger value="documents" className="gap-1.5">
             <FileText className="w-4 h-4" />
@@ -605,14 +804,15 @@ export default function PurchaseCycle() {
 
         {/* ==================== TAB 0: Estimate (Delegate - Revision Items) ==================== */}
         <TabsContent value="estimate" className="mt-4 space-y-4">
-          {pendingEstimate.length === 0 ? (
+          <FilterBar search={searchEstimate} setSearch={v => { setSearchEstimate(v); setPageEstimate(1); }} from={dateFrom} setFrom={v => { setDateFrom(v); setPageEstimate(1); }} to={dateTo} setTo={v => { setDateTo(v); setPageEstimate(1); }} placeholder="بحث في الأصناف..." />
+          {filterItems(sortByDate(pendingEstimate), searchEstimate, dateFrom, dateTo).length === 0 ? (
             <Card><CardContent className="p-8 text-center text-muted-foreground">
               <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-green-500" />
               <p className="font-medium">لا توجد أصناف بانتظار التسعير</p>
             </CardContent></Card>
           ) : (
-            <div className="space-y-3">
-              {sortByDate(pendingEstimate).map((item: any) => (
+            <><div className="space-y-3">
+              {filterItems(sortByDate(pendingEstimate), searchEstimate, dateFrom, dateTo).slice((pageEstimate-1)*PAGE_SIZE, pageEstimate*PAGE_SIZE).map((item: any) => (
                 <Card key={item.id} className="border-amber-200 bg-amber-50">
                   <CardContent className="p-4 space-y-3">
                     <div className="flex items-start justify-between gap-2">
@@ -668,7 +868,7 @@ export default function PurchaseCycle() {
                 </Card>
               ))}
             </div>
-          )}
+            <Pagination total={filterItems(pendingEstimate, searchEstimate, dateFrom, dateTo).length} page={pageEstimate} setPage={setPageEstimate} /></>)}
         </TabsContent>
 
         {/* ==================== TAB 1: Purchase (Delegate) ==================== */}
@@ -680,15 +880,15 @@ export default function PurchaseCycle() {
               <p className="font-medium">{t.purchaseOrders.noItemsPending}</p>
             </CardContent></Card>
           ) : (
-            <div className="space-y-3">
-              {sortByDate(pendingPurchase).map((item: any) => (
+            <><div className="space-y-3">
+              {filterItems(sortByDate(pendingPurchase), searchPurchase, dateFrom, dateTo).slice((pagePurchase-1)*PAGE_SIZE, pagePurchase*PAGE_SIZE).map((item: any) => (
                 <ItemCard key={item.id} item={item} step={1} onAction={() => {
                   setPurchasePhotos({});
                   setPurchaseDialog(item);
                 }} />
               ))}
             </div>
-          )}
+            <Pagination total={filterItems(pendingPurchase, searchPurchase, dateFrom, dateTo).length} page={pagePurchase} setPage={setPagePurchase} /></>)}
         </TabsContent>
 
         {/* ==================== TAB 2: Warehouse Receiving ==================== */}
@@ -700,12 +900,65 @@ export default function PurchaseCycle() {
               <p className="font-medium">{t.purchaseOrders.noItemsPending}</p>
             </CardContent></Card>
           ) : (
-            <div className="space-y-3">
-              {sortByDate(pendingWarehouse).map((item: any) => (
+            <><div className="space-y-3">
+              {filterItems(sortByDate(pendingWarehouse), searchWarehouse, dateFrom, dateTo).slice((pageWarehouse-1)*PAGE_SIZE, pageWarehouse*PAGE_SIZE).map((item: any) => (
                 <ItemCard key={item.id} item={item} step={2} onAction={() => {
-                  setWarehouseForm({ supplierName: "", supplierItemName: "", actualUnitCost: "", warehousePhotoUrl: "" });
+                  setWarehouseForm({ receivedQuantity: String(item.quantity || ""), supplierInvoiceNumber: "", warehousePhotoUrl: "" });
                   setWarehouseDialog(item);
                 }} />
+              ))}
+            </div>
+            <Pagination total={filterItems(pendingWarehouse, searchWarehouse, dateFrom, dateTo).length} page={pageWarehouse} setPage={setPageWarehouse} /></>)}
+        </TabsContent>
+
+        {/* ==================== TAB NEW: إدخال المخزون ==================== */}
+        <TabsContent value="inventory-entry" className="mt-4 space-y-4">
+          <StepIndicator currentStep={3} />
+          {Object.keys(groupedByInvoiceNumber).length === 0 ? (
+            <Card><CardContent className="p-8 text-center text-muted-foreground">
+              <Archive className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
+              <p className="font-medium">لا توجد أصناف بانتظار إدخال المخزون</p>
+              <p className="text-xs mt-1">يجب أولاً تأكيد التوريد للمستودع</p>
+            </CardContent></Card>
+          ) : (
+            <div className="space-y-4">
+              {Object.entries(groupedByInvoiceNumber).map(([invoiceNumber, items]: [string, any]) => (
+                <Card key={invoiceNumber} className="border-emerald-200">
+                  <CardContent className="pt-4 pb-4">
+                    {/* رأس المجموعة */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Package className="w-4 h-4 text-emerald-600" />
+                        <div>
+                          <p className="font-semibold text-sm font-mono">{invoiceNumber}</p>
+                          <p className="text-xs text-muted-foreground">{items.length} صنف من نفس الفاتورة</p>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+                        onClick={() => {
+                          const poId = items[0]?.purchaseOrderId;
+                          if (poId) window.location.href = `/warehouse/receive-v2?poId=${poId}&invoiceNumber=${encodeURIComponent(invoiceNumber)}`;
+                        }}
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        رفع فاتورة المورد
+                      </Button>
+                    </div>
+                    {/* قائمة الأصناف */}
+                    <div className="space-y-1.5 border-t pt-3">
+                      {items.map((item: any) => (
+                        <div key={item.id} className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground truncate flex-1">{item.itemName}</span>
+                          <span className="font-mono text-xs text-muted-foreground mr-2">
+                            {item.receivedQuantity ?? item.quantity} {item.unit}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
               ))}
             </div>
           )}
@@ -714,28 +967,80 @@ export default function PurchaseCycle() {
         {/* ==================== TAB 3: Delivery to Assigned Technician ==================== */}
         <TabsContent value="delivery" className="mt-4 space-y-4">
           <StepIndicator currentStep={3} />
-          {pendingDelivery.length === 0 ? (
+          <FilterBar search={searchDelivery} setSearch={v => { setSearchDelivery(v); setPageDelivery(1); }} from={dateFrom} setFrom={v => { setDateFrom(v); setPageDelivery(1); }} to={dateTo} setTo={v => { setDateTo(v); setPageDelivery(1); }} placeholder="بحث في أصناف التسليم..." />
+          {filterItems(inventoryItems as any[], searchDelivery, dateFrom, dateTo).length === 0 ? (
             <Card><CardContent className="p-8 text-center text-muted-foreground">
               <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-green-500" />
               <p className="font-medium">{t.purchaseOrders.noItemsPending}</p>
+              <p className="text-xs mt-1">لا توجد أصناف في المخزون جاهزة للتسليم</p>
             </CardContent></Card>
           ) : (
-            <div className="space-y-3">
-              {sortByDate(pendingDelivery).map((item: any) => (
-                <ItemCard key={item.id} item={item} step={3} onAction={() => {
-                  // Preselect the assigned technician from the linked ticket
-                  const preselect = item.ticketAssignedToId ? String(item.ticketAssignedToId) : "";
-                  setDeliveryUserId(preselect);
-                  setDeliveryDialog(item);
-                }} />
+            <><div className="space-y-3">
+              {filterItems(inventoryItems as any[], searchDelivery, dateFrom, dateTo).slice((pageDelivery-1)*PAGE_SIZE, pageDelivery*PAGE_SIZE).map((item: any) => (
+                <Card key={item.id} className="hover:shadow-md transition-shadow">
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        {/* اسم الصنف من OCR */}
+                        <p className="font-medium text-sm">{item.itemName}</p>
+                        {item.itemName_en && <p className="text-xs text-muted-foreground">{item.itemName_en}</p>}
+                        <div className="flex flex-wrap gap-2 mt-1.5 text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            <Package className="w-3 h-3" />
+                            {item.quantity} {item.unit}
+                          </span>
+                          {item.vendorName && (
+                            <span className="flex items-center gap-1">
+                              🏪 {item.vendorName}
+                            </span>
+                          )}
+                          {item.poNumber && (
+                            <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded">
+                              {item.poNumber}
+                            </span>
+                          )}
+                          {item.averageCost > 0 && (
+                            <span className="font-mono">{parseFloat(item.averageCost).toFixed(2)} ر.س</span>
+                          )}
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        className="gap-1.5 shrink-0"
+                        onClick={() => {
+                          const preselect = item.ticketAssignedToId ? String(item.ticketAssignedToId) : "";
+                          setDeliveryUserId(preselect);
+                          setDeliveryQty(String(item.quantity || ""));
+                          setDeliveryUnit(item.unit || "قطعة");
+                          // نمرر بيانات الصنف من المخزون للـ dialog
+                          setDeliveryDialog({
+                            ...item,
+                            id:           item.id,
+                            itemName:     item.itemName,
+                            quantity:     item.quantity,
+                            unit:         item.unit,
+                            supplierName: item.vendorName,
+                            actualUnitCost: item.averageCost,
+                            isInventoryItem: true,
+                          });
+                        }}
+                      >
+                        <Truck className="w-3.5 h-3.5" />
+                        تسليم للفني
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
               ))}
+
+
             </div>
-          )}
+            <Pagination total={filterItems(inventoryItems as any[], searchDelivery, dateFrom, dateTo).length} page={pageDelivery} setPage={setPageDelivery} /></>)}
         </TabsContent>
 
         {/* ==================== TAB 5: Delivery Documents ==================== */}
         <TabsContent value="documents" className="mt-4">
-          <DeliveryDocumentsTab />
+          <DeliveryDocumentsTab deliveryDocsQuery={deliveryDocsQuery} searchDocs={searchDocs} setSearchDocs={setSearchDocs} docRecipient={docRecipient} setDocRecipient={setDocRecipient} docDateFrom={docDateFrom} setDocDateFrom={setDocDateFrom} docDateTo={docDateTo} setDocDateTo={setDocDateTo} pageDocs={pageDocs} setPageDocs={setPageDocs} incrementDocPrintMut={incrementDocPrintMut} />
         </TabsContent>
       </Tabs>
 
@@ -920,21 +1225,13 @@ export default function PurchaseCycle() {
               {/* Form fields */}
               <div className="space-y-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t.purchaseOrders.supplier} *</Label>
-                  <Input value={warehouseForm.supplierName} onChange={e => setWarehouseForm(p => ({ ...p, supplierName: e.target.value }))} placeholder={t.purchaseOrders.supplier} />
+                  <Label className="text-xs">{t.purchaseOrders.quantity} *</Label>
+                  <Input type="number" min={1} value={warehouseForm.receivedQuantity} onChange={e => setWarehouseForm(p => ({ ...p, receivedQuantity: e.target.value }))} placeholder="0" />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t.purchaseOrders.supplierItemName} *</Label>
-                  <Input value={warehouseForm.supplierItemName} onChange={e => setWarehouseForm(p => ({ ...p, supplierItemName: e.target.value }))} placeholder={t.purchaseOrders.supplierItemName} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{t.purchaseOrders.itemCost} (ر.س) *</Label>
-                  <Input type="number" value={warehouseForm.actualUnitCost} onChange={e => setWarehouseForm(p => ({ ...p, actualUnitCost: e.target.value }))} placeholder="0.00" />
-                  {warehouseForm.actualUnitCost && (
-                    <p className="text-xs text-emerald-600 bg-emerald-50 rounded p-1.5">
-                      {t.purchaseOrders.actualTotal}: <strong>{(parseFloat(warehouseForm.actualUnitCost) * warehouseDialog.quantity).toLocaleString()} ر.س</strong>
-                    </p>
-                  )}
+                  <Label className="text-xs">رقم فاتورة المورد *</Label>
+                  <Input value={warehouseForm.supplierInvoiceNumber} onChange={e => setWarehouseForm(p => ({ ...p, supplierInvoiceNumber: e.target.value }))} placeholder="رقم فاتورة المورد" dir="ltr" className="font-mono" />
+                  <p className="text-[10px] text-muted-foreground">يُستخدم لاحقاً لتجميع الأصناف من نفس الفاتورة عند إدخال المخزون</p>
                 </div>
 
                 {/* Warehouse photo */}
@@ -959,13 +1256,12 @@ export default function PurchaseCycle() {
             <Button variant="outline" onClick={() => setWarehouseDialog(null)}>{t.common.cancel}</Button>
             <Button
               className="gap-1.5"
-              disabled={!warehouseForm.supplierName || !warehouseForm.actualUnitCost || !warehouseForm.warehousePhotoUrl || confirmWarehouseMut.isPending}
+              disabled={!warehouseForm.receivedQuantity || parseFloat(warehouseForm.receivedQuantity) <= 0 || !warehouseForm.supplierInvoiceNumber || !warehouseForm.warehousePhotoUrl || confirmWarehouseMut.isPending}
               onClick={() => {
                 confirmWarehouseMut.mutate({
                   itemId: warehouseDialog.id,
-                  supplierName: warehouseForm.supplierName,
-                  supplierItemName: warehouseForm.supplierItemName,
-                  actualUnitCost: warehouseForm.actualUnitCost,
+                  receivedQuantity: parseFloat(warehouseForm.receivedQuantity),
+                  supplierInvoiceNumber: warehouseForm.supplierInvoiceNumber,
                   warehousePhotoUrl: warehouseForm.warehousePhotoUrl,
                 });
                 setWarehouseDialog(null);
@@ -1022,6 +1318,34 @@ export default function PurchaseCycle() {
                 )}
               </div>
 
+              {/* الكمية والوحدة */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">الكمية المُسلَّمة *</Label>
+                  <Input
+                    type="number"
+                    min={0.001}
+                    step={0.5}
+                    dir="ltr"
+                    placeholder="0"
+                    value={deliveryQty}
+                    onChange={e => setDeliveryQty(e.target.value)}
+                    className="font-mono"
+                  />
+                  {deliveryQty && parseFloat(deliveryQty) <= 0 && (
+                    <p className="text-xs text-destructive">الكمية يجب أن تكون أكبر من صفر</p>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">الوحدة</Label>
+                  <Input
+                    value={deliveryUnit}
+                    onChange={e => setDeliveryUnit(e.target.value)}
+                    placeholder="قطعة / كيلو / كرتون"
+                  />
+                </div>
+              </div>
+
               {/* Select technician to deliver to - preselected from ticket assignment */}
               <div className="space-y-1.5">
                 <Label className="text-xs flex items-center gap-1"><User className="w-3.5 h-3.5" /> الفني المسند</Label>
@@ -1051,12 +1375,22 @@ export default function PurchaseCycle() {
               className="gap-1.5"
               disabled={confirmDeliveryMut.isPending}
               onClick={() => {
-                // حفظ بيانات الطباعة قبل الإرسال
+                // التحقق من الكمية أولاً
+                const qty = parseFloat(deliveryQty);
+                if (!deliveryQty || isNaN(qty) || qty <= 0) {
+                  toast.error("يرجى إدخال كمية صحيحة أكبر من صفر");
+                  return;
+                }
+                if (qty > (deliveryDialog.quantity || 0)) {
+                  toast.error(`الكمية المطلوبة (${qty}) أكبر من الكمية المتاحة (${deliveryDialog.quantity})`);
+                  return;
+                }
+                // حفظ بيانات الطباعة
                 const selectedUser = allUsers.find((u: any) => String(u.id) === deliveryUserId);
                 setDeliveryPrintData({
                   itemName: deliveryDialog.itemName,
-                  quantity: deliveryDialog.quantity,
-                  unit: deliveryDialog.unit || "",
+                  quantity: qty,
+                  unit: deliveryUnit || deliveryDialog.unit || "",
                   supplierName: deliveryDialog.supplierName,
                   actualUnitCost: deliveryDialog.actualUnitCost,
                   warehousePhotoUrl: deliveryDialog.warehousePhotoUrl ? mediaUrl(deliveryDialog.warehousePhotoUrl) : undefined,
@@ -1067,10 +1401,21 @@ export default function PurchaseCycle() {
                   initialPrintCount: deliveryDialog.printCount ?? 0,
                   deliveredAt: new Date().toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" }),
                 });
-                confirmDeliveryMut.mutate({
-                  itemId: deliveryDialog.id,
-                  deliveredToId: deliveryUserId ? parseInt(deliveryUserId) : undefined,
-                });
+                if (deliveryDialog.isInventoryItem) {
+                  deliverInventoryMut.mutate({
+                    inventoryId:   deliveryDialog.id,
+                    deliveredToId: deliveryUserId ? parseInt(deliveryUserId) : undefined,
+                    deliveryQty:   qty,
+                    deliveryUnit:  deliveryUnit || deliveryDialog.unit || "قطعة",
+                  });
+                } else {
+                  confirmDeliveryMut.mutate({
+                    itemId:        deliveryDialog.id,
+                    deliveredToId: deliveryUserId ? parseInt(deliveryUserId) : undefined,
+                    deliveryQty:   qty,
+                    deliveryUnit:  deliveryUnit || deliveryDialog.unit || "قطعة",
+                  });
+                }
                 setDeliveryDialog(null);
               }}
             >

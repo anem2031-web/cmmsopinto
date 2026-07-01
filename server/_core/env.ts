@@ -9,4 +9,5 @@ export const ENV = {
   isProduction: env.NODE_ENV === "production",
   forgeApiUrl: env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: env.BUILT_IN_FORGE_API_KEY ?? "",
+  anthropicApiKey: env.ANTHROPIC_API_KEY ?? "",
 };

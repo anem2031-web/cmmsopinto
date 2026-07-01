@@ -47,6 +47,7 @@ export const accountantProcedure = roleMiddleware([
 
 export const managementProcedure = roleMiddleware([
   "senior_management",
+  "executive_director",
   "owner",
   "admin",
 ]);

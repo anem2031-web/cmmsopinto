@@ -6,7 +6,7 @@ import * as db from "../../db";
 import * as ideasDb from "../../improvementIdeas";
 
 // الأدوار صاحبة الرؤية الكاملة (الفرز + التصنيف + اتخاذ القرار النهائي مجتمعين برؤية كل المقترحات)
-const FULL_VISIBILITY_ROLES = ["maintenance_manager", "senior_management", "owner", "admin"];
+const FULL_VISIBILITY_ROLES = ["maintenance_manager", "senior_management", "executive_director", "owner", "admin"];
 
 // الموظف العادي لا يرى إلا حالة مقترحه فقط — بدون أي بيانات داخلية عن المراجعة أو القرار
 function sanitizeForEmployee(idea: any) {

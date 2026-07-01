@@ -93,6 +93,13 @@ export const approvalsRouter = router({
     rejectedItemIds: z.array(z.number()).optional(),
     rejectionReason: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
+
+    if (ctx.user.role === "executive_director") {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+       message: "المدير التنفيذي لديه صلاحية استعراض فقط"
+    });
+  }
     const po = await db.getPurchaseOrderById(input.id);
     const items = await db.getPOItems(input.id);
 

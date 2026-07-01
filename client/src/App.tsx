@@ -17,6 +17,7 @@ import PurchaseOrders from "./pages/PurchaseOrders";
 import PurchaseOrderDetail from "./pages/PurchaseOrderDetail";
 import CreatePurchaseOrder from "./pages/CreatePurchaseOrder";
 import Inventory from "./pages/Inventory";
+import InventoryOperations from "./pages/InventoryOperations";
 import Reports from "./pages/Reports";
 import UsersPage from "./pages/Users";
 import Sites from "./pages/Sites";
@@ -46,6 +47,8 @@ import Dashboard from "./pages/Dashboard";
 import AssetDetail from "./pages/AssetDetail";
 import AssetCategories from "./pages/AssetCategories";
 import WarehouseReceive from "./pages/WarehouseReceive";
+import WarehouseReceiveV2 from "./pages/WarehouseReceiveV2";
+import InvoiceDraftReview from "./pages/InvoiceDraftReview";
 import WarehouseReturn from "./pages/WarehouseReturn";
 import ConstructionDashboard from "./pages/construction/ConstructionDashboard";
 import ProjectsList from "./pages/construction/ProjectsList";
@@ -75,6 +78,7 @@ function Router() {
             <Route path="/purchase-cycle" component={PurchaseCycle} />
             <Route path="/my-items" component={MyItems} />
             <Route path="/inventory" component={Inventory} />
+            <Route path="/inventory-operations" component={InventoryOperations} />
             <Route path="/reports" component={Reports} />
             <Route path="/reports/technicians" component={TechnicianReport} />
             <Route path="/reports/purchase-cycle" component={PurchaseCycleReport} />
@@ -100,7 +104,10 @@ function Router() {
             <Route path="/reports/cost" component={CostReport} />
             <Route path="/asset/:id" component={AssetDetail} />
             <Route path="/asset-categories" component={AssetCategories} />
-            <Route path="/warehouse/receive" component={WarehouseReceive} />
+            {/* ⛔ مُعطّلة مؤقتاً (قيد الاختبار قبل الحذف النهائي) — استُبدلت بـ WarehouseReceiveV2 */}
+            <Route path="/warehouse/receive" component={NotFound} />
+            <Route path="/warehouse/receive-v2" component={WarehouseReceiveV2} />
+            <Route path="/warehouse/invoice-draft" component={InvoiceDraftReview} />
             <Route path="/warehouse/return" component={WarehouseReturn} />
             <Route path="/inspection-dashboard" component={Dashboard} />
             <Route path="/catalog" component={CatalogDashboard} />

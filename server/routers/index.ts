@@ -17,10 +17,13 @@ import { vendorsRouter } from "./purchase/vendors.router";
 
 import { inventoryRouter } from "./inventory/inventory.router";
 import { receiptsRouter } from "./inventory/receipts.router";
+import { receiptsV2Router } from "./inventory/receipts.v2.router";
+import { invoiceDraftRouter } from "./inventory/invoiceDraft.router";
 import { returnsRouter } from "./inventory/returns.router";
 import { stockRouter } from "./inventory/stock.router";
 import { warehouseRouter } from "./inventory/warehouse.router";
 import { transfersRouter } from "./inventory/transfers.router";
+import { disposalRouter } from "./inventory/disposal.router";
 
 import { assetsRouter } from "./assets/assets.router";
 import { assetMaintenanceRouter } from "./assets/asset-maintenance.router";
@@ -78,10 +81,13 @@ purchaseOrders: router({
 
   inventory: inventoryRouter,
   warehouseReceipts: receiptsRouter,
+  warehouseReceiptsV2: receiptsV2Router,
+  invoiceDraft: invoiceDraftRouter,
   warehouseReturns: returnsRouter,
   stock: stockRouter,
   warehouse: warehouseRouter,
   transfers: transfersRouter,
+  disposal: disposalRouter,
 
   assets: assetsRouter,
   assetMaintenance: assetMaintenanceRouter,

@@ -73,6 +73,32 @@ export const inventoryRouter = router({
       return db.getInventoryByBarcode(input.code);
     }),
 
+  // ── Phase 2A: بطاقة الصنف — المعلومات العامة + ملخص سريع ──────────────
+  getItemSummary: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ input }) => {
+      const item = await db.getInventoryItemById(input.id);
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "الصنف غير موجود" });
+      // نفس منطق آخر توريد/صرف/سعر المستخدم في شاشة الملخص — لضمان تطابق الأرقام
+      const allItems = await db.getInventoryItems();
+      const enriched = allItems.find((i: any) => i.id === input.id);
+      return { ...item, ...(enriched ?? {}) };
+    }),
+
+  // ── Phase 2B: سجل التوريد — كل الفواتير التي دخل منها الصنف ────────────
+  getPurchaseHistory: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ input }) => {
+      return db.getInventoryPurchaseHistory(input.id);
+    }),
+
+  // ── Phase 2C: سجل الحركة — كشف حساب كامل (وارد/صادر/رصيد بعد الحركة) ──
+  getLedger: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ input }) => {
+      return db.getInventoryLedger(input.id);
+    }),
+
   // تسليم من المخزون للعامل
   deliverToRequester: warehouseProcedure
     .input(z.object({
@@ -95,15 +121,15 @@ export const inventoryRouter = router({
         });
       }
 
-      // تسجيل حركة خروج
-      await db.addInventoryTransaction({
-        inventoryId: input.inventoryId,
-        type: "out",
-        quantity: input.deliveredQuantity,
-        reason: input.notes || "تسليم للعامل",
-        purchaseOrderItemId: input.purchaseOrderItemId,
-        performedById: ctx.user.id,
-        transactionType: "delivery",
+      // خدمة موحّدة: تنفّذ الصرف + تولّد رقم سند + تسجّل الحركة + تُنشئ سند delivery_documents رسمي — دائماً
+      const deliveryResult = await db.issueDelivery({
+        inventoryId:          input.inventoryId,
+        quantity:              input.deliveredQuantity,
+        unit:                  item.unit || undefined,
+        performedById:         ctx.user.id,
+        deliveredToId:         input.deliveredToId,
+        purchaseOrderItemId:   input.purchaseOrderItemId,
+        notes:                 input.notes,
       });
 
       // تحديث صنف طلب الشراء
@@ -165,7 +191,11 @@ export const inventoryRouter = router({
         newValues: { deliveredQuantity: input.deliveredQuantity, deliveredToId: input.deliveredToId },
       });
 
-      return { success: true, remainingQuantity: item.quantity - input.deliveredQuantity };
+      return {
+        success: true,
+        remainingQuantity: item.quantity - input.deliveredQuantity,
+        ...deliveryResult, // deliveryNumber, deliveredByName, deliveredToName, إلخ — جاهزة لطباعة السند فوراً
+      };
     }),
 
 });

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { router, protectedProcedure } from "../_shared/procedures";
-import { invokeLLM } from "../../_core/llm";
+import { invokeLLM, invokeClaudeLLM } from "../../_core/llm";
 import * as db from "../../db";
 
 export const aiRouter = router({
@@ -148,7 +148,19 @@ ${JSON.stringify(recentAudit.map((a: any) => ({ action: a.action, entity: a.enti
     // إضافة السؤال الحالي
     messages.push({ role: "user", content: input.question });
 
-    const response = await invokeLLM({ messages });
-    return { answer: response.choices[0]?.message?.content || "لم أتمكن من الإجابة" };
+    let answer: string;
+
+    try {
+      // أولاً: DeepSeek
+      const response = await invokeLLM({ messages });
+      answer = (response.choices[0]?.message?.content as string) || "";
+      if (!answer) throw new Error("empty response from DeepSeek");
+    } catch (err) {
+      // Fallback: Claude إذا فشل DeepSeek
+      console.warn("[AI] DeepSeek failed, switching to Claude:", err);
+      answer = await invokeClaudeLLM({ messages });
+    }
+
+    return { answer: answer || "لم أتمكن من الإجابة" };
   }),
 });

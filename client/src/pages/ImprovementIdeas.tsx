@@ -727,10 +727,10 @@ export default function ImprovementIdeas() {
   const [createOpen, setCreateOpen] = useState(false);
 
   const isTriageRole = !!user && ["maintenance_manager", "owner", "admin"].includes(user.role);
-  const isSeniorMgmt = !!user && user.role === "senior_management";
+  const isSeniorMgmt = !!user && ["senior_management", "executive_director"].includes(user.role);
   const isElevated = isTriageRole || isSeniorMgmt;
   // صلاحية القرار النهائي: الإدارة العليا + owner/admin (نفس قاعدة التجاوز الشامل المعتمدة بكل النظام)
-  const canDecide = isSeniorMgmt || (!!user && ["owner", "admin"].includes(user.role));
+  const canDecide = !!user && ["senior_management", "owner", "admin"].includes(user.role);
 
   const [activeTab, setActiveTab] = useState(isSeniorMgmt ? "classified" : "new");
 
@@ -754,8 +754,7 @@ export default function ImprovementIdeas() {
         <TabsList>
           {isTriageRole && <TabsTrigger value="new">{t.improvementIdeas.newIdeasTab}</TabsTrigger>}
           <TabsTrigger value="classified">{t.improvementIdeas.classifiedTab}</TabsTrigger>
-          {isSeniorMgmt && <TabsTrigger value="new">{t.improvementIdeas.newIdeasTab}</TabsTrigger>}
-          {isTriageRole && <TabsTrigger value="approved">{t.improvementIdeas.approvedTab}</TabsTrigger>}
+          {!!user && user.role === "senior_management" && <TabsTrigger value="new">{t.improvementIdeas.newIdeasTab}</TabsTrigger>}
           {isTriageRole && <TabsTrigger value="all">{t.improvementIdeas.allTab}</TabsTrigger>}
         </TabsList>
         <TabsContent value="new"><NewIdeasTab canClassify={isTriageRole} /></TabsContent>
