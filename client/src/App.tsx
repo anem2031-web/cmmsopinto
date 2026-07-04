@@ -48,8 +48,10 @@ import AssetDetail from "./pages/AssetDetail";
 import AssetCategories from "./pages/AssetCategories";
 import WarehouseReceive from "./pages/WarehouseReceive";
 import WarehouseReceiveV2 from "./pages/WarehouseReceiveV2";
+import InventoryStandaloneReceive from "./pages/InventoryStandaloneReceive";
 import InvoiceDraftReview from "./pages/InvoiceDraftReview";
 import WarehouseReturn from "./pages/WarehouseReturn";
+import WarehouseReturnsList from "./pages/WarehouseReturnsList";
 import ConstructionDashboard from "./pages/construction/ConstructionDashboard";
 import ProjectsList from "./pages/construction/ProjectsList";
 import ProjectDetail from "./pages/construction/ProjectDetail";
@@ -107,8 +109,16 @@ function Router() {
             {/* ⛔ مُعطّلة مؤقتاً (قيد الاختبار قبل الحذف النهائي) — استُبدلت بـ WarehouseReceiveV2 */}
             <Route path="/warehouse/receive" component={NotFound} />
             <Route path="/warehouse/receive-v2" component={WarehouseReceiveV2} />
-            <Route path="/warehouse/invoice-draft" component={InvoiceDraftReview} />
+            <Route path="/inventory/receive" component={InventoryStandaloneReceive} />
+            {/* ⛔ مُعطّلة (مسار "مسودة/اعتماد الفاتورة" — لا يوجد أي رابط لها بالواجهة، وغير
+                مستخدمة بعملية الاستلام الفعلية التي تمر عبر WarehouseReceiveV2 مباشرة.
+                كما أن processApprovedReceiptItems (الدالة التي تنفّذها عند الاعتماد) بها
+                خلل محاسبي: الصنف الجديد يُنشأ برصيد 0 ولا يُحدَّث عند تسجيل حركة الدخول.
+                لفكّ التجميد: أعد المسار الأصلي أدناه (سطر واحد) بعد إصلاح processApprovedReceiptItems. */}
+            <Route path="/warehouse/invoice-draft" component={NotFound} />
+            {/* <Route path="/warehouse/invoice-draft" component={InvoiceDraftReview} /> */}
             <Route path="/warehouse/return" component={WarehouseReturn} />
+            <Route path="/warehouse/returns" component={WarehouseReturnsList} />
             <Route path="/inspection-dashboard" component={Dashboard} />
             <Route path="/catalog" component={CatalogDashboard} />
             {/* Construction Module */}

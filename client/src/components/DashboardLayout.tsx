@@ -28,7 +28,7 @@ import {
   Brain, ShoppingBag, Truck, Languages, Database,
   HardDrive, CalendarClock, ScanSearch, DoorOpen, Nfc, Tag,
   ChevronDown, Search, X, Building2, UserCog, Download, Smartphone, DollarSign,
-  RotateCcw, BookOpen, Lightbulb
+  RotateCcw, BookOpen, Lightbulb, FileText
 ,
   HardHat, FolderKanban} from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState, useMemo, useCallback } from "react";
@@ -113,6 +113,8 @@ const NAV_SECTIONS: NavSection[] = [
       // { icon: Package,      labelKey: "nav.warehouseReceive", path: "/warehouse/receive",
       //   roles: ["warehouse","owner","admin"] },
       { icon: RotateCcw,    labelKey: "nav.warehouseReturn",  path: "/warehouse/return",
+        roles: ["warehouse","owner","admin"] },
+      { icon: FileText,     labelKey: "nav.warehouseReturnsList", path: "/warehouse/returns",
         roles: ["warehouse","owner","admin"] },
       { icon: Truck,        labelKey: "nav.purchaseCycle",  path: "/purchase-cycle",
         roles: ["delegate","warehouse","owner","admin"] },

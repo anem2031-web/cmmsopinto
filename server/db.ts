@@ -23,6 +23,7 @@ import {
   ticketConfirmations,
   type InsertTicketConfirmation,
   deliveryDocuments,
+  returnDocuments,
   deliveryNumberCounter,
   itemBarcodeCounter,
   disposalOperations,
@@ -57,6 +58,18 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+// ─────────────────────────────────────────────────────────────
+// تنفيذ مجموعة عمليات ضمن معاملة DB واحدة (Atomicity)
+// أي دالة تُستدعى داخل fn يجب أن تستقبل ويستخدم نفس الـ tx الممرَّر
+// (وإلا فهي تعمل على اتصال منفصل من الـ Pool ولا تكون جزءاً من المعاملة)
+// عند فشل أي خطوة، تُلغى (rollback) كل الكتابات السابقة داخل نفس fn تلقائياً
+// ─────────────────────────────────────────────────────────────
+export async function withTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> {
+  const database = await getDb();
+  if (!database) throw new Error("قاعدة البيانات غير متاحة");
+  return database.transaction(fn);
 }
 
 // إعادة الاتصال عند انقطاع ECONNRESET
@@ -615,8 +628,8 @@ export async function getPurchaseOrderById(id: number) {
   return result[0] || null;
 }
 
-export async function updatePurchaseOrder(id: number, data: any) {
-  const db = await getDb();
+export async function updatePurchaseOrder(id: number, data: any, tx?: any) {
+  const db = tx || await getDb();
   if (!db) return;
   await db.update(purchaseOrders).set(data).where(eq(purchaseOrders.id, id));
 }
@@ -630,8 +643,8 @@ export async function createPOItems(items: any[]) {
   if (items.length > 0) await db.insert(purchaseOrderItems).values(items);
 }
 
-export async function getPOItems(purchaseOrderId: number) {
-  const db = await getDb();
+export async function getPOItems(purchaseOrderId: number, tx?: any) {
+  const db = tx || await getDb();
   if (!db) return [];
   return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId)).orderBy(purchaseOrderItems.id);
 }
@@ -642,8 +655,8 @@ export async function getPOItemsByDelegate(delegateId: number) {
   return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.delegateId, delegateId)).orderBy(desc(purchaseOrderItems.createdAt));
 }
 
-export async function updatePOItem(id: number, data: any) {
-  const db = await getDb();
+export async function updatePOItem(id: number, data: any, tx?: any) {
+  const db = tx || await getDb();
   if (!db) return;
   await db.update(purchaseOrderItems).set(data).where(eq(purchaseOrderItems.id, id));
 }
@@ -659,6 +672,51 @@ export async function getPOItemsByStatus(status: string) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.status, status as any)).orderBy(desc(purchaseOrderItems.createdAt));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ARCHITECTURAL DECISION — مرجع رسمي — لا تعدّل هذا الاستعلام بدون مراجعة
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// مصدر الحقيقة لمرحلة "إدخال المخزون" هو:
+//   warehouse_receipt_items المرتبط بـ warehouse_receipts.status = 'confirmed'
+//
+// دورة العمل المعتمدة:
+//   delivered_to_warehouse → تعني: البضاعة وصلت المستودع فقط
+//   وجود warehouse_receipt (confirmed) → يعني: البضاعة دخلت المخزون رسمياً
+//
+// لماذا لا نعتمد على status وحده؟
+//   لأن delivered_to_warehouse لا تتغير بعد إدخال المخزون —
+//   تغيير دورة العمل يتطلب قراراً معمارياً كاملاً.
+//
+// لماذا لا نعتمد على مجرد وجود سجل في warehouse_receipt_items؟
+//   لأن invoiceDraft.router.ts ينشئ سجلات warehouse_receipt_items أثناء
+//   مرحلة تحليل OCR (قبل التأكيد النهائي) — لو اعتمدنا على الوجود فقط
+//   سيختفي البند من التبويب فور تحليل الفاتورة وقبل اعتمادها.
+//
+// القاعدة الذهبية:
+//   لا تضف Status جديدة لهذا الغرض إلا إذا تغيرت دورة العمل بالكامل.
+//   الفهرس idx_receipt_items_poItemId موجود لدعم هذا الاستعلام مع نمو البيانات.
+// ══════════════════════════════════════════════════════════════════════════════
+export async function getPOItemsPendingInventoryEntry() {
+  const db = await getDb();
+  if (!db) return [];
+
+  const [rows] = await (db as any).execute(`
+    SELECT poi.*
+    FROM purchase_order_items poi
+    WHERE poi.status = 'delivered_to_warehouse'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM warehouse_receipt_items wri
+        JOIN warehouse_receipts wr ON wri.receiptId = wr.id
+        WHERE wri.purchaseOrderItemId = poi.id
+          AND wr.status = 'confirmed'
+      )
+    ORDER BY poi.createdAt DESC
+  `);
+
+  return rows as any[];
 }
 
 // ============================================================
@@ -1216,8 +1274,8 @@ export async function getSiteById(id: number) {
   return result.length > 0 ? result[0] : null;
 }
 
-export async function getInventoryItemById(id: number) {
-  const db = await getDb();
+export async function getInventoryItemById(id: number, tx?: any) {
+  const db = tx || await getDb();
   if (!db) return null;
   const result = await db.select().from(inventory).where(eq(inventory.id, id)).limit(1);
   return result.length > 0 ? result[0] : null;
@@ -2182,8 +2240,8 @@ export async function deleteAssetCategory(id: number) {
 // WAREHOUSE RECEIPTS
 // ============================================================
 
-export async function getNextReceiptNumber(): Promise<string> {
-  const db = await getDb();
+export async function getNextReceiptNumber(tx?: any): Promise<string> {
+  const db = tx || await getDb();
   if (!db) return `RCV-${new Date().getFullYear()}-0001`;
   const year = new Date().getFullYear();
   const rows = await db.select({ id: warehouseReceipts.id })
@@ -2197,8 +2255,8 @@ export async function getNextReceiptNumber(): Promise<string> {
   return `RCV-${year}-${String(next).padStart(4, "0")}`;
 }
 
-export async function getNextInventoryCode(): Promise<string> {
-  const db = await getDb();
+export async function getNextInventoryCode(tx?: any): Promise<string> {
+  const db = tx || await getDb();
   if (!db) return `INV-${new Date().getFullYear()}-0001`;
   const year = new Date().getFullYear();
   const rows = await db.select({ id: inventory.id })
@@ -2544,6 +2602,92 @@ export async function getWarehouseReturns(filters?: { purchaseOrderId?: number; 
     : db.select().from(warehouseReturns).orderBy(desc(warehouseReturns.createdAt));
 }
 
+// ── مصادر الإرجاع المحتملة لصنف معيّن: كل عمليات الاستلام (dobre "in"/"purchase")
+//   السابقة لهذا الصنف، مع الكمية المستلمة والمُرجَعة سابقاً لكل سند. نستخدم
+//   LEFT JOIN عمداً (لا INNER) لأن الاستلام قد يكون مستقلاً بلا طلب شراء (0035)
+//   — في هذي الحالة purchaseOrderId/vendorName من الطلب تكون NULL وهذا متوقَّع.
+//   لا نحسب "الكمية المتاحة لهذا السند تحديداً" لأن النظام لا يدعم تتبّع دفعات
+//   (Batch/Lot) فعلياً؛ الرصيد الحقيقي القابل للإرجاع هو رصيد المخزون الكلي فقط،
+//   ونعرض هنا فقط "الكمية المستلمة" و"المُرجَع سابقاً ضد هذا السند تحديداً"
+//   كمعلومة استرشادية للموظف لا كحد ملزم.
+export async function getReturnSources(inventoryId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const receiveRows = await db
+    .select({
+      receiptId:           inventoryTransactions.receiptId,
+      purchaseOrderItemId: inventoryTransactions.purchaseOrderItemId,
+      receivedQty:         inventoryTransactions.quantity,
+      receiptNumber:       warehouseReceipts.receiptNumber,
+      invoiceNumber:       warehouseReceipts.invoiceNumber,
+      receiptDate:         warehouseReceipts.invoiceDate,
+      receiptCreatedAt:    warehouseReceipts.createdAt,
+      vendorName:          warehouseReceipts.vendorName,
+      purchaseOrderId:     warehouseReceipts.purchaseOrderId,
+      poNumber:            purchaseOrders.poNumber,
+    })
+    .from(inventoryTransactions)
+    .leftJoin(warehouseReceipts, eq(inventoryTransactions.receiptId, warehouseReceipts.id))
+    .leftJoin(purchaseOrders, eq(warehouseReceipts.purchaseOrderId, purchaseOrders.id))
+    .where(and(
+      eq(inventoryTransactions.inventoryId, inventoryId),
+      eq(inventoryTransactions.type, "in"),
+      eq(inventoryTransactions.transactionType, "purchase"),
+      isNotNull(inventoryTransactions.receiptId),
+    ))
+    .orderBy(desc(warehouseReceipts.createdAt));
+
+  if (receiveRows.length === 0) return [];
+
+  // مجموع ما أُرجع سابقاً ضد كل receiptId (من حركات type=out, transactionType=return)
+  const returnRows = await db
+    .select({
+      receiptId: inventoryTransactions.receiptId,
+      quantity:  inventoryTransactions.quantity,
+    })
+    .from(inventoryTransactions)
+    .where(and(
+      eq(inventoryTransactions.inventoryId, inventoryId),
+      eq(inventoryTransactions.type, "out"),
+      eq(inventoryTransactions.transactionType, "return"),
+      isNotNull(inventoryTransactions.receiptId),
+    ));
+
+  const returnedByReceipt = new Map<number, number>();
+  for (const r of returnRows) {
+    if (!r.receiptId) continue;
+    returnedByReceipt.set(r.receiptId, (returnedByReceipt.get(r.receiptId) || 0) + r.quantity);
+  }
+
+  // دمج الأسطر بحسب receiptId (قد يكون فيه أكثر من بند بنفس السند لنفس الصنف نادراً)
+  const byReceipt = new Map<number, any>();
+  for (const row of receiveRows) {
+    if (!row.receiptId) continue;
+    const existing = byReceipt.get(row.receiptId);
+    if (existing) {
+      existing.receivedQty += row.receivedQty;
+    } else {
+      byReceipt.set(row.receiptId, {
+        receiptId:           row.receiptId,
+        purchaseOrderId:     row.purchaseOrderId ?? null,
+        purchaseOrderItemId: row.purchaseOrderItemId ?? null,
+        receiptNumber:       row.receiptNumber,
+        invoiceNumber:       row.invoiceNumber ?? null,
+        receiptDate:         row.receiptDate ?? row.receiptCreatedAt,
+        vendorName:          row.vendorName ?? null,
+        poNumber:            row.poNumber ?? null,
+        receivedQty:         row.receivedQty,
+      });
+    }
+  }
+
+  return Array.from(byReceipt.values()).map(s => ({
+    ...s,
+    returnedQty: returnedByReceipt.get(s.receiptId) || 0,
+  }));
+}
+
 export async function getInventoryTransactions(inventoryId?: number) {
   const db = await getDb();
   if (!db) return [];
@@ -2681,6 +2825,43 @@ export async function createDeliveryDocument(data: {
   if (!db) return null;
   const [result] = await db.insert(deliveryDocuments).values(data);
   return result;
+}
+
+// ── Return Documents — وثيقة مرتجع تلقائية (0037) ────────────────────────
+export async function createReturnDocument(data: {
+  returnNumber:     string;
+  returnId:         number;
+  itemName:         string;
+  internalCode?:    string;
+  manufacturerBarcode?: string;
+  returnedQuantity: number;
+  unit?:            string;
+  reason:           string;
+  returnedByName:   string;
+  recipientName?:   string;
+  receiptNumber?:   string;
+  invoiceNumber?:   string;
+  vendorName?:      string;
+  poNumber?:        string;
+}, tx?: any) {
+  const db = tx || await getDb();
+  if (!db) return null;
+  await db.insert(returnDocuments).values(data as any);
+}
+
+export async function getReturnDocuments() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(returnDocuments).orderBy(desc(returnDocuments.createdAt));
+}
+
+export async function incrementReturnDocPrintCount(id: number) {
+  const db = await getDb();
+  if (!db) return 0;
+  const row = await db.select({ printCount: returnDocuments.printCount }).from(returnDocuments).where(eq(returnDocuments.id, id)).limit(1);
+  const newCount = (row[0]?.printCount || 0) + 1;
+  await db.update(returnDocuments).set({ printCount: newCount }).where(eq(returnDocuments.id, id));
+  return newCount;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2858,8 +3039,8 @@ export async function createInventoryItemV2(data: {
   warehouseId?:       number;
   receiptId?:         number;
   siteId?:            number;
-}) {
-  const db = await getDb();
+}, tx?: any) {
+  const db = tx || await getDb();
   if (!db) return null;
   const result = await db.insert(inventory).values(data as any);
   return result[0].insertId;
@@ -2874,8 +3055,9 @@ export async function updateInventoryItemV2(id: number, data: {
   itemName_en?:     string;
   itemType?:        string;
   expiryDate?:      Date;
-}) {
-  const db = await getDb();
+  manufacturerBarcode?: string;
+}, tx?: any) {
+  const db = tx || await getDb();
   if (!db) return;
   await db.update(inventory).set(data as any).where(eq(inventory.id, id));
 }
@@ -2902,8 +3084,8 @@ export async function addInventoryTransactionV2(data: {
   assetId?:             number;
   documentUrl?:         string;
   invoiceNumber?:       string;
-}) {
-  const db = await getDb();
+}, tx?: any) {
+  const db = tx || await getDb();
   if (!db) return;
 
   // إدراج الحركة
@@ -2932,7 +3114,7 @@ export async function addInventoryTransactionV2(data: {
 
 export async function createWarehouseReceiptV2(data: {
   receiptNumber:    string;
-  purchaseOrderId:  number;
+  purchaseOrderId?: number; // اختياري: غير موجود = استلام مستقل بلا طلب شراء
   receivedById:     number;
   notes?:           string;
   totalItems?:      number;
@@ -2949,8 +3131,8 @@ export async function createWarehouseReceiptV2(data: {
   goodsPhotoUrl?:   string;
   hasDiscrepancy?:  boolean;
   discrepancyNotes?: string;
-}) {
-  const db = await getDb();
+}, tx?: any) {
+  const db = tx || await getDb();
   if (!db) return null;
   const result = await db.insert(warehouseReceipts).values(data as any);
   return result[0].insertId;
@@ -2975,8 +3157,8 @@ export async function createWarehouseReceiptItem(data: {
   priceDiff?:           string;
   ocrExtracted?:        boolean;
   manuallyEdited?:      boolean;
-}) {
-  const db = await getDb();
+}, tx?: any) {
+  const db = tx || await getDb();
   if (!db) return null;
   const result = await db.insert(warehouseReceiptItems).values(data as any);
   return result[0].insertId;
@@ -3015,9 +3197,28 @@ export async function checkDuplicateInvoice(data: {
   invoiceNumber:    string;
   vendorTaxNumber?: string;
 }) {
-  // NOTE: مؤقتاً معطلة - invoiceNumber غير موجود في Drizzle Schema بعد
-  // سيتم تفعيلها بعد إضافة الحقل للـ Schema
-  return null;
+  const db = await getDb();
+  if (!db) return null;
+  if (!data.invoiceNumber?.trim()) return null;
+
+  // نطابق برقم الفاتورة، ونضيّق بالرقم الضريبي للمورد إن وُجد لتفادي
+  // تصادم رقم فاتورة متطابق صدفة من مورّدين مختلفين
+  const conditions = [eq(warehouseReceipts.invoiceNumber, data.invoiceNumber)];
+  if (data.vendorTaxNumber?.trim()) {
+    conditions.push(eq(warehouseReceipts.vendorTaxNumber, data.vendorTaxNumber));
+  }
+
+  const rows = await db.select({
+    id:            warehouseReceipts.id,
+    receiptNumber: warehouseReceipts.receiptNumber,
+    invoiceNumber: warehouseReceipts.invoiceNumber,
+    createdAt:     warehouseReceipts.createdAt,
+  })
+    .from(warehouseReceipts)
+    .where(and(...conditions))
+    .limit(1);
+
+  return rows[0] || null;
 }
 
 // ─────────────────────────────────────────────────────────────

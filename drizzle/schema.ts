@@ -770,7 +770,7 @@ export type InsertAssetCategory = typeof assetCategories.$inferInsert;
 export const warehouseReceipts = mysqlTable("warehouse_receipts", {
   id: int("id").autoincrement().primaryKey(),
   receiptNumber: varchar("receiptNumber", { length: 20 }).notNull(),
-  purchaseOrderId: int("purchaseOrderId").notNull(),
+  purchaseOrderId: int("purchaseOrderId"), // اختياري: NULL = استلام مستقل بلا طلب شراء (0035)
   receivedById: int("receivedById").notNull(),
   receivedAt: timestamp("receivedAt").defaultNow().notNull(),
   notes: text("notes"),
@@ -807,9 +807,9 @@ export type InsertWarehouseReceipt = typeof warehouseReceipts.$inferInsert;
 export const warehouseReturns = mysqlTable("warehouse_returns", {
   id: int("id").autoincrement().primaryKey(),
   returnNumber: varchar("returnNumber", { length: 20 }).notNull(),
-  receiptId: int("receiptId").notNull(),
-  purchaseOrderId: int("purchaseOrderId").notNull(),
-  purchaseOrderItemId: int("purchaseOrderItemId").notNull(),
+  receiptId: int("receiptId"), // اختياري (0036): NULL = بلا سند استلام معروف
+  purchaseOrderId: int("purchaseOrderId"), // اختياري (0036)
+  purchaseOrderItemId: int("purchaseOrderItemId"), // اختياري (0036)
   inventoryId: int("inventoryId").notNull(),
   returnedQuantity: int("returnedQuantity").notNull(),
   reason: text("reason").notNull(),
@@ -1490,6 +1490,27 @@ export const deliveryDocuments = mysqlTable("delivery_documents", {
   notes: text("notes"),
   pdfKey: text("pdfKey"),
   pdfUrl: text("pdfUrl"),
+  printCount: int("printCount").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ── وثائق المرتجعات — تُنشأ تلقائياً بالخادم مع كل مرتجع (0037) ──
+export const returnDocuments = mysqlTable("return_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  returnNumber: varchar("returnNumber", { length: 20 }).notNull(),
+  returnId: int("returnId").notNull(),
+  itemName: varchar("itemName", { length: 300 }).notNull(),
+  internalCode: varchar("internalCode", { length: 50 }), // رقم الصنف الداخلي (0039)
+  manufacturerBarcode: varchar("manufacturerBarcode", { length: 100 }), // لتوليد QR الوثيقة (0039)
+  returnedQuantity: int("returnedQuantity").notNull(),
+  unit: varchar("unit", { length: 50 }),
+  reason: text("reason").notNull(),
+  returnedByName: varchar("returnedByName", { length: 200 }).notNull(),
+  recipientName: varchar("recipientName", { length: 200 }), // من استلم الصنف المرتجَع (0038)
+  receiptNumber: varchar("receiptNumber", { length: 20 }),
+  invoiceNumber: varchar("invoiceNumber", { length: 100 }), // رقم فاتورة المورد الأصلية (0040)
+  vendorName: varchar("vendorName", { length: 300 }),
+  poNumber: varchar("poNumber", { length: 100 }),
   printCount: int("printCount").default(0).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });

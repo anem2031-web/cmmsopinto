@@ -1021,7 +1021,10 @@ list: protectedProcedure.input(z.object({
   pendingDeliveryItems: protectedProcedure.query(async ({ ctx }) => {
     const isAdminOrOwner = ctx.user.role === "admin" || ctx.user.role === "owner";
     if (isAdminOrOwner || ctx.user.role === "warehouse") {
-      const items = await db.getPOItemsByStatus("delivered_to_warehouse");
+      // المصدر الصحيح للحقيقة: بنود delivered_to_warehouse التي لم يُنشأ لها
+      // warehouse_receipt_items مرتبط بـ warehouse_receipts بحالة confirmed بعد.
+      // (سجلات invoiceDraft/OCR لا تُحسب لأن receipt حالتها ليست confirmed بعد)
+      const items = await db.getPOItemsPendingInventoryEntry();
       // Enrich each item with the assignedToId from the linked ticket
       const enriched = await Promise.all(items.map(async (item: any) => {
         const po = await db.getPurchaseOrderById(item.purchaseOrderId);
@@ -1055,6 +1058,7 @@ list: protectedProcedure.input(z.object({
         inv.unit,
         inv.averageCost,
         inv.internalCode,
+        inv.manufacturerBarcode,
         inv.receiptId,
         wr.purchaseOrderId,
         wr.receiptNumber,

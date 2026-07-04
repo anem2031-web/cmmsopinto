@@ -1,5 +1,7 @@
 import { trpc } from "@/lib/trpc";
+import { useLocation } from "wouter";
 import { InventoryItemCard } from "@/components/InventoryItemCard";
+import BarcodeScanner from "@/components/BarcodeScanner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,6 +23,7 @@ import { ExportButton } from "@/components/ExportButton";
 import { useTranslation, useLanguage } from "@/contexts/LanguageContext";
 
 export default function Inventory() {
+  const [, navigate] = useLocation();
   const { user } = useAuth();
   const [printBarcode, setPrintBarcode] = useState<any>(null);
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
@@ -28,16 +31,13 @@ export default function Inventory() {
   const [deliverQty, setDeliverQty] = useState("");
   const [deliverToId, setDeliverToId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<"name" | "code" | "qr">("name");
   const [sortBy, setSortBy] = useState<"recent" | "name" | "quantity">("recent");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const { t, language } = useTranslation();
 
   const { data: items, isLoading, refetch } = trpc.inventory.list.useQuery();
-  const createMut = trpc.inventory.create.useMutation({
-    onSuccess: () => { toast.success(t.common.save); refetch(); setOpen(false); },
-    onError: (err) => toast.error(err.message),
-  });
 
   const utils = trpc.useUtils();
   const updateMut = trpc.inventory.update.useMutation({
@@ -61,11 +61,9 @@ export default function Inventory() {
     onError: (err: any) => toast.error(err.message),
   });
 
-  const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
-  const [form, setForm] = useState({ itemName: "", description: "", quantity: 0, unit: language === "en" ? "piece" : "قطعة", minQuantity: 0, location: "" });
   const [editForm, setEditForm] = useState({ itemName: "", description: "", quantity: 0, unit: "", minQuantity: 0, location: "" });
 
   const openEdit = (item: any) => {
@@ -82,9 +80,15 @@ export default function Inventory() {
     .filter((item: any) => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.trim().toLowerCase();
+      if (searchMode === "code" || searchMode === "qr") {
+        return (
+          String(item.internalCode ?? "").toLowerCase().includes(q) ||
+          String(item.manufacturerBarcode ?? "").toLowerCase().includes(q)
+        );
+      }
       const haystack = [
-        item.itemName, item.description, item.quantity, item.unit,
-        item.location, item.manufacturerBarcode, item.invoiceDate,
+        item.itemName, item.description, item.unit,
+        item.location, item.invoiceDate,
       ].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);
     })
@@ -115,29 +119,10 @@ export default function Inventory() {
         <div className="flex gap-2 flex-wrap">
           <ExportButton endpoint="inventory" filename="inventory" />
           {isWarehouse && (
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2"><Plus className="w-4 h-4" /> {t.common.add}</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader><DialogTitle>{t.common.add} - {t.inventory.itemName}</DialogTitle></DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-2"><Label>{t.inventory.itemName} *</Label><Input value={form.itemName} onChange={e => setForm(f => ({ ...f, itemName: e.target.value }))} /></div>
-                <div className="space-y-2"><Label>{t.common.description}</Label><Input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-2"><Label>{t.inventory.currentStock}</Label><Input type="number" value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: parseInt(e.target.value) || 0 }))} /></div>
-                  <div className="space-y-2"><Label>{t.inventory.unit}</Label><Input value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} /></div>
-                  <div className="space-y-2"><Label>{t.inventory.minStock}</Label><Input type="number" value={form.minQuantity} onChange={e => setForm(f => ({ ...f, minQuantity: parseInt(e.target.value) || 0 }))} /></div>
-                </div>
-                <div className="space-y-2"><Label>{t.inventory.location}</Label><Input value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))} /></div>
-                <Button onClick={() => { if (!form.itemName) { toast.error(t.inventory.itemName); return; } createMut.mutate(form); }} disabled={createMut.isPending} className="w-full gap-2">
-                  {createMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  {t.common.add}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-        )}
+            <Button className="gap-2" onClick={() => navigate("/inventory/receive")}>
+              <Plus className="w-4 h-4" /> {t.common.add}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -158,23 +143,51 @@ export default function Inventory() {
         </Card>
       </div>
 
-      {/* خانة البحث التزايدي + الترتيب + فلتر التاريخ */}
+      {/* خانة البحث الذكية + الترتيب + فلتر التاريخ */}
       <div className="flex flex-col md:flex-row gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder="بحث في الأصناف..."
-            className="pr-9 pl-9"
-          />
-          {searchQuery && (
-            <button
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              onClick={() => setSearchQuery("")}
-            >
-              <X className="w-4 h-4" />
-            </button>
+        <div className="flex-1 space-y-1.5">
+          {/* أزرار طريقة البحث */}
+          <div className="flex gap-1.5">
+            <Button size="sm" variant={searchMode === "name" ? "default" : "outline"} onClick={() => { setSearchMode("name"); setSearchQuery(""); }} className="gap-1 h-7 text-xs">
+              <Search className="w-3 h-3" /> بالاسم
+            </Button>
+            <Button size="sm" variant={searchMode === "code" ? "default" : "outline"} onClick={() => { setSearchMode("code"); setSearchQuery(""); }} className="gap-1 h-7 text-xs">
+              <QrCode className="w-3 h-3" /> بالرقم
+            </Button>
+            <Button size="sm" variant={searchMode === "qr" ? "default" : "outline"} onClick={() => { setSearchMode("qr"); setSearchQuery(""); }} className="gap-1 h-7 text-xs">
+              <QrCode className="w-3 h-3" /> QR Code
+            </Button>
+            {searchQuery && (
+              <Button size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground" onClick={() => { setSearchQuery(""); setSearchMode("name"); }}>
+                <X className="w-3 h-3" />
+              </Button>
+            )}
+          </div>
+
+          {/* QR Scanner أو خانة نصية */}
+          {searchMode === "qr" ? (
+            <BarcodeScanner
+              onScan={(code) => {
+                setSearchQuery(code);
+                setSearchMode("code");
+              }}
+              placeholder="امسح QR Code الصنف..."
+            />
+          ) : (
+            <div className="relative">
+              <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder={searchMode === "name" ? "بحث باسم الصنف..." : "بحث برقم الصنف أو الباركود..."}
+                className="pr-9 pl-9"
+              />
+              {searchQuery && (
+                <button className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setSearchQuery("")}>
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           )}
         </div>
 
@@ -426,9 +439,12 @@ export default function Inventory() {
                 <div style={{ flexShrink: 0 }}>
                   <BarcodeQRCanvas value={printBarcode.manufacturerBarcode} size={110} />
                 </div>
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", overflow: "hidden", paddingRight: "2px" }}>
-                  <span style={{ fontFamily: "monospace", fontWeight: "bold", fontSize: "14px", color: "#000", textAlign: "right", direction: "ltr" }}>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", overflow: "hidden", paddingRight: "2px", gap: "3px" }}>
+                  <span style={{ fontFamily: "monospace", fontWeight: "bold", fontSize: "13px", color: "#000", textAlign: "right", direction: "ltr" }}>
                     {printBarcode.manufacturerBarcode}
+                  </span>
+                  <span style={{ fontSize: "10px", color: "#222", textAlign: "right", direction: "rtl", lineHeight: "1.3", wordBreak: "break-word", maxWidth: "100%" }}>
+                    {printBarcode.itemName}
                   </span>
                 </div>
               </div>

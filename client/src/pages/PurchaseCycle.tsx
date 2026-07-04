@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import QRCode from "qrcode";
 import { mediaUrl } from "@/lib/mediaUrl";
 import { trpc } from "@/lib/trpc";
 import { useTranslation } from "@/contexts/LanguageContext";
@@ -11,10 +12,12 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { TechnicianCombobox } from "@/components/TechnicianCombobox";
+import BarcodeScanner from "@/components/BarcodeScanner";
 import {
   ShoppingCart, Package, Truck, CheckCircle2, Camera, Loader2,
   Clock, ArrowLeft, ArrowRight, Image as ImageIcon, FileText,
-  AlertCircle, User, Hash, Calendar, Ban, Archive, Sparkles
+  AlertCircle, User, Hash, Calendar, Ban, Archive, Sparkles,
+  Search, QrCode, X
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
@@ -83,18 +86,23 @@ function FilterBar({
 }
 
 
-function DeliveryDocumentsTab({ deliveryDocsQuery, searchDocs, setSearchDocs, docRecipient, setDocRecipient, docDateFrom, setDocDateFrom, docDateTo, setDocDateTo, pageDocs, setPageDocs, incrementDocPrintMut }: any) {
-  const docs = deliveryDocsQuery.data ?? [];
+function DeliveryDocumentsTab({ deliveryDocsQuery, returnDocsQuery, searchDocs, setSearchDocs, docRecipient, setDocRecipient, docDateFrom, setDocDateFrom, docDateTo, setDocDateTo, pageDocs, setPageDocs, incrementDocPrintMut, incrementReturnDocPrintMut }: any) {
+  const deliveryDocs = (deliveryDocsQuery.data ?? []).map((d: any) => ({ ...d, docType: "delivery" as const }));
+  const returnDocsRaw = (returnDocsQuery?.data ?? []).map((d: any) => ({ ...d, docType: "return" as const }));
+  const docs = [...deliveryDocs, ...returnDocsRaw].sort(
+    (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
 
   // فلتر الوثائق
-  const recipients = [...new Set(docs.map((d: any) => d.deliveredToName).filter(Boolean))];
+  const recipients = [...new Set(deliveryDocs.map((d: any) => d.deliveredToName).filter(Boolean))];
   const filteredDocs = docs.filter((doc: any) => {
     const q = searchDocs.trim().toLowerCase();
     if (q) {
       const fields = Object.values(doc).map(v => String(v ?? "").toLowerCase());
       if (!fields.some(f => f.includes(q))) return false;
     }
-    if (docRecipient !== "all" && doc.deliveredToName !== docRecipient) return false;
+    if (docRecipient !== "all" && doc.docType === "delivery" && doc.deliveredToName !== docRecipient) return false;
+    if (docRecipient !== "all" && doc.docType === "return") return false;
     if (docDateFrom || docDateTo) {
       const d = new Date(doc.createdAt);
       if (docDateFrom && d < new Date(docDateFrom)) return false;
@@ -104,7 +112,93 @@ function DeliveryDocumentsTab({ deliveryDocsQuery, searchDocs, setSearchDocs, do
   });
   const pagedDocs = filteredDocs.slice((pageDocs-1)*PAGE_SIZE, pageDocs*PAGE_SIZE);
 
+  const handleDownloadReturn = async (doc: any) => {
+    incrementReturnDocPrintMut.mutate({ id: doc.id });
+    // نفتح النافذة فوراً (بشكل متزامن مع الضغطة) لتفادي حظر المتصفح للنوافذ
+    // المنبثقة، ثم نكتب المحتوى بعد جهوزية الـQR (عملية غير متزامنة)
+    const win = window.open("", "_blank", "width=860,height=780");
+
+    const qrValue = doc.manufacturerBarcode || doc.internalCode || doc.returnNumber;
+    let qrDataUrl = "";
+    try {
+      qrDataUrl = await QRCode.toDataURL(qrValue, { width: 130, margin: 1 });
+    } catch { /* لو فشل التوليد، نعرض الوثيقة بدون QR بدل ما نوقف الطباعة */ }
+
+    const html = `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head><meta charset="UTF-8"/><title>${doc.returnNumber}</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Cairo',Arial,sans-serif;background:#fff;color:#1a1a1a;padding:32px 40px;font-size:13px}
+.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #7f1d1d;padding-bottom:14px;margin-bottom:20px}
+.header-title{font-size:20px;font-weight:700;color:#7f1d1d}
+.header-sub{font-size:11px;color:#555;margin-top:4px}
+.header-meta{text-align:left;font-size:11px;color:#555;line-height:2}
+.badge{display:inline-block;background:#7f1d1d;color:#fff;padding:3px 10px;border-radius:4px;font-size:13px;font-weight:700}
+.section{margin-bottom:16px}
+.section-title{font-size:12px;font-weight:700;color:#7f1d1d;background:#fef2f2;padding:5px 10px;border-radius:4px;margin-bottom:10px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px}
+.field{display:flex;flex-direction:column;gap:2px}
+.field-label{font-size:10px;color:#777}
+.field-value{font-size:13px;font-weight:600;color:#111}
+.item-id-row{display:flex;align-items:center;gap:16px;border:1px solid #f3d2d2;border-radius:8px;padding:10px 14px;margin-bottom:16px;background:#fffafa}
+.sig-section{margin-top:32px;display:grid;grid-template-columns:1fr 1fr;gap:32px}
+.sig-box{border-top:1px solid #bbb;padding-top:8px;text-align:center;font-size:11px;color:#555}
+.footer{margin-top:24px;border-top:1px solid #eee;padding-top:10px;display:flex;justify-content:space-between;font-size:10px;color:#aaa}
+.print-count{font-size:11px;color:#888;background:#f4f6fa;border:1px solid #dde3ea;border-radius:20px;padding:2px 12px}
+@media print{@page{margin:10mm}}
+</style></head>
+<body>
+<div class="header">
+  <div>
+    <div class="header-title">↩️ وثيقة مرتجع</div>
+    <div class="header-sub">نظام إدارة الصيانة المتكامل</div>
+  </div>
+  <div class="header-meta">
+    <div>التاريخ: <strong>${new Date(doc.createdAt).toLocaleDateString("ar-SA",{year:"numeric",month:"long",day:"numeric"})}</strong></div>
+    <div><span class="badge">${doc.returnNumber}</span></div>
+    ${doc.poNumber ? `<div>طلب شراء: <strong>${doc.poNumber}</strong></div>` : ""}
+  </div>
+</div>
+${qrDataUrl ? `<div class="item-id-row">
+  <img src="${qrDataUrl}" width="90" height="90" style="border:1px solid #eee;border-radius:6px"/>
+  <div>
+    <div class="field-label">رقم الصنف (باركود المصنع)</div>
+    <div class="field-value" style="font-size:16px;font-family:monospace">${doc.manufacturerBarcode || doc.internalCode || "—"}</div>
+  </div>
+</div>` : ""}
+<div class="section">
+  <div class="section-title">بيانات المرتجع</div>
+  <div class="grid">
+    <div class="field"><span class="field-label">اسم الصنف</span><span class="field-value">${doc.itemName}</span></div>
+    <div class="field"><span class="field-label">الكمية المُرجَعة</span><span class="field-value">${doc.returnedQuantity} ${doc.unit||""}</span></div>
+    <div class="field"><span class="field-label">نفّذ الإرجاع</span><span class="field-value">${doc.returnedByName}</span></div>
+    ${doc.receiptNumber ? `<div class="field"><span class="field-label">سند الاستلام المرتبط</span><span class="field-value">${doc.receiptNumber}</span></div>` : `<div class="field"><span class="field-label">سند الاستلام</span><span class="field-value">— (إرجاع عام بلا مصدر معروف)</span></div>`}
+    ${doc.invoiceNumber ? `<div class="field"><span class="field-label">رقم فاتورة المورد</span><span class="field-value">${doc.invoiceNumber}</span></div>` : ""}
+    ${doc.vendorName ? `<div class="field"><span class="field-label">المورد</span><span class="field-value">${doc.vendorName}</span></div>` : ""}
+    <div class="field" style="grid-column:1/-1"><span class="field-label">سبب الإرجاع</span><span class="field-value">${doc.reason}</span></div>
+  </div>
+</div>
+<div class="sig-section">
+  <div class="sig-box">توقيع منفّذ الإرجاع<br/>${doc.returnedByName}</div>
+  <div class="sig-box">توقيع المستلم<br/>${doc.recipientName || "&nbsp;"}</div>
+</div>
+<div class="footer">
+  <span>وثيقة آلية — نظام CMMS</span>
+  <span class="print-count">عدد مرات الطباعة: <strong>${doc.printCount + 1}</strong></span>
+</div>
+<script>window.onload=()=>{window.print();window.onafterprint=()=>window.close();}<\/script>
+</body></html>`;
+
+    if (win) { win.document.write(html); win.document.close(); }
+  };
+
   const handleDownload = (doc: any) => {
+    if (doc.docType === "return") {
+      handleDownloadReturn(doc);
+      return;
+    }
     incrementDocPrintMut.mutate({ id: doc.id });
     // توليد PDF مباشرة في المتصفح بدون سيرفر
     const imgTag = doc.warehousePhotoUrl
@@ -181,7 +275,7 @@ body{font-family:'Cairo',Arial,sans-serif;background:#fff;color:#1a1a1a;padding:
     if (win) { win.document.write(html); win.document.close(); }
   };
 
-  if (deliveryDocsQuery.isLoading) {
+  if (deliveryDocsQuery.isLoading || returnDocsQuery?.isLoading) {
     return <Card><CardContent className="p-8 text-center text-muted-foreground">جاري التحميل...</CardContent></Card>;
   }
 
@@ -190,8 +284,8 @@ body{font-family:'Cairo',Arial,sans-serif;background:#fff;color:#1a1a1a;padding:
       <Card>
         <CardContent className="p-8 text-center text-muted-foreground">
           <FileText className="w-10 h-10 mx-auto mb-3 opacity-30" />
-          <p className="font-medium">لا توجد وثائق تسليم بعد</p>
-          <p className="text-xs mt-1">ستظهر هنا كل وثيقة عند تأكيد تسليم مادة للفني</p>
+          <p className="font-medium">لا توجد وثائق بعد</p>
+          <p className="text-xs mt-1">ستظهر هنا كل وثيقة عند تأكيد تسليم مادة للفني أو إتمام مرتجع</p>
         </CardContent>
       </Card>
     );
@@ -226,22 +320,40 @@ body{font-family:'Cairo',Arial,sans-serif;background:#fff;color:#1a1a1a;padding:
       </div>
       <div className="text-sm text-muted-foreground">{filteredDocs.length} وثيقة{filteredDocs.length !== docs.length ? ` من ${docs.length}` : ""}</div>
       {pagedDocs.map((doc: any) => (
-        <Card key={doc.id} className="hover:shadow-md transition-shadow border-r-4 border-r-primary/60">
+        <Card
+          key={`${doc.docType}-${doc.id}`}
+          className={`hover:shadow-md transition-shadow border-r-4 ${
+            doc.docType === "return" ? "border-r-red-700/60" : "border-r-primary/60"
+          }`}
+        >
           <CardContent className="p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0 space-y-1">
                 {/* العنوان = اسم الصنف */}
-                <p className="font-semibold text-base truncate">{doc.itemName}</p>
+                <p className="font-semibold text-base truncate">
+                  {doc.docType === "return" ? "↩️ " : ""}{doc.itemName}
+                </p>
                 <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                   {/* رقم الوثيقة */}
-                  <span className="bg-primary/10 text-primary font-bold px-2 py-0.5 rounded">
-                    {doc.deliveryNumber}
+                  <span className={`font-bold px-2 py-0.5 rounded ${
+                    doc.docType === "return" ? "bg-red-50 text-red-700" : "bg-primary/10 text-primary"
+                  }`}>
+                    {doc.docType === "return" ? doc.returnNumber : doc.deliveryNumber}
                   </span>
                   {/* التاريخ */}
                   <span>{new Date(doc.createdAt).toLocaleDateString("ar-SA", { year: "numeric", month: "short", day: "numeric" })}</span>
-                  <span>المُسلِّم: {doc.deliveredByName}</span>
-                  <span>المُستلِم: {doc.deliveredToName}</span>
-                  <span>الكمية: {doc.quantity} {doc.unit || ""}</span>
+                  {doc.docType === "return" ? (
+                    <>
+                      <span>نفّذ الإرجاع: {doc.returnedByName}</span>
+                      <span>الكمية: {doc.returnedQuantity} {doc.unit || ""}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>المُسلِّم: {doc.deliveredByName}</span>
+                      <span>المُستلِم: {doc.deliveredToName}</span>
+                      <span>الكمية: {doc.quantity} {doc.unit || ""}</span>
+                    </>
+                  )}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   طُبعت {doc.printCount} {doc.printCount === 1 ? "مرة" : "مرات"}
@@ -279,6 +391,10 @@ export default function PurchaseCycle() {
     onSuccess: () => { deliveryDocsQuery.refetch(); },
   });
   const incrementDocPrintMut = trpc.deliveryDocuments.incrementPrint.useMutation();
+
+  // Return documents (نفس تبويب "التوثيق" — تُنشأ تلقائياً بالخادم مع كل مرتجع)
+  const returnDocsQuery = trpc.returnDocuments.list.useQuery();
+  const incrementReturnDocPrintMut = trpc.returnDocuments.incrementPrint.useMutation();
 
   // Upload states
   const [uploading, setUploading] = useState<string | null>(null);
@@ -439,6 +555,7 @@ export default function PurchaseCycle() {
   const [searchPurchase,   setSearchPurchase]   = useState("");
   const [searchWarehouse,  setSearchWarehouse]  = useState("");
   const [searchDelivery,   setSearchDelivery]   = useState("");
+  const [deliverySearchMode, setDeliverySearchMode] = useState<"name" | "code" | "qr">("name");
   const [searchDocs,       setSearchDocs]       = useState("");
 
   const [dateFrom, setDateFrom] = useState("");
@@ -470,6 +587,27 @@ export default function PurchaseCycle() {
         if (to   && d > new Date(to + "T23:59:59")) return false;
       }
       return true;
+    });
+  };
+
+  // ── دالة فلترة التسليم — تحترم وضع البحث (اسم / رقم / QR) ──
+  const filterDeliveryItems = (items: any[], search: string) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(item => {
+      if (deliverySearchMode === "code" || deliverySearchMode === "qr") {
+        // بالرقم أو QR: يبحث في الكود الداخلي وباركود المصنع فقط
+        return (
+          String(item.internalCode ?? "").toLowerCase().includes(q) ||
+          String(item.manufacturerBarcode ?? "").toLowerCase().includes(q)
+        );
+      }
+      // بالاسم: يبحث في اسم الصنف (عربي/إنجليزي)
+      return (
+        String(item.itemName ?? "").toLowerCase().includes(q) ||
+        String(item.itemName_ar ?? "").toLowerCase().includes(q) ||
+        String(item.itemName_en ?? "").toLowerCase().includes(q)
+      );
     });
   };
 
@@ -967,8 +1105,47 @@ export default function PurchaseCycle() {
         {/* ==================== TAB 3: Delivery to Assigned Technician ==================== */}
         <TabsContent value="delivery" className="mt-4 space-y-4">
           <StepIndicator currentStep={3} />
-          <FilterBar search={searchDelivery} setSearch={v => { setSearchDelivery(v); setPageDelivery(1); }} from={dateFrom} setFrom={v => { setDateFrom(v); setPageDelivery(1); }} to={dateTo} setTo={v => { setDateTo(v); setPageDelivery(1); }} placeholder="بحث في أصناف التسليم..." />
-          {filterItems(inventoryItems as any[], searchDelivery, dateFrom, dateTo).length === 0 ? (
+
+          {/* ── خانة البحث الذكية ── */}
+          <div className="space-y-2 p-3 border rounded-lg bg-muted/20">
+            <div className="flex gap-2">
+              <Button size="sm" variant={deliverySearchMode === "name" ? "default" : "outline"} onClick={() => setDeliverySearchMode("name")} className="gap-1">
+                <Search className="w-3.5 h-3.5" /> بالاسم
+              </Button>
+              <Button size="sm" variant={deliverySearchMode === "code" ? "default" : "outline"} onClick={() => setDeliverySearchMode("code")} className="gap-1">
+                <Package className="w-3.5 h-3.5" /> بالرقم
+              </Button>
+              <Button size="sm" variant={deliverySearchMode === "qr" ? "default" : "outline"} onClick={() => setDeliverySearchMode("qr")} className="gap-1">
+                <QrCode className="w-3.5 h-3.5" /> QR Code
+              </Button>
+              {searchDelivery && (
+                <Button size="sm" variant="ghost" className="text-muted-foreground mr-auto" onClick={() => { setSearchDelivery(""); setDeliverySearchMode("name"); }}>
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              )}
+            </div>
+
+            {deliverySearchMode === "qr" ? (
+              <BarcodeScanner
+                onScan={(code) => {
+                  setSearchDelivery(code);
+                  setDeliverySearchMode("name");
+                }}
+                placeholder="امسح QR Code الصنف..."
+              />
+            ) : (
+              <div className="relative">
+                <input
+                  className="w-full border rounded-md px-3 py-1.5 text-sm pr-8 focus:outline-none focus:ring-1 focus:ring-primary"
+                  placeholder={deliverySearchMode === "name" ? "ابحث باسم الصنف..." : "ابحث برقم الصنف أو الباركود..."}
+                  value={searchDelivery}
+                  onChange={e => { setSearchDelivery(e.target.value); setPageDelivery(1); }}
+                />
+                <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              </div>
+            )}
+          </div>
+          {filterDeliveryItems(inventoryItems as any[], searchDelivery).length === 0 ? (
             <Card><CardContent className="p-8 text-center text-muted-foreground">
               <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-green-500" />
               <p className="font-medium">{t.purchaseOrders.noItemsPending}</p>
@@ -976,7 +1153,7 @@ export default function PurchaseCycle() {
             </CardContent></Card>
           ) : (
             <><div className="space-y-3">
-              {filterItems(inventoryItems as any[], searchDelivery, dateFrom, dateTo).slice((pageDelivery-1)*PAGE_SIZE, pageDelivery*PAGE_SIZE).map((item: any) => (
+              {filterDeliveryItems(inventoryItems as any[], searchDelivery).slice((pageDelivery-1)*PAGE_SIZE, pageDelivery*PAGE_SIZE).map((item: any) => (
                 <Card key={item.id} className="hover:shadow-md transition-shadow">
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-3">
@@ -1035,12 +1212,12 @@ export default function PurchaseCycle() {
 
 
             </div>
-            <Pagination total={filterItems(inventoryItems as any[], searchDelivery, dateFrom, dateTo).length} page={pageDelivery} setPage={setPageDelivery} /></>)}
+            <Pagination total={filterDeliveryItems(inventoryItems as any[], searchDelivery).length} page={pageDelivery} setPage={setPageDelivery} /></>)}
         </TabsContent>
 
         {/* ==================== TAB 5: Delivery Documents ==================== */}
         <TabsContent value="documents" className="mt-4">
-          <DeliveryDocumentsTab deliveryDocsQuery={deliveryDocsQuery} searchDocs={searchDocs} setSearchDocs={setSearchDocs} docRecipient={docRecipient} setDocRecipient={setDocRecipient} docDateFrom={docDateFrom} setDocDateFrom={setDocDateFrom} docDateTo={docDateTo} setDocDateTo={setDocDateTo} pageDocs={pageDocs} setPageDocs={setPageDocs} incrementDocPrintMut={incrementDocPrintMut} />
+          <DeliveryDocumentsTab deliveryDocsQuery={deliveryDocsQuery} returnDocsQuery={returnDocsQuery} searchDocs={searchDocs} setSearchDocs={setSearchDocs} docRecipient={docRecipient} setDocRecipient={setDocRecipient} docDateFrom={docDateFrom} setDocDateFrom={setDocDateFrom} docDateTo={docDateTo} setDocDateTo={setDocDateTo} pageDocs={pageDocs} setPageDocs={setPageDocs} incrementDocPrintMut={incrementDocPrintMut} incrementReturnDocPrintMut={incrementReturnDocPrintMut} />
         </TabsContent>
       </Tabs>
 

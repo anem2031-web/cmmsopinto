@@ -17,6 +17,7 @@ const ar = {
     inventoryOperations: "عمليات المخزون",
     warehouseReceive: "استلام المستودع",
     warehouseReturn: "مرتجع المستودع",
+    warehouseReturnsList: "المرتجعات",
     reports: "التقارير",
     technicianReport: "أداء الفنيين",
     costReport: "تقرير التكاليف",

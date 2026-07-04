@@ -17,6 +17,7 @@ const ur: any = {
     inventoryOperations: "گودام آپریشنز",
     warehouseReceive: "گودام وصول",
     warehouseReturn: "گودام واپسی",
+    warehouseReturnsList: "واپسیاں",
     reports: "رپورٹس",
     technicianReport: "ٹیکنیشن کی کارکردگی",
     purchaseCycleReport: "خریداری سائیکل رپورٹ",

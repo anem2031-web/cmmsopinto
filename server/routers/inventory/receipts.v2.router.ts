@@ -11,7 +11,10 @@ import { analyzeInvoiceFromUrl, analyzeInvoiceFromBase64 } from "../../services/
 
 // ─── مخطط الصنف المستلم ─────────────────────────────────────
 const receivedItemSchema = z.object({
-  purchaseOrderItemId:  z.number(),
+  // اختياري: الفاتورة الفعلية قد تحتوي أصنافاً زائدة عن طلب الشراء الأصلي
+  // (المورد أضافها، أو لم تكن مطلوبة أصلاً) — هذه تُستلم للمخزون مباشرة
+  // دون ربطها ببند طلب، ودون تحديث حالة أي بند طلب لأجلها
+  purchaseOrderItemId:  z.number().optional(),
   inventoryId:          z.number().optional(),
   linkedItemId:         z.number().optional(),
   itemName:             z.string().min(1),
@@ -89,7 +92,7 @@ export const receiptsV2Router = router({
         // كشف الفاتورة المكررة
         console.log("[OCR] Step 2: checking duplicate...");
         let duplicateCheck = null;
-        if (result.invoiceNumber && input.purchaseOrderId) {
+        if (result.invoiceNumber) {
           duplicateCheck = await db.checkDuplicateInvoice({
             invoiceNumber: result.invoiceNumber,
             vendorTaxNumber: result.vendorTaxNumber,
@@ -153,6 +156,156 @@ export const receiptsV2Router = router({
       return db.findSimilarInventoryItems(input.itemName);
     }),
 
+  // ── استلام مستقل بلا طلب شراء — لدعم فاتورة شراء عامة/مصاريف نثرية من
+  //   شاشة المخزون مباشرة، بلا أي دورة طلب شراء وراءها. كل الأصناف هنا
+  //   بالتعريف بلا purchaseOrderItemId (لا يوجد بند طلب لتربطها به).
+  receiveStandaloneV2: warehouseProcedure
+    .input(z.object({
+      vendorName:       z.string().optional(),
+      vendorNameEn:     z.string().optional(),
+      vendorTaxNumber:  z.string().optional(),
+      invoiceNumber:    z.string().optional(),
+      invoiceDate:      z.string().optional(),
+      subtotal:         z.number().optional(),
+      taxAmount:        z.number().optional(),
+      grandTotal:       z.number().optional(),
+      invoicePhotoUrl:  z.string().optional(),
+      goodsPhotoUrl:    z.string().optional(),
+      ocrJobId:         z.number().optional(),
+      hasDiscrepancy:   z.boolean().default(false),
+      discrepancyNotes: z.string().optional(),
+      notes:            z.string().optional(),
+      items:            z.array(receivedItemSchema),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (input.items.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "لا توجد أصناف للاستلام" });
+      }
+
+      if (input.invoiceNumber) {
+        const dup = await db.checkDuplicateInvoice({
+          invoiceNumber:   input.invoiceNumber,
+          vendorTaxNumber: input.vendorTaxNumber,
+        });
+        if (dup) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: `رقم الفاتورة ${input.invoiceNumber} مستلم مسبقاً (سند ${dup.receiptNumber})`,
+          });
+        }
+      }
+
+      const { receiptId, receiptNumber, processedItems } = await db.withTransaction(async (tx) => {
+        const receiptNumber = await db.getNextReceiptNumber(tx);
+
+        const receiptId = await db.createWarehouseReceiptV2({
+          receiptNumber,
+          // بلا purchaseOrderId عمداً — استلام مستقل
+          receivedById:     ctx.user.id,
+          notes:            input.notes,
+          totalItems:       input.items.length,
+          status:           "confirmed",
+          vendorName:       input.vendorName,
+          vendorNameEn:     input.vendorNameEn,
+          vendorTaxNumber:  input.vendorTaxNumber,
+          invoiceNumber:    input.invoiceNumber,
+          invoiceDate:      input.invoiceDate ? new Date(input.invoiceDate) : undefined,
+          subtotal:         input.subtotal?.toString(),
+          taxAmount:        input.taxAmount?.toString(),
+          grandTotal:       input.grandTotal?.toString(),
+          invoicePhotoUrl:  input.invoicePhotoUrl,
+          goodsPhotoUrl:    input.goodsPhotoUrl,
+          hasDiscrepancy:   input.hasDiscrepancy,
+          discrepancyNotes: input.discrepancyNotes,
+        }, tx);
+
+        const processedItems: any[] = [];
+
+        for (const item of input.items) {
+          const processed = await processReceiptItem({
+            item,
+            receiptId: receiptId!,
+            receiptNumber,
+            performedById: ctx.user.id,
+            tx,
+            // لا purchaseOrderId ولا poNumber — استلام مستقل
+          });
+          processedItems.push(processed);
+
+          await db.createWarehouseReceiptItem({
+            receiptId: receiptId!,
+            inventoryId: processed.inventoryId,
+            // بلا purchaseOrderItemId — لا يوجد بند طلب أصلاً
+            itemName: item.itemName,
+            itemName_ar: item.itemName_ar,
+            itemName_en: item.itemName_en,
+            receivedQuantity: item.receivedQuantity.toString(),
+            purchaseUnit: item.purchaseUnit,
+            unitCost: item.unitCost,
+            taxRate: item.taxRate.toString(),
+            taxAmount: item.taxAmount,
+            lineTotal: item.lineTotal,
+            ocrExtracted: item.ocrExtracted,
+            manuallyEdited: item.manuallyEdited,
+          }, tx);
+        }
+
+        return { receiptId, receiptNumber, processedItems };
+      });
+
+      if (input.ocrJobId) {
+        await db.updateOcrJob(input.ocrJobId, { receiptId: receiptId! });
+      }
+
+      const managers = await db.getManagerUsers();
+      for (const mgr of managers) {
+        await db.createNotification({
+          userId: mgr.id,
+          title: `📦 استلام مستقل ${receiptNumber}`,
+          message: `تم استلام ${input.items.length} صنف (بلا طلب شراء)` +
+            (input.hasDiscrepancy ? " ⚠️ يوجد فروقات" : ""),
+          type: input.hasDiscrepancy ? "warning" : "info",
+        });
+      }
+
+      await db.createAuditLog({
+        userId: ctx.user.id,
+        action: "warehouse_receive_standalone_v2",
+        entityType: "warehouse_receipt",
+        entityId: receiptId!,
+        newValues: {
+          receiptNumber,
+          totalItems:      input.items.length,
+          vendorName:      input.vendorName,
+          invoiceNumber:   input.invoiceNumber,
+          grandTotal:      input.grandTotal,
+          hasDiscrepancy:  input.hasDiscrepancy,
+        },
+      });
+
+      const inventoryItems = await Promise.all(
+        processedItems.map(async (p: any) => {
+          if (!p.inventoryId) return null;
+          const inv = await db.getInventoryItemById(p.inventoryId);
+          return inv ? {
+            inventoryId:        inv.id,
+            itemName:           inv.itemName,
+            internalCode:       inv.internalCode,
+            manufacturerBarcode: inv.manufacturerBarcode,
+            quantity:           inv.quantity,
+            unit:               inv.unit,
+          } : null;
+        })
+      );
+
+      return {
+        receiptId,
+        receiptNumber,
+        inventoryItems: inventoryItems.filter(Boolean),
+        hasDiscrepancy: input.hasDiscrepancy,
+      };
+    }),
+
   receiveFromPurchaseV2: warehouseProcedure
     .input(z.object({
       purchaseOrderId:  z.number(),
@@ -176,6 +329,24 @@ export const receiptsV2Router = router({
       const po = await db.getPurchaseOrderById(input.purchaseOrderId);
       if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
 
+      // ── حاجز أمان: نمنع كتابة أي بيانات على بند لا ينتمي فعلاً لهذا الطلب
+      //   أو ليس بحالة "توريد للمستودع" — لكن فقط للأصناف التي اختار
+      //   المستخدم ربطها ببند (purchaseOrderItemId موجود). الأصناف بلا ربط
+      //   (صنف زائد بالفاتورة لا يقابله بند بالطلب) مسموحة عمداً.
+      const poItemsAll = await db.getPOItems(input.purchaseOrderId);
+      const validItemIds = new Set(
+        poItemsAll.filter((i: any) => i.status === "delivered_to_warehouse").map((i: any) => i.id)
+      );
+      const invalidItems = input.items.filter(
+        it => it.purchaseOrderItemId != null && !validItemIds.has(it.purchaseOrderItemId)
+      );
+      if (invalidItems.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `أصناف غير صالحة للاستلام (غير منتمية لهذا الطلب أو لم تُؤكَّد توريدها للمستودع بعد): ${invalidItems.map(i => i.itemName).join("، ")}`,
+        });
+      }
+
       if (input.invoiceNumber) {
         const duplicate = await db.checkDuplicateInvoice({
           invoiceNumber: input.invoiceNumber,
@@ -189,88 +360,104 @@ export const receiptsV2Router = router({
         }
       }
 
-      const receiptNumber = await db.getNextReceiptNumber();
+      // ── الجزء الحرج محاسبياً (الإيصال + بنوده + تحديث المخزون + حالة
+      //   بنود الطلب) يُنفَّذ كمعاملة واحدة: إما ينجح بالكامل أو يُلغى
+      //   بالكامل (rollback) — لا حالة وسطى ممزقة عند أي فشل جزئي.
+      const { receiptId, receiptNumber, processedItems } = await db.withTransaction(async (tx) => {
+        const receiptNumber = await db.getNextReceiptNumber(tx);
 
-      const receiptId = await db.createWarehouseReceiptV2({
-        receiptNumber,
-        purchaseOrderId:  input.purchaseOrderId,
-        receivedById:     ctx.user.id,
-        notes:            input.notes,
-        totalItems:       input.items.length,
-        status:           "confirmed",
-        vendorName:       input.vendorName,
-        vendorNameEn:     input.vendorNameEn,
-        vendorTaxNumber:  input.vendorTaxNumber,
-        invoiceNumber:    input.invoiceNumber,
-        invoiceDate:      input.invoiceDate ? new Date(input.invoiceDate) : undefined,
-        subtotal:         input.subtotal?.toString(),
-        taxAmount:        input.taxAmount?.toString(),
-        grandTotal:       input.grandTotal?.toString(),
-        invoicePhotoUrl:  input.invoicePhotoUrl,
-        goodsPhotoUrl:    input.goodsPhotoUrl,
-        hasDiscrepancy:   input.hasDiscrepancy,
-        discrepancyNotes: input.discrepancyNotes,
+        const receiptId = await db.createWarehouseReceiptV2({
+          receiptNumber,
+          purchaseOrderId:  input.purchaseOrderId,
+          receivedById:     ctx.user.id,
+          notes:            input.notes,
+          totalItems:       input.items.length,
+          status:           "confirmed",
+          vendorName:       input.vendorName,
+          vendorNameEn:     input.vendorNameEn,
+          vendorTaxNumber:  input.vendorTaxNumber,
+          invoiceNumber:    input.invoiceNumber,
+          invoiceDate:      input.invoiceDate ? new Date(input.invoiceDate) : undefined,
+          subtotal:         input.subtotal?.toString(),
+          taxAmount:        input.taxAmount?.toString(),
+          grandTotal:       input.grandTotal?.toString(),
+          invoicePhotoUrl:  input.invoicePhotoUrl,
+          goodsPhotoUrl:    input.goodsPhotoUrl,
+          hasDiscrepancy:   input.hasDiscrepancy,
+          discrepancyNotes: input.discrepancyNotes,
+        }, tx);
+
+        const processedItems: any[] = [];
+
+        for (const item of input.items) {
+          const processed = await processReceiptItem({
+            item,
+            receiptId: receiptId!,
+            purchaseOrderId: input.purchaseOrderId,
+            poNumber: po.poNumber,
+            receiptNumber,
+            performedById: ctx.user.id,
+            tx,
+          });
+          processedItems.push(processed);
+
+          await db.createWarehouseReceiptItem({
+            receiptId: receiptId!,
+            inventoryId: processed.inventoryId,
+            purchaseOrderItemId: item.purchaseOrderItemId,
+            itemName: item.itemName,
+            itemName_ar: item.itemName_ar,
+            itemName_en: item.itemName_en,
+            receivedQuantity: item.receivedQuantity.toString(),
+            purchaseUnit: item.purchaseUnit,
+            unitCost: item.unitCost,
+            taxRate: item.taxRate.toString(),
+            taxAmount: item.taxAmount,
+            lineTotal: item.lineTotal,
+            expectedQuantity: item.expectedQuantity?.toString(),
+            quantityDiff: item.expectedQuantity
+              ? (item.receivedQuantity - item.expectedQuantity).toString()
+              : undefined,
+            expectedUnitCost: item.expectedUnitCost,
+            priceDiff: item.expectedUnitCost
+              ? (parseFloat(item.unitCost) - parseFloat(item.expectedUnitCost)).toString()
+              : undefined,
+            ocrExtracted: item.ocrExtracted,
+            manuallyEdited: item.manuallyEdited,
+          }, tx);
+
+          // تحديث بند الطلب فقط للأصناف المربوطة فعلياً ببند حقيقي — الأصناف
+          // الزائدة عن الطلب (بلا purchaseOrderItemId) تُستلم للمخزون فقط
+          // دون أي أثر على بنود الطلب أو حالته
+          if (item.purchaseOrderItemId) {
+            await db.updatePOItem(item.purchaseOrderItemId, {
+              status:            "delivered_to_warehouse",
+              receivedAt:        new Date(),
+              receivedById:      ctx.user.id,
+              receivedQuantity:  item.receivedQuantity,
+              supplierName:      input.vendorName,
+              actualUnitCost:    item.unitCost,
+              actualTotalCost:   item.lineTotal,
+              warehousePhotoUrl: input.goodsPhotoUrl,
+            }, tx);
+          }
+        }
+
+        const allItems = await db.getPOItems(input.purchaseOrderId, tx);
+        const activeItems = allItems.filter((i: any) => !["rejected", "cancelled"].includes(i.status));
+        const allInWarehouse = activeItems.every((i: any) =>
+          ["delivered_to_warehouse", "delivered_to_requester"].includes(i.status)
+        );
+        if (allInWarehouse) {
+          await db.updatePurchaseOrder(input.purchaseOrderId, { status: "received" }, tx);
+        }
+
+        return { receiptId, receiptNumber, processedItems };
       });
 
-      const processedItems: any[] = [];
-
-      for (const item of input.items) {
-        const processed = await processReceiptItem({
-          item,
-          receiptId: receiptId!,
-          purchaseOrderId: input.purchaseOrderId,
-          poNumber: po.poNumber,
-          receiptNumber,
-          performedById: ctx.user.id,
-        });
-        processedItems.push(processed);
-
-        await db.createWarehouseReceiptItem({
-          receiptId: receiptId!,
-          inventoryId: processed.inventoryId,
-          purchaseOrderItemId: item.purchaseOrderItemId,
-          itemName: item.itemName,
-          itemName_ar: item.itemName_ar,
-          itemName_en: item.itemName_en,
-          receivedQuantity: item.receivedQuantity.toString(),
-          purchaseUnit: item.purchaseUnit,
-          unitCost: item.unitCost,
-          taxRate: item.taxRate.toString(),
-          taxAmount: item.taxAmount,
-          lineTotal: item.lineTotal,
-          expectedQuantity: item.expectedQuantity?.toString(),
-          quantityDiff: item.expectedQuantity
-            ? (item.receivedQuantity - item.expectedQuantity).toString()
-            : undefined,
-          expectedUnitCost: item.expectedUnitCost,
-          priceDiff: item.expectedUnitCost
-            ? (parseFloat(item.unitCost) - parseFloat(item.expectedUnitCost)).toString()
-            : undefined,
-          ocrExtracted: item.ocrExtracted,
-          manuallyEdited: item.manuallyEdited,
-        });
-
-        await db.updatePOItem(item.purchaseOrderItemId, {
-          status:            "delivered_to_warehouse",
-          receivedAt:        new Date(),
-          receivedById:      ctx.user.id,
-          receivedQuantity:  item.receivedQuantity,
-          supplierName:      input.vendorName,
-          actualUnitCost:    item.unitCost,
-          actualTotalCost:   item.lineTotal,
-          warehousePhotoUrl: input.goodsPhotoUrl,
-        });
-      }
-
-      const allItems = await db.getPOItems(input.purchaseOrderId);
-      const activeItems = allItems.filter((i: any) => !["rejected", "cancelled"].includes(i.status));
-      const allInWarehouse = activeItems.every((i: any) =>
-        ["delivered_to_warehouse", "delivered_to_requester"].includes(i.status)
-      );
-      if (allInWarehouse) {
-        await db.updatePurchaseOrder(input.purchaseOrderId, { status: "received" });
-      }
-
+      // ── ما بعد المعاملة: آثار جانبية غير حرجة محاسبياً (إشعارات، سجل
+      //   تدقيق، تحديث OCR job). فشلها لا يجب أن يُلغي عملية استلام ناجحة
+      //   فعلياً، فتبقى خارج نطاق الـ transaction عمداً.
       if (input.ocrJobId) {
         await db.updateOcrJob(input.ocrJobId, { receiptId: receiptId! });
       }
@@ -317,6 +504,7 @@ export const receiptsV2Router = router({
           } : null;
         })
       );
+
 
       return {
         receiptId,
@@ -383,12 +571,14 @@ interface ProcessedItem {
 async function processReceiptItem(params: {
   item:            z.infer<typeof receivedItemSchema>;
   receiptId:       number;
-  purchaseOrderId: number;
-  poNumber:        string;
+  purchaseOrderId?: number;
+  poNumber?:       string; // غير موجود = استلام مستقل بلا طلب شراء
   receiptNumber:   string;
   performedById:   number;
+  tx:              any;
 }): Promise<ProcessedItem> {
-  const { item, receiptId, poNumber, receiptNumber, performedById } = params;
+  const { item, receiptId, poNumber, receiptNumber, performedById, tx } = params;
+  const sourceLabel = poNumber ? `طلب شراء ${poNumber}` : "استلام مستقل (بلا طلب شراء)";
   let inventoryId = item.inventoryId;
   let isNew = false;
   let internalCode = "";
@@ -397,7 +587,7 @@ async function processReceiptItem(params: {
   const issueQuantity = item.receivedQuantity * item.conversionFactor;
 
   if (inventoryId) {
-    const existing = await db.getInventoryItemById(inventoryId);
+    const existing = await db.getInventoryItemById(inventoryId, tx);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: `الصنف ${inventoryId} غير موجود` });
 
     const oldQty     = existing.quantity || 0;
@@ -412,7 +602,13 @@ async function processReceiptItem(params: {
       averageCost:     newAvgCost.toFixed(4),
       totalCostValue:  (newQty * newAvgCost).toFixed(2),
       ...(item.linkedItemId ? { linkedItemId: item.linkedItemId } : {}),
-    });
+      // نحفظ الباركود المولَّد أثناء إدخال الفاتورة فقط إذا كان الصنف
+      // الموجود لا يملك باركوداً أصلاً — حتى لا نستبدل باركوداً صحيحاً
+      // مطبوعاً ومستخدماً فعلياً على الرفوف
+      ...(!((existing as any).manufacturerBarcode) && item.manufacturerBarcode
+        ? { manufacturerBarcode: item.manufacturerBarcode }
+        : {}),
+    }, tx);
 
     internalCode = (existing as any).internalCode || "";
 
@@ -422,18 +618,18 @@ async function processReceiptItem(params: {
       quantity:            issueQuantity,
       unitCost:            unitCost.toFixed(4),
       totalCost:           (issueQuantity * unitCost).toFixed(2),
-      reason:              `استلام من طلب شراء ${poNumber} - فاتورة ${receiptNumber}`,
+      reason:              `استلام من ${sourceLabel} - فاتورة ${receiptNumber}`,
       purchaseOrderItemId: item.purchaseOrderItemId,
       performedById,
       transactionType:     "purchase",
       receiptId,
-    });
+    }, tx);
 
     return { inventoryId, isNew: false, internalCode, newAverageCost: newAvgCost };
 
   } else {
     isNew = true;
-    internalCode = await db.getNextInventoryCode();
+    internalCode = await db.getNextInventoryCode(tx);
 
     inventoryId = await db.createInventoryItemV2({
       itemName:            item.itemName,
@@ -455,7 +651,7 @@ async function processReceiptItem(params: {
       assetId:             item.assetId,
       warehouseId:         item.warehouseId || 1,
       receiptId,
-    }) as number;
+    }, tx) as number;
 
     await db.addInventoryTransactionV2({
       inventoryId,
@@ -463,12 +659,12 @@ async function processReceiptItem(params: {
       quantity:            issueQuantity,
       unitCost:            unitCost.toFixed(4),
       totalCost:           (issueQuantity * unitCost).toFixed(2),
-      reason:              `استلام أول - طلب شراء ${poNumber} - فاتورة ${receiptNumber}`,
+      reason:              `استلام أول - ${sourceLabel} - فاتورة ${receiptNumber}`,
       purchaseOrderItemId: item.purchaseOrderItemId,
       performedById,
       transactionType:     "purchase",
       receiptId,
-    });
+    }, tx);
 
     return { inventoryId, isNew, internalCode, newAverageCost: unitCost };
   }
@@ -479,11 +675,17 @@ async function enrichItemsWithInventoryData(items: any[] = []): Promise<any[]> {
     console.warn("[OCR] items is not array:", typeof items, items);
     return [];
   }
-  // NOTE: findSimilarInventoryItems معطلة مؤقتاً لحين إضافة الحقول للـ Schema
-  return items.map((item) => ({
-    ...item,
-    existsInSystem:  false,
-    matchedItems:    [],
-    suggestedItemId: null,
+  return Promise.all(items.map(async (item) => {
+    const itemName = item.itemName || "";
+    if (!itemName.trim()) {
+      return { ...item, existsInSystem: false, matchedItems: [], suggestedItemId: null };
+    }
+    const matched = await db.findSimilarInventoryItems(itemName);
+    return {
+      ...item,
+      existsInSystem:  matched.length > 0,
+      matchedItems:    matched,
+      suggestedItemId: matched[0]?.id ?? null,
+    };
   }));
 }

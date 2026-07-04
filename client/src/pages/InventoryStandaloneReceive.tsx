@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import QRCode from "qrcode";
 import { trpc } from "@/lib/trpc";
-import { useLocation, useSearch } from "wouter";
+import { useLocation } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -78,14 +78,8 @@ const ITEM_TYPE_COLORS: Record<ItemType, string> = {
 };
 
 // ─────────────────────────────────────────────────────────────
-export default function WarehouseReceiveV2() {
+export default function InventoryStandaloneReceive() {
   const [, navigate] = useLocation();
-  const search = useSearch();
-  const params = new URLSearchParams(search);
-  const poId = params.get("poId") ? parseInt(params.get("poId")!) : null;
-  // رقم فاتورة المورد الممرّر من تبويب "إدخال المخزون" — يحدد أي مجموعة أصناف
-  // من الطلب سيتم استلامها في هذه الجلسة (طلب واحد قد يحتوي عدة فواتير موردين)
-  const invoiceNumberParam = params.get("invoiceNumber") || null;
 
   // ── State ──────────────────────────────────────────────────
   const [step, setStep] = useState<Step>("upload");
@@ -94,50 +88,9 @@ export default function WarehouseReceiveV2() {
   const [ocrJobId, setOcrJobId]         = useState<number | null>(null);
   const [invoiceData, setInvoiceData]   = useState<InvoiceData>({});
   const [items, setItems]               = useState<ReceiveItem[]>([]);
-  // بنود طلب الشراء المرشّحة للربط (delivered_to_warehouse لنفس الفاتورة) —
-  // هذه ليست الأصناف المعروضة للتعديل، فقط مصدر لربط كل صنف بالفاتورة ببنده
-  // الأصلي بالطلب (مطلوب لتحديث حالة البند وسعره الفعلي عند الحفظ).
-  const [poCandidates, setPoCandidates] = useState<any[]>([]);
   const [notes, setNotes]               = useState("");
   const [isDuplicate, setIsDuplicate]   = useState(false);
-  const [initialized, setInitialized]   = useState(false);
   const [ocrConfidence, setOcrConfidence] = useState<number | null>(null);
-
-  // ── Queries ────────────────────────────────────────────────
-  const { data: po } = trpc.purchaseOrders.getById.useQuery(
-    { id: poId! }, { enabled: !!poId }
-  );
-
-  // تحميل بنود الطلب المرشّحة للربط (بحالة "توريد للمستودع" ونفس رقم الفاتورة)
-  // — لا تُعرض كأصناف جاهزة، فقط قائمة نربط بها أصناف الفاتورة الحقيقية لاحقاً.
-  useEffect(() => {
-    if (!initialized && (po as any)?.items) {
-      const deliveredItems = (po as any).items.filter((i: any) =>
-        i.status === "delivered_to_warehouse" &&
-        (!invoiceNumberParam || i.supplierInvoiceNumber === invoiceNumberParam)
-      );
-      setPoCandidates(deliveredItems);
-      setInitialized(true);
-    }
-  }, [po, initialized, invoiceNumberParam]);
-
-  // مطابقة تقريبية بالاسم لاقتراح ربط تلقائي بين صنف الفاتورة وبند الطلب —
-  // اقتراح فقط قابل للتغيير يدوياً، وليس اعتماداً نهائياً
-  const suggestPoMatch = (ocrItemName: string, used: Set<number>) => {
-    const norm = (s: string) => (s || "").trim().toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "");
-    const target = norm(ocrItemName);
-    const targetWords = new Set(target.split(/\s+/).filter(w => w.length > 1));
-    let best: any = null;
-    let bestScore = 0;
-    for (const cand of poCandidates) {
-      if (used.has(cand.id)) continue;
-      const candWords = new Set(norm(cand.itemName).split(/\s+/).filter(w => w.length > 1));
-      let score = 0;
-      candWords.forEach(w => { if (targetWords.has(w)) score++; });
-      if (score > bestScore) { bestScore = score; best = cand; }
-    }
-    return bestScore > 0 ? best : null;
-  };
 
   // ── Mutations ──────────────────────────────────────────────
   const ocrMut = trpc.warehouseReceiptsV2.analyzeInvoice.useMutation({
@@ -160,9 +113,8 @@ export default function WarehouseReceiveV2() {
       });
 
       // بناء قائمة الأصناف من الفاتورة الحقيقية نفسها — نفس العدد ونفس
-      // المسميات كما استخرجها OCR، وليست دمجاً فوق أصناف الطلب. كل صنف
-      // يُقترح ربطه تلقائياً ببند من الطلب (poCandidates) بالتشابه بالاسم،
-      // ويبقى قابلاً للتعديل يدوياً من المستخدم قبل الحفظ.
+      // المسميات كما استخرجها OCR. لا يوجد طلب شراء هنا أصلاً، فلا حاجة
+      // لأي ربط ببند طلب — كل الأصناف تُستلم للمخزون مباشرة.
       (async () => {
         if (inv.items?.length > 0) {
           let barcodes: string[] = [];
@@ -174,35 +126,23 @@ export default function WarehouseReceiveV2() {
             barcodes = inv.items.map((_: any, i: number) => `${year}${i + 1}`);
           }
 
-          const usedPoIds = new Set<number>();
           const newItems: ReceiveItem[] = inv.items.map((ocrItem: any, idx: number) => {
-            const suggested = suggestPoMatch(ocrItem.itemName || "", usedPoIds);
-            if (suggested) usedPoIds.add(suggested.id);
-
             const receivedQty = ocrItem.quantity || 1;
             const unitCost    = ocrItem.unitPrice?.toString() || "0";
             const taxAmt      = (ocrItem.taxAmount || 0).toFixed(2);
             const lineTotal   = ocrItem.lineTotal?.toFixed(2) || (receivedQty * parseFloat(unitCost) * 1.15).toFixed(2);
-            const hasDiff     = suggested
-              ? (suggested.estimatedUnitCost
-                  ? Math.abs(parseFloat(unitCost) - parseFloat(suggested.estimatedUnitCost)) > 0.01
-                  : false) || receivedQty !== suggested.quantity
-              : false;
 
             return {
-              // اسم الصنف كما في الفاتورة الفعلية — هذا هو المصدر الذي سيُدخَل
-              // للمخزون، وليس اسم بند الطلب الأصلي
+              // اسم الصنف كما في الفاتورة الفعلية — هذا هو المصدر الذي سيُدخَل للمخزون
               itemName:            ocrItem.itemName || "صنف غير محدد",
               itemName_en:         ocrItem.itemNameEn,
               itemType:            "consumable" as const,
-              // الربط ببند الطلب (0 = غير مربوط بعد، يجب اختياره يدوياً قبل الحفظ)
-              purchaseOrderItemId: suggested?.id || 0,
-              requestedQuantity:   suggested?.quantity ?? receivedQty,
+              purchaseOrderItemId: 0, // لا يوجد طلب شراء أصلاً في هذا المسار
+              requestedQuantity:   receivedQty,
               receivedQuantity:    receivedQty,
-              purchaseUnit:        ocrItem.unit || suggested?.unit || "قطعة",
+              purchaseUnit:        ocrItem.unit || "قطعة",
               conversionFactor:    1,
               unitCost,
-              expectedUnitCost:    suggested?.estimatedUnitCost || undefined,
               taxRate:             ocrItem.taxRate || 15,
               taxAmount:           taxAmt,
               lineTotal,
@@ -210,20 +150,13 @@ export default function WarehouseReceiveV2() {
               ocrExtracted:        true,
               manuallyEdited:      false,
               expanded:            true,
-              hasDiff,
+              hasDiff:             false,
               similarItems:        ocrItem.matchedItems || [],
               showSimilar:         ocrItem.existsInSystem,
             } as ReceiveItem;
           });
 
           setItems(newItems);
-
-          const unlinkedCount = newItems.filter(i => !i.purchaseOrderItemId).length;
-          if (unlinkedCount > 0) {
-            toast.info(`${unlinkedCount} صنف بدون ربط ببند طلب — سيُستلم للمخزون مباشرة كصنف زائد عن الطلب`, {
-              description: "يمكنك ربطه ببند إن كان يقابل طلباً فعلياً، أو تركه كما هو",
-            });
-          }
         } else {
           toast.error("لم يتمكن التحليل من استخراج أي أصناف من الفاتورة", {
             description: "تحقق من وضوح الصورة أو أدخل الأصناف يدوياً",
@@ -243,7 +176,7 @@ export default function WarehouseReceiveV2() {
   const [printItems, setPrintItems] = useState<any[]>([]);
   const [showPrint, setShowPrint] = useState(false);
 
-  const receiveMut = trpc.warehouseReceiptsV2.receiveFromPurchaseV2.useMutation({
+  const receiveMut = trpc.warehouseReceiptsV2.receiveStandaloneV2.useMutation({
     onSuccess: (data: any) => {
       toast.success(`تم الاستلام — فاتورة ${data.receiptNumber}`, {
         description: data.hasDiscrepancy ? "⚠️ تم تسجيل الفروقات" : "تم تحديث المخزون",
@@ -299,33 +232,33 @@ export default function WarehouseReceiveV2() {
   const handleOcr = () => {
     if (!invoiceFile?.url) return;
     ocrMut.mutate({
-      imageUrl:        invoiceFile.url,
-      purchaseOrderId: poId || undefined,
+      imageUrl: invoiceFile.url,
+      // بلا purchaseOrderId — استلام مستقل
     });
   };
 
   const handleSkipOcr = () => {
-    // بدون OCR، نعتمد بنود الطلب نفسها كأصناف مبدئية قابلة للتعديل يدوياً
-    if (items.length === 0 && poCandidates.length > 0) {
-      setItems(poCandidates.map((i: any) => ({
-        purchaseOrderItemId:  i.id,
-        itemName:             i.itemName,
-        itemType:             "consumable" as ItemType,
-        requestedQuantity:    i.quantity,
-        receivedQuantity:     i.receivedQuantity || i.quantity,
-        purchaseUnit:         i.unit || "قطعة",
-        conversionFactor:     1,
-        unitCost:             i.actualUnitCost || i.estimatedUnitCost || "",
-        expectedUnitCost:     i.estimatedUnitCost || undefined,
-        taxRate:              15,
-        taxAmount:            "0",
-        lineTotal:            "0",
-        ocrExtracted:         false,
-        manuallyEdited:       false,
-        expanded:             true,
-        hasDiff:              false,
-        showSimilar:          false,
-      })));
+    // بدون OCR، وبدون طلب شراء، لا يوجد مصدر تلقائي للأصناف — يبدأ المستخدم
+    // بصنف فارغ واحد يضيف عليه يدوياً (زر "إضافة صنف" بشاشة المراجعة)
+    if (items.length === 0) {
+      setItems([{
+        purchaseOrderItemId: 0,
+        itemName:            "صنف جديد",
+        itemType:            "consumable" as const,
+        requestedQuantity:   1,
+        receivedQuantity:    1,
+        purchaseUnit:        "قطعة",
+        conversionFactor:    1,
+        unitCost:            "0",
+        taxRate:             15,
+        taxAmount:           "0",
+        lineTotal:           "0",
+        ocrExtracted:        false,
+        manuallyEdited:      true,
+        expanded:            true,
+        hasDiff:             false,
+        showSimilar:         false,
+      }]);
     }
     setStep("review");
   };
@@ -336,20 +269,8 @@ export default function WarehouseReceiveV2() {
       toast.error(`أكمل بيانات: ${invalid.itemName}`);
       return;
     }
-    // الربط ببند طلب الشراء اختياري (قد يكون الصنف زائداً عن الطلب الأصلي)،
-    // لكن لو رُبط أكثر من صنف بنفس البند بالخطأ فهذا تعارض منطقي نمنعه
-    const idCounts = new Map<number, number>();
-    items.filter(i => i.purchaseOrderItemId).forEach(i =>
-      idCounts.set(i.purchaseOrderItemId, (idCounts.get(i.purchaseOrderItemId) || 0) + 1)
-    );
-    const duplicateLink = items.find(i => i.purchaseOrderItemId && (idCounts.get(i.purchaseOrderItemId) || 0) > 1);
-    if (duplicateLink) {
-      toast.error(`أكثر من صنف مربوط بنفس بند الطلب — راجع الربط لصنف "${duplicateLink.itemName}"`);
-      return;
-    }
 
     receiveMut.mutate({
-      purchaseOrderId:  poId!,
       vendorName:       invoiceData.vendorName,
       vendorNameEn:     invoiceData.vendorNameEn,
       vendorTaxNumber:  invoiceData.vendorTaxNumber,
@@ -365,19 +286,16 @@ export default function WarehouseReceiveV2() {
       discrepancyNotes: hasDiscrepancy ? items.filter(i => i.hasDiff).map(i => i.itemName).join("، ") : undefined,
       notes,
       items: items.map(i => ({
-        purchaseOrderItemId: i.purchaseOrderItemId || undefined,
         inventoryId:         i.inventoryId,
         itemName:            i.itemName,
         itemName_ar:         i.itemName_ar,
         itemName_en:         i.itemName_en,
         itemType:            i.itemType,
         receivedQuantity:    i.receivedQuantity,
-        expectedQuantity:    i.requestedQuantity,
         purchaseUnit:        i.purchaseUnit,
         issueUnit:           i.issueUnit,
         conversionFactor:    i.conversionFactor,
         unitCost:            i.unitCost,
-        expectedUnitCost:    i.expectedUnitCost,
         taxRate:             i.taxRate,
         taxAmount:           i.taxAmount,
         lineTotal:           i.lineTotal,
@@ -389,25 +307,6 @@ export default function WarehouseReceiveV2() {
       })),
     });
   };
-
-  if (!poId) return (
-    <div className="p-8 text-center text-muted-foreground">لم يتم تحديد طلب الشراء</div>
-  );
-
-  if (initialized && poCandidates.length === 0) return (
-    <div className="p-8 text-center text-muted-foreground space-y-2">
-      <AlertTriangle className="w-8 h-8 mx-auto text-amber-500" />
-      <p className="font-medium">لا توجد أصناف بحالة "توريد للمستودع" مطابقة لهذه الفاتورة</p>
-      <p className="text-xs">
-        {invoiceNumberParam
-          ? `رقم الفاتورة: ${invoiceNumberParam} — تأكد من تأكيد التوريد للمستودع لهذا الرقم أولاً`
-          : "تأكد من تأكيد التوريد للمستودع أولاً من تبويب \"توريد للمستودع\""}
-      </p>
-      <Button variant="outline" size="sm" onClick={() => navigate("/purchase-cycle")}>
-        العودة لدورة الشراء
-      </Button>
-    </div>
-  );
 
   // ─────────────────────────────────────────────────────────
   // RENDER
@@ -431,10 +330,10 @@ export default function WarehouseReceiveV2() {
           <ArrowRight className="w-5 h-5" />
         </Button>
         <div className="flex-1">
-          <h1 className="text-lg font-bold">استلام من المشتريات</h1>
-          {po && (
+          <h1 className="text-lg font-bold">استلام فاتورة مستقلة</h1>
+          {items.length > 0 && (
             <p className="text-sm text-muted-foreground">
-              {(po as any).poNumber} · {items.length} صنف
+              بلا طلب شراء · {items.length} صنف
             </p>
           )}
         </div>
@@ -704,8 +603,6 @@ export default function WarehouseReceiveV2() {
               key={index}
               item={item}
               index={index}
-              poCandidates={poCandidates}
-              linkedElsewhereIds={new Set(items.filter((_, i) => i !== index).map(i => i.purchaseOrderItemId).filter(Boolean))}
               onUpdate={(patch) => updateItem(index, patch)}
               onLink={(inv) => linkToInventory(index, inv)}
               onDelete={() => setItems(prev => prev.filter((_, i) => i !== index))}
@@ -823,11 +720,9 @@ function StepIndicator({ current }: { current: Step }) {
   );
 }
 
-function ReceiveItemCard({ item, index, poCandidates, linkedElsewhereIds, onUpdate, onLink, onDelete }: {
+function ReceiveItemCard({ item, index, onUpdate, onLink, onDelete }: {
   item:     ReceiveItem;
   index:    number;
-  poCandidates: any[];
-  linkedElsewhereIds: Set<number>;
   onUpdate: (patch: Partial<ReceiveItem>) => void;
   onLink:   (inv: any) => void;
   onDelete?: () => void;
@@ -840,42 +735,6 @@ function ReceiveItemCard({ item, index, poCandidates, linkedElsewhereIds, onUpda
   return (
     <Card className={cn("transition-colors", item.hasDiff && "border-amber-300")}>
       <CardContent className="pt-4 space-y-3">
-
-        {/* ربط الصنف ببند طلب الشراء — اختياري: قد يكون الصنف زائداً عن
-            الطلب الأصلي ووارداً بالفاتورة فقط، فيُستلم للمخزون مباشرة */}
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">ربط ببند طلب الشراء (اختياري)</Label>
-          <select
-            className="w-full border rounded-md px-2 py-1.5 text-sm bg-background"
-            value={item.purchaseOrderItemId || ""}
-            onChange={e => {
-              const id = parseInt(e.target.value);
-              const cand = poCandidates.find(c => c.id === id);
-              onUpdate({
-                purchaseOrderItemId: id || 0,
-                requestedQuantity:   cand?.quantity ?? item.requestedQuantity,
-                expectedUnitCost:    cand?.estimatedUnitCost || undefined,
-                purchaseUnit:        item.purchaseUnit || cand?.unit || "قطعة",
-              });
-            }}
-          >
-            <option value="">بدون ربط — صنف زائد عن الطلب</option>
-            {poCandidates.map((cand: any) => (
-              <option
-                key={cand.id}
-                value={cand.id}
-                disabled={linkedElsewhereIds.has(cand.id)}
-              >
-                {cand.itemName} {linkedElsewhereIds.has(cand.id) ? "(مربوط بصنف آخر)" : ""}
-              </option>
-            ))}
-          </select>
-          {!item.purchaseOrderItemId && (
-            <p className="text-xs text-muted-foreground">
-              سيُستلم للمخزون مباشرة دون تحديث حالة أي بند بطلب الشراء
-            </p>
-          )}
-        </div>
 
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
@@ -899,9 +758,6 @@ function ReceiveItemCard({ item, index, poCandidates, linkedElsewhereIds, onUpda
                 </Badge>
               )}
             </div>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              المطلوب: {item.requestedQuantity} {item.purchaseUnit}
-            </p>
           </div>
           <div className="flex items-center gap-1">
             {onDelete && (

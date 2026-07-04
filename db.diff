@@ -1,0 +1,56 @@
+diff --git a/server/db.ts b/server/db.ts
+index 3bf7520..d3c1231 100644
+--- a/server/db.ts
++++ b/server/db.ts
+@@ -661,6 +661,51 @@ export async function getPOItemsByStatus(status: string) {
+   return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.status, status as any)).orderBy(desc(purchaseOrderItems.createdAt));
+ }
+ 
++// ══════════════════════════════════════════════════════════════════════════════
++// ARCHITECTURAL DECISION — مرجع رسمي — لا تعدّل هذا الاستعلام بدون مراجعة
++// ══════════════════════════════════════════════════════════════════════════════
++//
++// مصدر الحقيقة لمرحلة "إدخال المخزون" هو:
++//   warehouse_receipt_items المرتبط بـ warehouse_receipts.status = 'confirmed'
++//
++// دورة العمل المعتمدة:
++//   delivered_to_warehouse → تعني: البضاعة وصلت المستودع فقط
++//   وجود warehouse_receipt (confirmed) → يعني: البضاعة دخلت المخزون رسمياً
++//
++// لماذا لا نعتمد على status وحده؟
++//   لأن delivered_to_warehouse لا تتغير بعد إدخال المخزون —
++//   تغيير دورة العمل يتطلب قراراً معمارياً كاملاً.
++//
++// لماذا لا نعتمد على مجرد وجود سجل في warehouse_receipt_items؟
++//   لأن invoiceDraft.router.ts ينشئ سجلات warehouse_receipt_items أثناء
++//   مرحلة تحليل OCR (قبل التأكيد النهائي) — لو اعتمدنا على الوجود فقط
++//   سيختفي البند من التبويب فور تحليل الفاتورة وقبل اعتمادها.
++//
++// القاعدة الذهبية:
++//   لا تضف Status جديدة لهذا الغرض إلا إذا تغيرت دورة العمل بالكامل.
++//   الفهرس idx_receipt_items_poItemId موجود لدعم هذا الاستعلام مع نمو البيانات.
++// ══════════════════════════════════════════════════════════════════════════════
++export async function getPOItemsPendingInventoryEntry() {
++  const db = await getDb();
++  if (!db) return [];
++
++  const [rows] = await (db as any).execute(`
++    SELECT poi.*
++    FROM purchase_order_items poi
++    WHERE poi.status = 'delivered_to_warehouse'
++      AND NOT EXISTS (
++        SELECT 1
++        FROM warehouse_receipt_items wri
++        JOIN warehouse_receipts wr ON wri.receiptId = wr.id
++        WHERE wri.purchaseOrderItemId = poi.id
++          AND wr.status = 'confirmed'
++      )
++    ORDER BY poi.createdAt DESC
++  `);
++
++  return rows as any[];
++}
++
+ // ============================================================
+ // INVENTORY
+ // ============================================================

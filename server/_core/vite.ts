@@ -55,14 +55,24 @@ export function serveStatic(app: Express) {
     );
   }
 
-  app.use(express.static(distPath));
+  // ملفات الـ assets (JS/CSS) لها hash بالاسم — تكيّش لسنة كاملة (immutable)
+  // لأن أي تغيير ينتج اسم جديد كلياً، فالاسم القديم لن يُطلب مرة ثانية
+  app.use("/assets", express.static(path.join(distPath, "assets"), {
+    maxAge: "1y",
+    immutable: true,
+  }));
 
-  // fall through to index.html if the file doesn't exist
-  // Skip /api/* so Express route handlers can process them
+  // باقي الملفات الثابتة (صور، fonts، إلخ) — تكيّش ليوم واحد
+  app.use(express.static(distPath, { maxAge: "1d" }));
+
+  // index.html — لا يتكيّش أبداً عشان يحمّل الأسماء الجديدة للملفات بعد كل deploy
   app.use("*", (req, res, next) => {
     if (req.path.startsWith("/api/")) {
       return next();
     }
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
