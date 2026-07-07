@@ -203,6 +203,7 @@ export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   photoUrls: json("photoUrls").$type<string[]>(),
   notes: text("notes"),
   delegateId: int("delegateId"),
+  batchId: int("batchId"), // مرتبط بدفعة التسعير (po_pricing_batches) عند إرسال الصنف للحسابات — null قبل الإرسال
   managementRejectionReason: text("managementRejectionReason"),
   estimatedUnitCost: decimal("estimatedUnitCost", { precision: 12, scale: 2 }),
   estimatedTotalCost: decimal("estimatedTotalCost", { precision: 12, scale: 2 }),
@@ -242,6 +243,38 @@ export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+// ============================================================
+// 5a. PO PRICING BATCHES (دفعات التسعير — كل دفعة تُرسل للحسابات وتُعتمد بشكل مستقل)
+// ============================================================
+export const poBatchStatuses = [
+  "pending_accounting", "pending_management", "approved", "rejected"
+] as const;
+
+export const poPricingBatches = mysqlTable("po_pricing_batches", {
+  id: int("id").autoincrement().primaryKey(),
+  purchaseOrderId: int("purchaseOrderId").notNull(),
+  batchNumber: int("batchNumber").notNull(),
+  submittedById: int("submittedById").notNull(),
+  submittedAt: timestamp("submittedAt").defaultNow().notNull(),
+  itemCount: int("itemCount").default(0).notNull(),
+  totalEstimatedCost: decimal("totalEstimatedCost", { precision: 12, scale: 2 }),
+  status: mysqlEnum("status", [...poBatchStatuses]).default("pending_accounting").notNull(),
+  accountingApprovedById: int("accountingApprovedById"),
+  accountingApprovedAt: timestamp("accountingApprovedAt"),
+  accountingNotes: text("accountingNotes"),
+  custodyAmount: decimal("custodyAmount", { precision: 12, scale: 2 }),
+  managementApprovedById: int("managementApprovedById"),
+  managementApprovedAt: timestamp("managementApprovedAt"),
+  managementNotes: text("managementNotes"),
+  rejectedById: int("rejectedById"),
+  rejectedAt: timestamp("rejectedAt"),
+  rejectionReason: text("rejectionReason"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type POPricingBatch = typeof poPricingBatches.$inferSelect;
+export type InsertPOPricingBatch = typeof poPricingBatches.$inferInsert;
 
 // ============================================================
 // 5b. PROCUREMENT COMMENTS

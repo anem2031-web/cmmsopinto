@@ -29,6 +29,8 @@ import {
   disposalOperations,
   disposalItems,
   disposalNumberCounter,
+  poPricingBatches,
+  type InsertPOPricingBatch,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -666,6 +668,51 @@ export async function getPOItemById(id: number) {
   if (!db) return null;
   const result = await db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.id, id)).limit(1);
   return result[0] || null;
+}
+
+// ============================================================
+// PO PRICING BATCHES (دفعات التسعير)
+// ============================================================
+export async function createPOPricingBatch(data: InsertPOPricingBatch) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(poPricingBatches).values(data);
+  return result[0].insertId;
+}
+
+export async function getNextBatchNumber(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return 1;
+  const rows = await db
+    .select({ batchNumber: poPricingBatches.batchNumber })
+    .from(poPricingBatches)
+    .where(eq(poPricingBatches.purchaseOrderId, purchaseOrderId))
+    .orderBy(desc(poPricingBatches.batchNumber))
+    .limit(1);
+  return rows.length > 0 ? rows[0].batchNumber + 1 : 1;
+}
+
+export async function getPOPricingBatches(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(poPricingBatches)
+    .where(eq(poPricingBatches.purchaseOrderId, purchaseOrderId))
+    .orderBy(poPricingBatches.batchNumber);
+}
+
+export async function getPOPricingBatchById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(poPricingBatches).where(eq(poPricingBatches.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function updatePOPricingBatch(id: number, data: any) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(poPricingBatches).set(data).where(eq(poPricingBatches.id, id));
 }
 
 export async function getPOItemsByStatus(status: string) {

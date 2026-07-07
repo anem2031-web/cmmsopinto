@@ -834,8 +834,7 @@ export const purchaseOrdersRouter = router({
     const po = await db.getPurchaseOrderById(input.purchaseOrderId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
 
-    // أي حالة بعد pending_estimate تعني الطلب تقدم وصنف المراجعة يذهب مباشرة لـ approved
-    const isAlreadyApproved = ["approved", "partial_purchase", "purchased", "pending_accounting", "pending_management"].includes(po.status);
+    const isAdminOrOwner = ctx.user.role === "admin" || ctx.user.role === "owner";
 
     for (const item of input.items) {
       const cost = parseFloat(item.estimatedUnitCost);
@@ -845,90 +844,96 @@ export const purchaseOrdersRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: `الصنف "${poItem?.itemName || item.id}" لا يمكن تسعيره قبل تعيين مندوب له` });
       }
       // Guard: المندوب يسعّر أصنافه فقط
-      const isAdminOrOwner = ctx.user.role === "admin" || ctx.user.role === "owner";
       if (!isAdminOrOwner && poItem.delegateId !== ctx.user.id) {
         throw new TRPCError({ code: "FORBIDDEN", message: `الصنف "${poItem.itemName}" غير مخصص لك` });
       }
       const totalCost = cost * (poItem?.quantity || 1);
 
-      if (isAlreadyApproved) {
-        // الطلب معتمد بالفعل: الصنف المعاد إرساله (كان pending بعد resubmit) يذهب مباشرة لـ approved
-        // نقبل فقط الأصناف في pending (عادت من المراجعة) أو estimated
-        if (!isAdminOrOwner && !["pending", "estimated"].includes(poItem.status)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: `الصنف "${poItem.itemName}" لا يمكن تسعيره في وضعه الحالي` });
-        }
-        await db.updatePOItem(item.id, {
-          estimatedUnitCost: item.estimatedUnitCost,
-          estimatedTotalCost: String(totalCost),
-          status: "approved",
-        });
-      } else {
-        // ── الوضع الطبيعي: التسعير في مرحلة pending_estimate ──
-        await db.updatePOItem(item.id, {
-          estimatedUnitCost: item.estimatedUnitCost,
-          estimatedTotalCost: String(totalCost),
-          status: "estimated",
-        });
-      }
+      // ── دائمًا: حفظ السعر فقط يضع الصنف في "estimated" بانتظار إرساله ضمن دفعة ──
+      // (سواء كان الطلب لسه pending_estimate، أو سبق واعتُمدت دفعات أخرى منه، أو حتى لو وصل الطلب لحالة approved)
+      // لا يوجد أي مسار يعتمد الصنف تلقائيًا بدون المرور على submitPricedBatch ثم اعتماد الحسابات/الإدارة لهذه الدفعة تحديدًا.
+      await db.updatePOItem(item.id, {
+        estimatedUnitCost: item.estimatedUnitCost,
+        estimatedTotalCost: String(totalCost),
+        status: "estimated",
+        batchId: null, // أي إعادة تسعير تفصل الصنف عن أي دفعة قديمة وتجعله جاهزًا لدفعة جديدة
+      });
     }
+
+    // ملاحظة: حفظ التسعير لم يعد يُرسل الطلب تلقائيًا للحسابات.
+    // المندوب يسعّر أي عدد من الأصناف ويحفظها (حالتها تصبح "estimated")،
+    // ثم يقرر بنفسه متى يرسلها للحسابات عبر زر "إرسال للحسابات" (submitPricedBatch)،
+    // والذي قد يُستدعى عدة مرات (دفعات) على نفس رقم الطلب، وكل دفعة تحتاج اعتماد حسابات/إدارة مستقل.
+    return { success: true };
+  }),
+
+  // ── إرسال الأصناف المسعّرة (غير المرسلة سابقًا) للحسابات كدفعة جديدة ──
+  submitPricedBatch: delegateProcedure.input(z.object({
+    purchaseOrderId: z.number(),
+  })).mutation(async ({ input, ctx }) => {
+    const po = await db.getPurchaseOrderById(input.purchaseOrderId);
+    if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
 
     const allItems = await db.getPOItems(input.purchaseOrderId);
-
-    if (isAlreadyApproved) {
-      // ── الطلب كان معتمداً: تحقق هل اكتملت جميع الأصناف الآن ──
-      const stillPending = allItems.some(
-        i => i.status === "needs_item_revision" || i.status === "pending" || i.status === "estimated"
-      );
-      if (!stillPending) {
-        // كل الأصناف وصلت لـ approved أو ما بعده
-        // المندوب يبدأ شراء الصنف مباشرة من صفحة "أصنافي"
-        await db.createNotification({
-          userId: ctx.user.id,
-          title: "✅ الصنف جاهز للشراء",
-          message: `اكتمل تسعير جميع الأصناف في طلب الشراء ${po.poNumber} ويمكنك البدء بالشراء الآن.`,
-          type: "success",
-          relatedPOId: input.purchaseOrderId,
-        });
-      }
-      return { success: true };
-    }
-
-    // ── تحقق هل يمكن تقديم الطلب للمحاسبة ──
-    // الأصناف في needs_item_revision تُعدّ "جانباً" مؤقتاً — لا تمنع الباقين من المضي
-    const readyForAccounting = allItems.every(
-      i =>
-        i.status === "estimated" ||
-        i.status === "rejected" ||
-        i.status === "cancelled" ||
-        i.status === "needs_item_revision"
+    // الأصناف الجاهزة للإرسال: مسعّرة (estimated) ولم تُرسل ضمن أي دفعة سابقة (batchId فارغ)
+    const isAdminOrOwner = ctx.user.role === "admin" || ctx.user.role === "owner";
+    const readyItems = allItems.filter(
+      i => i.status === "estimated" && !i.batchId && (isAdminOrOwner || i.delegateId === ctx.user.id)
     );
-    const hasEstimatedItems = allItems.some(i => i.status === "estimated");
 
-    if (readyForAccounting && hasEstimatedItems) {
-      // احسب المجموع فقط من الأصناف المسعّرة (تجاهل المرفوض والملغى والمراجعة)
-      const finalTotalEstimated = allItems
-        .filter(i => i.status === "estimated")
-        .reduce((sum, i) => sum + parseFloat(i.estimatedTotalCost || "0"), 0);
-
-      await db.updatePurchaseOrder(input.purchaseOrderId, {
-        status: "pending_accounting",
-        totalEstimatedCost: String(finalTotalEstimated),
-      });
-
-      // أخطر المحاسبين
-      const accountants = await db.getUsersByRole("accountant");
-      for (const acc of accountants) {
-        await db.createNotification({
-          userId: acc.id,
-          title: "طلب شراء بانتظار الاعتماد",
-          message: `طلب شراء بانتظار اعتماد الحسابات`,
-          type: "warning",
-          relatedPOId: input.purchaseOrderId,
-        });
-      }
+    if (readyItems.length === 0) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "لا توجد أصناف مسعّرة جاهزة للإرسال للحسابات" });
     }
-    // إذا في أصناف لا تزال في needs_item_revision → الطلب يبقى pending_estimate
-    return { success: true };
+
+    const batchNumber = await db.getNextBatchNumber(input.purchaseOrderId);
+    const totalBatchCost = readyItems.reduce((sum, i) => sum + parseFloat(i.estimatedTotalCost || "0"), 0);
+
+    const batchId = await db.createPOPricingBatch({
+      purchaseOrderId: input.purchaseOrderId,
+      batchNumber,
+      submittedById: ctx.user.id,
+      itemCount: readyItems.length,
+      totalEstimatedCost: String(totalBatchCost),
+      status: "pending_accounting",
+    });
+
+    for (const item of readyItems) {
+      await db.updatePOItem(item.id, { batchId });
+    }
+
+    // أول دفعة فقط تنقل حالة الطلب إلى pending_accounting (إن لم يكن قد سبقها ذلك)
+    if (po.status === "pending_estimate" || po.status === "revision_needed") {
+      await db.updatePurchaseOrder(input.purchaseOrderId, { status: "pending_accounting" });
+    }
+
+    // أخطر المحاسبين بالدفعة الجديدة
+    const accountants = await db.getUsersByRole("accountant");
+    for (const acc of accountants) {
+      await db.createNotification({
+        userId: acc.id,
+        title: "طلب شراء بانتظار الاعتماد",
+        message: `طلب شراء رقم ${po.poNumber} — دفعة جديدة رقم ${batchNumber} (${readyItems.length} صنف) بانتظار اعتماد الحسابات.`,
+        type: "warning",
+        relatedPOId: input.purchaseOrderId,
+      });
+    }
+
+    await db.createAuditLog({
+      userId: ctx.user.id,
+      action: "submit_pricing_batch",
+      entityType: "purchase_order",
+      entityId: input.purchaseOrderId,
+      newValues: { batchId, batchNumber, itemCount: readyItems.length },
+    });
+
+    return { success: true, batchId, batchNumber, itemCount: readyItems.length };
+  }),
+
+  // ── جلب كل دفعات التسعير الخاصة بطلب معيّن (لعرضها للمندوب والمحاسب) ──
+  listPricingBatches: protectedProcedure.input(z.object({
+    purchaseOrderId: z.number(),
+  })).query(async ({ input }) => {
+    return db.getPOPricingBatches(input.purchaseOrderId);
   }),
 
   getById: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {

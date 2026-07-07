@@ -448,11 +448,15 @@ async function startServer() {
     try {
       const poId = parseInt(req.params.id);
       if (isNaN(poId)) return res.status(400).json({ error: "Invalid purchase request ID" });
+      const batchIdRaw = req.query.batchId;
+      const batchId = batchIdRaw ? parseInt(batchIdRaw as string) : undefined;
       const user = req.authenticatedUser;
-      const buffer = await generatePurchaseRequestPDF(poId, user.id);
+      const buffer = await generatePurchaseRequestPDF(poId, user.id, batchId);
       const { getPurchaseOrderById } = await import("../db");
       const po = await getPurchaseOrderById(poId);
-      const filename = po?.poNumber ? `${po.poNumber}.pdf` : `po-${poId}.pdf`;
+      const filename = po?.poNumber
+        ? (batchId ? `${po.poNumber}-batch${batchId}.pdf` : `${po.poNumber}.pdf`)
+        : `po-${poId}.pdf`;
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
       res.send(buffer);

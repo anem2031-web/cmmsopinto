@@ -87,6 +87,160 @@ export const approvalsRouter = router({
     return { success: true };
   }),
 
+  // ── اعتماد دفعة تسعير واحدة من الحسابات (لا تؤثر على باقي الدفعات) ──
+  approveAccountingBatch: accountantProcedure.input(z.object({
+    batchId: z.number(),
+    notes: z.string().optional(),
+    custodyAmount: z.string().optional(),
+    rejectedItemIds: z.array(z.number()).optional(),
+    rejectionReason: z.string().optional(),
+  })).mutation(async ({ input, ctx }) => {
+    const batch = await db.getPOPricingBatchById(input.batchId);
+    if (!batch) throw new TRPCError({ code: "NOT_FOUND", message: "دفعة التسعير غير موجودة" });
+    if (batch.status !== "pending_accounting") {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "هذه الدفعة ليست بانتظار اعتماد الحسابات" });
+    }
+
+    const po = await db.getPurchaseOrderById(batch.purchaseOrderId);
+    if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
+
+    const batchItems = (await db.getPOItems(batch.purchaseOrderId)).filter(i => i.batchId === batch.id);
+
+    // معالجة رفض أصناف ضمن الدفعة (إن وجدت)
+    if (input.rejectedItemIds && input.rejectedItemIds.length > 0) {
+      for (const itemId of input.rejectedItemIds) {
+        const item = batchItems.find(i => i.id === itemId);
+        if (item) {
+          const reason = input.rejectionReason || "مرفوض من قبل الحسابات";
+          await db.updatePOItem(itemId, { status: "rejected", managementRejectionReason: reason });
+          await notifyItemRejection({
+            poId: po.id, poNumber: po.poNumber, requestedById: po.requestedById,
+            itemName: item.itemName, actorId: ctx.user.id, actorName: ctx.user.name || "مستخدم",
+            actorRole: ctx.user.role, reason, kind: "rejected",
+          });
+        }
+      }
+    }
+
+    const allBatchRejected = batchItems.every(i =>
+      input.rejectedItemIds?.includes(i.id) || i.status === "rejected" || i.status === "cancelled"
+    );
+
+    if (allBatchRejected) {
+      await db.updatePOPricingBatch(batch.id, {
+        status: "rejected", rejectedById: ctx.user.id, rejectedAt: new Date(), rejectionReason: input.rejectionReason,
+      });
+    } else {
+      await db.updatePOPricingBatch(batch.id, {
+        status: "pending_management",
+        accountingApprovedById: ctx.user.id,
+        accountingApprovedAt: new Date(),
+        accountingNotes: input.notes,
+        custodyAmount: input.custodyAmount || null,
+      });
+
+      const mgmt = await db.getUsersByRole("senior_management");
+      for (const m of mgmt) {
+        await db.createNotification({
+          userId: m.id,
+          title: "طلب شراء بانتظار اعتمادك",
+          message: `طلب شراء رقم ${po.poNumber} — الدفعة رقم ${batch.batchNumber} (${batchItems.length} صنف) بانتظار اعتماد الإدارة العليا.`,
+          type: "warning", relatedPOId: po.id, allowSeniorManagement: true,
+        });
+      }
+    }
+
+    await db.createAuditLog({
+      userId: ctx.user.id, action: "approve_accounting_batch",
+      entityType: "po_pricing_batch", entityId: batch.id,
+    });
+    return { success: true };
+  }),
+
+  // ── اعتماد دفعة تسعير واحدة من الإدارة العليا (بعد اعتماد الحسابات لها) ──
+  approveManagementBatch: managementProcedure.input(z.object({
+    batchId: z.number(),
+    notes: z.string().optional(),
+    rejectedItemIds: z.array(z.number()).optional(),
+    rejectionReason: z.string().optional(),
+  })).mutation(async ({ input, ctx }) => {
+    if (ctx.user.role === "executive_director") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "المدير التنفيذي لديه صلاحية استعراض فقط" });
+    }
+    const batch = await db.getPOPricingBatchById(input.batchId);
+    if (!batch) throw new TRPCError({ code: "NOT_FOUND", message: "دفعة التسعير غير موجودة" });
+    if (batch.status !== "pending_management") {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "هذه الدفعة ليست بانتظار اعتماد الإدارة" });
+    }
+
+    const po = await db.getPurchaseOrderById(batch.purchaseOrderId);
+    if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
+    const batchItems = (await db.getPOItems(batch.purchaseOrderId)).filter(i => i.batchId === batch.id);
+
+    if (input.rejectedItemIds && input.rejectedItemIds.length > 0) {
+      for (const itemId of input.rejectedItemIds) {
+        const item = batchItems.find(i => i.id === itemId);
+        if (item) {
+          const reason = input.rejectionReason || "مرفوض من قبل الإدارة";
+          await db.updatePOItem(itemId, { status: "rejected", managementRejectionReason: reason });
+          await notifyItemRejection({
+            poId: po.id, poNumber: po.poNumber, requestedById: po.requestedById,
+            itemName: item.itemName, actorId: ctx.user.id, actorName: ctx.user.name || "مستخدم",
+            actorRole: ctx.user.role, reason, kind: "rejected",
+          });
+        }
+      }
+    }
+
+    const allBatchRejected = batchItems.every(i =>
+      input.rejectedItemIds?.includes(i.id) || i.status === "rejected" || i.status === "cancelled"
+    );
+
+    if (allBatchRejected) {
+      await db.updatePOPricingBatch(batch.id, {
+        status: "rejected", rejectedById: ctx.user.id, rejectedAt: new Date(), rejectionReason: input.rejectionReason,
+      });
+    } else {
+      await db.updatePOPricingBatch(batch.id, {
+        status: "approved", managementApprovedById: ctx.user.id, managementApprovedAt: new Date(), managementNotes: input.notes,
+      });
+
+      for (const item of batchItems) {
+        if (item.status !== "rejected" && item.status !== "cancelled") {
+          await db.updatePOItem(item.id, { status: "approved" });
+        }
+      }
+
+      // ── تحديث حالة الطلب العامة على أساس مجموع الدفعات ──
+      const allBatches = await db.getPOPricingBatches(po.id);
+      const anyPending = allBatches.some(b => b.status === "pending_accounting" || b.status === "pending_management");
+      if (!anyPending && po.status !== "approved") {
+        await db.updatePurchaseOrder(po.id, { status: "approved", managementApprovedById: ctx.user.id, managementApprovedAt: new Date() });
+      }
+
+      const delegateIds = Array.from(new Set(batchItems.filter(i => i.delegateId && i.status === "approved").map(i => i.delegateId!)));
+      const custodyInfoBatch = batch.custodyAmount
+        ? ` مبلغ العهدة المُصرف لك: ${Number(batch.custodyAmount).toLocaleString("ar-SA")} ر.س.`
+        : "";
+      for (const dId of delegateIds) {
+        const delegateItems = batchItems.filter(i => i.delegateId === dId);
+        const itemNames = delegateItems.map(i => i.itemName).join("، ");
+        await db.createNotification({
+          userId: dId,
+          title: "✅ تم اعتماد دفعة من طلب الشراء - ابدأ الشراء الآن",
+          message: `تم اعتماد الدفعة رقم ${batch.batchNumber} من طلب الشراء رقم ${po.poNumber}. الأصناف: ${itemNames}.${custodyInfoBatch} يمكنك البدء بالشراء فوراً.`,
+          type: "success", relatedPOId: po.id,
+        });
+      }
+    }
+
+    await db.createAuditLog({
+      userId: ctx.user.id, action: "approve_management_batch",
+      entityType: "po_pricing_batch", entityId: batch.id,
+    });
+    return { success: true };
+  }),
+
   approveManagement: managementProcedure.input(z.object({
     id: z.number(),
     notes: z.string().optional(),

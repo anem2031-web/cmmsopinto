@@ -126,6 +126,22 @@ export default function PurchaseOrderDetail() {
     getLocalizedItemField(item, fieldName, language);
 
   const estimateMut = trpc.purchaseOrders.estimateCost.useMutation({ onSuccess: () => { toast.success(t.common.save); refetch(); }, onError: (e) => toast.error(e.message) });
+  const submitPricedBatchMut = trpc.purchaseOrders.submitPricedBatch.useMutation({
+    onSuccess: (res: any) => { toast.success(`تم إرسال ${res.itemCount} صنف للحسابات (دفعة رقم ${res.batchNumber})`); refetch(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const { data: pricingBatches = [], refetch: refetchBatches } = trpc.purchaseOrders.listPricingBatches.useQuery(
+    { purchaseOrderId: poId },
+    { enabled: !!poId }
+  );
+  const approveAccountingBatchMut = trpc.purchaseOrders.approveAccountingBatch.useMutation({
+    onSuccess: () => { toast.success("تم اعتماد الدفعة"); refetch(); refetchBatches(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const approveManagementBatchMut = trpc.purchaseOrders.approveManagementBatch.useMutation({
+    onSuccess: () => { toast.success("تم اعتماد الدفعة"); refetch(); refetchBatches(); },
+    onError: (e: any) => toast.error(e.message),
+  });
   const reviewItemsMut = trpc.purchaseOrders.reviewItems.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); }, onError: (e) => toast.error(e.message) });
   const approveAccMut = trpc.purchaseOrders.approveAccounting.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); }, onError: (e) => toast.error(e.message) });
   const approveMgmtMut = trpc.purchaseOrders.approveManagement.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); }, onError: (e) => toast.error(e.message) });
@@ -174,6 +190,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   const [estimates, setEstimates] = useState<Record<number, string>>({});
   const [rejectReason, setRejectReason] = useState("");
   const [custodyAmount, setCustodyAmount] = useState("");
+  const [batchCustodyAmounts, setBatchCustodyAmounts] = useState<Record<number, string>>({});
   const [uploadingItem, setUploadingItem] = useState<string | null>(null);
   const [itemPhotos, setItemPhotos] = useState<Record<number, { invoice?: string; purchased?: string; warehouse?: string }>>({})
   const [dropZoneFor, setDropZoneFor] = useState<string | null>(null); // e.g. "123-invoice" or "123-purchased";
@@ -236,6 +253,29 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
     }
   };
 
+  const [exportingBatchId, setExportingBatchId] = useState<number | null>(null);
+  const handleExportBatchPdf = async (batchId: number, batchNumber: number) => {
+    if (!po?.id) return;
+    setExportingBatchId(batchId);
+    try {
+      const res = await fetch(`/api/export/po/${po.id}/pdf?batchId=${batchId}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(t.purchaseOrders.fileLoadFailed);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${po.poNumber || `po-${po.id}`}-batch${batchNumber}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(t.purchaseOrders.exportPdfFailed);
+    } finally {
+      setExportingBatchId(null);
+    }
+  };
+
   const [revisionNote, setRevisionNote] = useState("");
   const [isRevisionDialogOpen, setIsRevisionDialogOpen] = useState(false);
   const [resubmitNote, setResubmitNote] = useState("");
@@ -255,6 +295,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
     onError: (e) => toast.error(e.message)
   });
 
+  const readyToSubmitCount = (po?.items || []).filter((i: any) => i.status === "estimated" && !i.batchId).length;
   const isAdminOrOwner = role === "admin" || role === "owner";
   const isDelegate = role === "delegate" || isAdminOrOwner;
   const isAccountant = role === "accountant" || isAdminOrOwner;
@@ -366,6 +407,16 @@ const visibleItems = useMemo(() => {
           {isDelegate && po.status === "pending_estimate" && (
             <Button variant="outline" className="border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => setIsRevisionDialogOpen(true)}>
               <AlertCircle className="w-4 h-4 mr-1.5" /> {t.purchaseOrders.returnForRevision}
+            </Button>
+          )}
+          {isDelegate && readyToSubmitCount > 0 && (
+            <Button
+              className="bg-teal-600 hover:bg-teal-700 gap-1.5"
+              onClick={() => submitPricedBatchMut.mutate({ purchaseOrderId: po.id })}
+              disabled={submitPricedBatchMut.isPending}
+            >
+              {submitPricedBatchMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShoppingCart className="w-4 h-4" />}
+              إرسال للحسابات ({readyToSubmitCount})
             </Button>
           )}
           {po.status === "draft" && (isAdminOrOwner || String(po.requestedById) === String(userId)) && (
@@ -611,6 +662,17 @@ const visibleItems = useMemo(() => {
                     )}
                   </div>
                 )}
+
+{isMyItem && item.status === "estimated" && !item.batchId && (
+  <div className="bg-teal-50 border border-teal-200 rounded-lg p-2.5 flex items-center justify-between gap-2">
+    <p className="text-xs text-teal-800 flex items-center gap-1.5">
+      <CheckCircle2 className="w-3.5 h-3.5" /> تم التسعير — بانتظار الإرسال للحسابات
+    </p>
+    <span className="text-xs font-bold text-teal-700">
+      {Number(item.estimatedTotalCost || 0).toLocaleString(locale)} {currency}
+    </span>
+  </div>
+)}
 
 {isMyItem && item.status === "pending" && ["pending_estimate", "approved", "partial_purchase", "purchased", "pending_accounting", "pending_management"].includes(po.status) && (
   <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
@@ -1163,7 +1225,96 @@ const visibleItems = useMemo(() => {
         );
       })()}
 
-      {isAccountant && po.status === "pending_accounting" && (
+      {pricingBatches.length > 0 && (isAccountant || role === "senior_management" || isAdminOrOwner || isDelegate) && (
+        <Card className="border-teal-200 bg-teal-50/40">
+          <CardHeader className="pb-2"><CardTitle className="text-base text-teal-800">دفعات التسعير</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            {(pricingBatches as any[]).map((batch: any) => (
+              <div key={batch.id} className="bg-white rounded-lg border p-3 flex flex-col gap-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <p className="text-sm font-bold">دفعة رقم {batch.batchNumber} — {batch.itemCount} صنف</p>
+                    <p className="text-xs text-muted-foreground">
+                      الإجمالي: {Number(batch.totalEstimatedCost || 0).toLocaleString("ar-SA")} ر.س.
+                    </p>
+                    {batch.custodyAmount && (
+                      <p className="text-xs text-amber-700 font-medium mt-0.5">
+                        مبلغ العهدة: {Number(batch.custodyAmount).toLocaleString("ar-SA")} ر.س.
+                      </p>
+                    )}
+                  </div>
+                  <Badge
+                    className={
+                      batch.status === "approved" ? "bg-emerald-100 text-emerald-700" :
+                      batch.status === "rejected" ? "bg-red-100 text-red-700" :
+                      batch.status === "pending_management" ? "bg-blue-100 text-blue-700" :
+                      "bg-orange-100 text-orange-700"
+                    }
+                  >
+                    {batch.status === "pending_accounting" ? "بانتظار الحسابات" :
+                     batch.status === "pending_management" ? "بانتظار الإدارة" :
+                     batch.status === "approved" ? "معتمدة" : "مرفوضة"}
+                  </Badge>
+                </div>
+
+                {isDelegate && ["pending_accounting", "pending_management", "approved"].includes(batch.status) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="self-start gap-1.5"
+                    disabled={exportingBatchId === batch.id}
+                    onClick={() => handleExportBatchPdf(batch.id, batch.batchNumber)}
+                  >
+                    {exportingBatchId === batch.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+                    تصدير PDF لهذه الدفعة (لطلب العهدة)
+                  </Button>
+                )}
+
+                {isAccountant && batch.status === "pending_accounting" && (
+                  <div className="flex gap-2 items-end flex-wrap">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-orange-700">مبلغ العهدة المُصرف للمندوب (ر.س.) - اختياري</Label>
+                      <Input
+                        type="number"
+                        placeholder="0.00"
+                        value={batchCustodyAmounts[batch.id] || ""}
+                        onChange={e => setBatchCustodyAmounts(p => ({ ...p, [batch.id]: e.target.value }))}
+                        className="bg-white w-40"
+                      />
+                    </div>
+                    <Button
+                      size="sm"
+                      className="bg-orange-600 hover:bg-orange-700"
+                      disabled={approveAccountingBatchMut.isPending}
+                      onClick={() => approveAccountingBatchMut.mutate({
+                        batchId: batch.id,
+                        custodyAmount: batchCustodyAmounts[batch.id] || undefined,
+                      })}
+                    >
+                      {approveAccountingBatchMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                      اعتماد الدفعة (حسابات)
+                    </Button>
+                  </div>
+                )}
+
+                {(role === "senior_management" || isAdminOrOwner) && batch.status === "pending_management" && (
+                  <Button
+                    size="sm"
+                    className="bg-blue-600 hover:bg-blue-700 self-start"
+                    disabled={approveManagementBatchMut.isPending}
+                    onClick={() => approveManagementBatchMut.mutate({ batchId: batch.id })}
+                  >
+                    {approveManagementBatchMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                    اعتماد الدفعة (الإدارة العليا)
+                  </Button>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {isAccountant && po.status === "pending_accounting" && pricingBatches.length === 0 && (
         <Card className="border-orange-200 bg-orange-50/50">
           <CardHeader className="pb-2"><CardTitle className="text-base text-orange-800">{t.purchaseOrders.accountingApproval}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
@@ -1223,7 +1374,7 @@ const visibleItems = useMemo(() => {
       )}
 
       {(role === "senior_management" || isAdminOrOwner) &&
-        po.status === "pending_management" && (
+        po.status === "pending_management" && pricingBatches.length === 0 && (
         <Card className="border-orange-200 bg-orange-50/50">
           <CardHeader className="pb-2"><CardTitle className="text-base text-orange-800">{t.purchaseOrders.managementApproval}</CardTitle></CardHeader>
           <CardContent className="space-y-3">

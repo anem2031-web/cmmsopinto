@@ -515,14 +515,25 @@ function escapeHtml(str: string): string {
 
 export async function generatePurchaseRequestPDF(
   purchaseOrderId: number,
-  delegateId: number
+  delegateId: number,
+  batchId?: number
 ): Promise<Buffer> {
   // Fetch PO and items
   const po = await db.getPurchaseOrderById(purchaseOrderId);
   if (!po) throw new Error("Purchase Request not found");
 
-  const allItems = await db.getPOItems(purchaseOrderId);
-  if (!allItems || allItems.length === 0) throw new Error("No items found for this request");
+  const allItemsRaw = await db.getPOItems(purchaseOrderId);
+  if (!allItemsRaw || allItemsRaw.length === 0) throw new Error("No items found for this request");
+
+  // ── لو تم تحديد دفعة معينة، اقتصر على أصنافها فقط (لطلب عهدة مرتبط بدفعة محددة) ──
+  let batch: any = null;
+  let allItems = allItemsRaw as any[];
+  if (batchId) {
+    batch = await db.getPOPricingBatchById(batchId);
+    if (!batch || batch.purchaseOrderId !== purchaseOrderId) throw new Error("Pricing batch not found for this request");
+    allItems = (allItemsRaw as any[]).filter((item: any) => item.batchId === batchId);
+    if (allItems.length === 0) throw new Error("No items found for this batch");
+  }
 
   // Verify delegate owns at least one item in this PO
   const delegateItems = (allItems as any[]).filter((item: any) => item.delegateId === delegateId);
@@ -648,8 +659,8 @@ const reviewerName = reviewer?.name || "-";
 </head>
 <body>
   <div class="header">
-    <h1>Purchase Request ${escapeHtml(po.poNumber)}</h1>
-    <p>Generated: ${generatedDate} &nbsp;|&nbsp; Items: ${rows.length}</p>
+    <h1>Purchase Request ${escapeHtml(po.poNumber)}${batch ? ` — Batch #${batch.batchNumber}` : ""}</h1>
+    <p>Generated: ${generatedDate} &nbsp;|&nbsp; Items: ${rows.length}${batch?.custodyAmount ? ` &nbsp;|&nbsp; Custody Amount: ${Number(batch.custodyAmount).toLocaleString("en-SA", { minimumFractionDigits: 2 })} SAR` : ""}</p>
   </div>
   <table>
     <thead>
