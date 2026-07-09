@@ -171,6 +171,8 @@ const ar = {
     owner: "مالك",
     admin: "مدير النظام",
     user: "مستخدم",
+    food_warehouse_manager: "مدير المستودع الغذائي",
+    food_warehouse_assistant: "مساعد المستودع الغذائي",
   },
 
   // Ticket statuses

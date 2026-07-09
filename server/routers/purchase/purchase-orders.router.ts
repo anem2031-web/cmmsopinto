@@ -953,13 +953,25 @@ list: protectedProcedure.input(z.object({
   const role = ctx.user.role;
 
   // الأدوار المحدودة: تجاهل فلاتر المستخدم وتثبيت الـ requestedById
-  if (role === "purchase_requester") {
+  if (role === "purchase_requester" || role === "food_warehouse_assistant") {
     return db.getPurchaseOrders({
       status: input?.status,
       dateFrom: input?.dateFrom,
       dateTo: input?.dateTo,
       requestedById: ctx.user.id, // دائماً طلباته فقط
     });
+  }
+
+  // مدير المستودع الغذائي: يشوف فقط طلبات مساعد المستودع الغذائي + طلباته هو شخصياً
+  if (role === "food_warehouse_manager") {
+    const assistantIds = await db.getUserIdsByRole("food_warehouse_assistant");
+    const allowedIds = new Set([...assistantIds, ctx.user.id]);
+    const allPOs = await db.getPurchaseOrders({
+      status: input?.status,
+      dateFrom: input?.dateFrom,
+      dateTo: input?.dateTo,
+    });
+    return allPOs.filter(po => allowedIds.has(po.requestedById));
   }
 
   if (role === "delegate") {

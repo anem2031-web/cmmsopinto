@@ -176,6 +176,8 @@ const ur: any = {
     owner: "مالک",
     admin: "سسٹم ایڈمن",
     user: "صارف",
+    food_warehouse_manager: "فوڈ ویئر ہاؤس مینیجر",
+    food_warehouse_assistant: "فوڈ ویئر ہاؤس اسسٹنٹ",
   },
 
   ticketStatus: {

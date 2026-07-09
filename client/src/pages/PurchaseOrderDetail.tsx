@@ -12,7 +12,7 @@ import {
   ArrowRight, ShoppingCart, CheckCircle2, Clock, DollarSign, Loader2,
   Camera, Package, User, FileText, AlertCircle, ExternalLink, XCircle, Pencil, Upload, FileDown, Ban
 } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -135,7 +135,11 @@ export default function PurchaseOrderDetail() {
     { enabled: !!poId }
   );
   const approveAccountingBatchMut = trpc.purchaseOrders.approveAccountingBatch.useMutation({
-    onSuccess: () => { toast.success("تم اعتماد الدفعة"); refetch(); refetchBatches(); },
+    onSuccess: (_data: any, variables: any) => {
+      toast.success("تم اعتماد الدفعة");
+      refetch(); refetchBatches();
+      printPurchasePdf(variables.batchId);
+    },
     onError: (e: any) => toast.error(e.message),
   });
   const approveManagementBatchMut = trpc.purchaseOrders.approveManagementBatch.useMutation({
@@ -143,7 +147,14 @@ export default function PurchaseOrderDetail() {
     onError: (e: any) => toast.error(e.message),
   });
   const reviewItemsMut = trpc.purchaseOrders.reviewItems.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); }, onError: (e) => toast.error(e.message) });
-  const approveAccMut = trpc.purchaseOrders.approveAccounting.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); }, onError: (e) => toast.error(e.message) });
+  const approveAccMut = trpc.purchaseOrders.approveAccounting.useMutation({
+    onSuccess: () => {
+      toast.success(t.common.confirm);
+      refetch();
+      printPurchasePdf();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
   const approveMgmtMut = trpc.purchaseOrders.approveManagement.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); }, onError: (e) => toast.error(e.message) });
   const rejectMut = trpc.purchaseOrders.reject.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); }, onError: (e) => toast.error(e.message) });
   const confirmPurchaseMut = trpc.purchaseOrders.confirmItemPurchase.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); }, onError: (e) => toast.error(e.message) });
@@ -276,6 +287,47 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
     }
   };
 
+  // ── فتح نافذة الطباعة مباشرة بعد اعتماد الحسابات (دفعة أو الطلب كامل) ──
+  // ملاحظة مهمة: المتصفحات (خصوصاً Chrome) تمنع فتح نافذة/طباعة تلقائية لو
+  // الاستدعاء حصل بعد أي عملية غير متزامنة (زي رد السيرفر) لأنها ما بتعتبرهاش
+  // نتيجة تفاعل مباشر من المستخدم — فبتمنعها بصمت من غير أي رسالة خطأ.
+  // الحل: نفتح نافذة فارغة فوراً لحظة الضغط على الزر نفسه (printWindowRef)،
+  // وبعد ما يجهز الملف من السيرفر، نملأها بيه. لو المتصفح قفلها أو منعها،
+  // في نسخة احتياطية مضمونة: تنزيل الملف يدوياً + رسالة توضيحية بدل ما "محصلش حاجة".
+  const printWindowRef = useRef<Window | null>(null);
+  const printPurchasePdf = async (batchId?: number) => {
+    if (!po?.id) return;
+    const win = printWindowRef.current;
+    try {
+      const qs = batchId ? `?batchId=${batchId}` : "";
+      const res = await fetch(`/api/export/po/${po.id}/pdf${qs}`, { credentials: "include" });
+      if (!res.ok) throw new Error(t.purchaseOrders.fileLoadFailed);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
+      if (win && !win.closed) {
+        win.location.href = url;
+        const tryPrint = () => {
+          try { win.focus(); win.print(); } catch { /* بعض المتصفحات لا تدعم الطباعة التلقائية لملفات PDF */ }
+        };
+        win.addEventListener?.("load", tryPrint);
+        setTimeout(tryPrint, 1200); // احتياطي: بعض عارضات PDF المدمجة لا تُطلق onload
+      } else {
+        // النافذة انسدّت أو المتصفح منعها من الأساس — تنزيل مضمون بدل فشل صامت
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${po.poNumber || `po-${po.id}`}${batchId ? `-batch${batchId}` : ""}.pdf`;
+        a.click();
+        toast.error("تعذر فتح نافذة الطباعة تلقائياً (على الأغلب المتصفح منع النافذة) — تم تنزيل الملف بدلاً من ذلك، افتحه واطبعه يدوياً");
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      toast.error("تعذر تجهيز ملف الطباعة");
+    } finally {
+      printWindowRef.current = null;
+    }
+  };
+
   const [revisionNote, setRevisionNote] = useState("");
   const [isRevisionDialogOpen, setIsRevisionDialogOpen] = useState(false);
   const [resubmitNote, setResubmitNote] = useState("");
@@ -301,7 +353,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   const isAccountant = role === "accountant" || isAdminOrOwner;
   const isManagement = role === "senior_management" || role === "executive_director" || isAdminOrOwner;
   const isWarehouse = role === "warehouse" || isAdminOrOwner;
-  const isManager = role === "maintenance_manager" || role === "purchase_manager" || isAdminOrOwner;
+  const isManager = role === "maintenance_manager" || role === "purchase_manager" || role === "food_warehouse_manager" || isAdminOrOwner;
   const canCancelItem = role === "senior_management" || role === "maintenance_manager" || isAdminOrOwner;
   // الأدوار المسموح لها بتعديل أصناف طلب الشراء بشكل عام (يطابق صلاحية editItem في السيرفر)
   const canEditItems = role === "maintenance_manager" || isAdminOrOwner;
@@ -328,7 +380,8 @@ const visibleItems = useMemo(() => {
     role === "senior_management" ||
     role === "executive_director" ||
     role === "warehouse" ||
-    role === "purchase_manager"
+    role === "purchase_manager" ||
+    role === "food_warehouse_manager"
   ) {
     return po.items.filter(
       (item: any) =>
@@ -1226,14 +1279,22 @@ const visibleItems = useMemo(() => {
       })()}
 
       {(() => {
-        const canSeeAllBatches = isAccountant || role === "senior_management" || isAdminOrOwner;
-        const visibleBatches = canSeeAllBatches
-          ? (pricingBatches as any[])
-          : (pricingBatches as any[]).filter((b: any) => b.submittedById === userId);
+        // تتبّع حالة الدفعات متاح لكل الأدوار اللي تقدر تشوف الطلب أصلاً — عرض فقط،
+        // أزرار الاعتماد/الرفض/التصدير تفضل مقيّدة بصلاحياتها الأصلية زي ما هي.
+        const visibleBatches = (pricingBatches as any[]);
         if (visibleBatches.length === 0) return null;
+        const approvedCount = visibleBatches.filter((b: any) => b.status === "approved").length;
+        const rejectedCount = visibleBatches.filter((b: any) => b.status === "rejected").length;
+        const totalCount = visibleBatches.length;
+        const progressLabel = totalCount === 1
+          ? (approvedCount === 1 ? "الدفعة معتمدة بالكامل" : rejectedCount === 1 ? "الدفعة مرفوضة" : "الدفعة قيد الاعتماد")
+          : `تم اعتماد ${approvedCount} من ${totalCount} دفعة${rejectedCount > 0 ? ` (${rejectedCount} مرفوضة)` : ""}`;
         return (
       <Card className="border-teal-200 bg-teal-50/40">
-        <CardHeader className="pb-2"><CardTitle className="text-base text-teal-800">دفعات التسعير</CardTitle></CardHeader>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base text-teal-800">دفعات التسعير</CardTitle>
+          <p className="text-xs text-teal-700 font-medium">{progressLabel}</p>
+        </CardHeader>
         <CardContent className="space-y-3">
           {visibleBatches.map((batch: any) => (
               <div key={batch.id} className="bg-white rounded-lg border p-3 flex flex-col gap-2">
@@ -1263,12 +1324,13 @@ const visibleItems = useMemo(() => {
                   </Badge>
                 </div>
 
-                {isDelegate && ["pending_accounting", "pending_management", "approved"].includes(batch.status) && (
+                {(isDelegate || isAccountant) && ["pending_accounting", "pending_management", "approved"].includes(batch.status) && (
                   <Button
                     size="sm"
                     variant="outline"
                     className="self-start gap-1.5"
-                    disabled={exportingBatchId === batch.id}
+                    disabled={exportingBatchId === batch.id || !batch.custodyAmount}
+                    title={!batch.custodyAmount ? "لازم اعتماد الحسابات وإدخال مبلغ العهدة أولاً" : undefined}
                     onClick={() => handleExportBatchPdf(batch.id, batch.batchNumber)}
                   >
                     {exportingBatchId === batch.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
@@ -1279,7 +1341,7 @@ const visibleItems = useMemo(() => {
                 {isAccountant && batch.status === "pending_accounting" && (
                   <div className="flex gap-2 items-end flex-wrap">
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-orange-700">مبلغ العهدة المُصرف للمندوب (ر.س.) - اختياري</Label>
+                      <Label className="text-[11px] text-orange-700">مبلغ العهدة المُصرف للمندوب (ر.س.) *</Label>
                       <Input
                         type="number"
                         placeholder="0.00"
@@ -1291,17 +1353,21 @@ const visibleItems = useMemo(() => {
                     <Button
                       size="sm"
                       className="bg-orange-600 hover:bg-orange-700"
-                      disabled={approveAccountingBatchMut.isPending}
-                      onClick={() => approveAccountingBatchMut.mutate({
-                        batchId: batch.id,
-                        custodyAmount: batchCustodyAmounts[batch.id] || undefined,
-                      })}
+                      disabled={approveAccountingBatchMut.isPending || !(parseFloat(batchCustodyAmounts[batch.id] || "") > 0)}
+                      onClick={() => {
+                        printWindowRef.current = window.open("", "_blank");
+                        approveAccountingBatchMut.mutate({
+                          batchId: batch.id,
+                          custodyAmount: batchCustodyAmounts[batch.id] || undefined,
+                        });
+                      }}
                     >
                       {approveAccountingBatchMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                       اعتماد الدفعة (حسابات)
                     </Button>
                   </div>
                 )}
+
 
                 {(role === "senior_management" || isAdminOrOwner) && batch.status === "pending_management" && (
                   <Button
@@ -1326,7 +1392,7 @@ const visibleItems = useMemo(() => {
           <CardHeader className="pb-2"><CardTitle className="text-base text-orange-800">{t.purchaseOrders.accountingApproval}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-orange-800">مبلغ العهدة المُصرف للمندوب (ر.س.) - اختياري</label>
+              <label className="text-xs font-medium text-orange-800">مبلغ العهدة المُصرف للمندوب (ر.س.) *</label>
               <Input type="number" placeholder={t.purchaseOrders.custodyAmountPlaceholder} value={custodyAmount} onChange={e => setCustodyAmount(e.target.value)} className="bg-white" />
             </div>
             
@@ -1358,13 +1424,14 @@ const visibleItems = useMemo(() => {
                   toast.error(t.purchaseOrders.enterRejectReason);
                   return;
                 }
+                printWindowRef.current = window.open("", "_blank");
                 approveAccMut.mutate({ 
                   id: po.id, 
                   custodyAmount: custodyAmount || undefined,
                   rejectedItemIds: rejectedIds.length > 0 ? rejectedIds : undefined,
                   rejectionReason: rejectedIds.length > 0 ? rejectReason : undefined
                 });
-              }} disabled={approveAccMut.isPending} className="flex-1 gap-1.5">
+              }} disabled={approveAccMut.isPending || !(parseFloat(custodyAmount || "") > 0)} className="flex-1 gap-1.5">
                 {approveAccMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                 {Object.values(lateRejections).some(Boolean) ? t.purchaseOrders.approveWithExclusion : t.common.confirm}
               </Button>

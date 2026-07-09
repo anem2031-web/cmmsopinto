@@ -3,7 +3,7 @@ import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, json, bo
 // ============================================================
 // 1. USERS TABLE (extended with CMMS roles)
 // ============================================================
-export const userRoles = ["operator", "technician", "maintenance_manager", "supervisor", "purchase_manager", "purchase_requester", "delegate", "accountant", "senior_management", "warehouse", "gate_security", "owner"] as const;
+export const userRoles = ["operator", "technician", "maintenance_manager", "supervisor", "purchase_manager", "purchase_requester", "delegate", "accountant", "senior_management", "executive_director", "warehouse", "gate_security", "owner", "food_warehouse_manager", "food_warehouse_assistant"] as const;
 export type UserRole = typeof userRoles[number];
 
 export const supportedLanguages = ["ar", "en", "ur"] as const;

@@ -223,6 +223,14 @@ export async function getManagerUsers() {
   );
 }
 
+// ── أرجاع IDs كل المستخدمين بدور معيّن — تُستخدم لفلترة الطلبات حسب من أنشأها ──
+export async function getUserIdsByRole(role: string): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({ id: users.id }).from(users).where(eq(users.role, role as any));
+  return rows.map(r => r.id);
+}
+
 export async function updateUserRole(userId: number, role: string) {
   const db = await getDb();
   if (!db) return;
@@ -1083,6 +1091,36 @@ export async function createNotification(data: { userId: number; title: string; 
     relatedTicketId: data.relatedTicketId,
     relatedPOId: data.relatedPOId,
   });
+
+  // ── تعميم تلقائي لـ"مدير المستودع الغذائي" على أي تحديث لاحق لطلب اعتمده ──
+  // هذا الدور لا يستقبل أي إشعار عام (كـ"طلب جديد بانتظار المراجعة")، لكن لازم
+  // يعرف بأي تطور لاحق يحصل على طلب هو شخصيًا اعتمده (reviewedById بجدول الطلب).
+  // نطبّقها هنا مركزياً بدل تكرارها بكل نقطة إشعار بدورة الشراء.
+  if (data.relatedPOId) {
+    const poRows = await db.select({ reviewedById: purchaseOrders.reviewedById })
+      .from(purchaseOrders).where(eq(purchaseOrders.id, data.relatedPOId)).limit(1);
+    const reviewerId = poRows[0]?.reviewedById;
+    if (reviewerId && reviewerId !== data.userId) {
+      const reviewer = await getUserById(reviewerId);
+      if (reviewer?.role === "food_warehouse_manager") {
+        await db.insert(notifications).values({
+          userId: reviewerId,
+          title: data.title,
+          message: data.message,
+          type: data.type as any,
+          relatedTicketId: data.relatedTicketId,
+          relatedPOId: data.relatedPOId,
+        });
+        getWebPush().then(wp => {
+          const url = `/purchase-orders/${data.relatedPOId}`;
+          wp.sendPushToUser(reviewerId, {
+            title: data.title, body: data.message, type: data.type || "info",
+            tag: `notif-${reviewerId}-${Date.now()}`, url,
+          }).catch(() => {});
+        }).catch(() => {});
+      }
+    }
+  }
 
   // Send Web Push notification asynchronously (fire-and-forget)
   getWebPush().then(wp => {
@@ -4074,6 +4112,84 @@ export async function addItemToCount(params: {
     expiryDate: inv.expiryDate ?? null,
     notes: null,
     isNew: true,
+  };
+}
+
+// ── 1د) إضافة صنف جديد كليّاً (غير موجود بالمخزون أصلاً) أثناء عملية جرد جارية ──
+// يُستخدم فقط من شاشة الجرد اليدوي حين يُكتشف صنف فعلي غير مسجّل بالنظام إطلاقاً.
+// الفرق عن addItemToCount: هنا الصنف غير موجود بجدول inventory إطلاقاً، فيُنشأ من الصفر
+// بنفس آلية أي صنف عادي (كود داخلي INV-YYYY-NNNN + باركود مصنع تسلسلي)، ويدخل المخزون
+// فوراً بالكمية المُدخلة (بعكس الفروقات العادية اللي تنتظر مرحلة التسوية).
+export async function addNewItemDuringCount(params: {
+  operationId: number;
+  itemName: string;
+  unit: string;
+  quantity: number;
+  cost?: number;           // التكلفة اختيارية دائماً
+  createdById: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("تعذر الاتصال بقاعدة البيانات");
+
+  const opRows = await db.select().from(inventoryCountOperations)
+    .where(eq(inventoryCountOperations.id, params.operationId)).limit(1);
+  const op = opRows[0];
+  if (!op) throw new Error("عملية الجرد غير موجودة");
+  if (op.status === "completed") {
+    throw new Error("هذا الجرد محفوظ نهائياً ولا يمكن الإضافة عليه");
+  }
+
+  // توليد نفس معرّفَي أي صنف عادي — لضمان التطابق الكامل مع باقي المخزون بالتقارير
+  const internalCode = await getNextInventoryCode();
+  const manufacturerBarcode = await getNextItemBarcode();
+
+  const cost = params.cost ?? 0;
+  const totalCostValue = cost * params.quantity;
+
+  const inventoryId = await createInventoryItemV2({
+    itemName:            params.itemName,
+    quantity:             params.quantity,
+    unit:                 params.unit,
+    internalCode,
+    manufacturerBarcode,
+    averageCost:          String(cost),
+    totalCostValue:       String(totalCostValue),
+    warehouseId:          op.warehouseId ?? undefined,
+  }, db);
+
+  // دخول فوري للمخزون (بعكس فروقات الجرد العادية) — يوثَّق كحركة "in" من نوع تسوية
+  await db.insert(inventoryTransactions).values({
+    inventoryId,
+    type:            "in",
+    quantity:        Math.round(params.quantity),
+    reason:          `صنف جديد أُضيف أثناء عملية الجرد ${op.operationNumber}`,
+    performedById:   params.createdById,
+    transactionType: "adjustment",
+    documentUrl:     op.operationNumber,
+  });
+
+  // سطر توثيقي بجدول الجرد — systemQuantity = countedQuantity لأن الرصيد
+  // حُدّث بنفس اللحظة، فلا يبقى فرق فعلي يحتاج تسوية لاحقة لهذا الصنف تحديداً.
+  const [countItemResult] = await db.insert(inventoryCountItems).values({
+    operationId:    params.operationId,
+    inventoryId,
+    systemQuantity: String(params.quantity),
+    countedQuantity: String(params.quantity),
+    diffQuantity:    "0",
+    countedById:     params.createdById,
+    countedAt:       new Date(),
+    notes:           "صنف جديد أُضيف أثناء الجرد",
+  });
+  const countItemId = (countItemResult as any).insertId as number;
+
+  return {
+    countItemId,
+    inventoryId,
+    itemName: params.itemName,
+    unit: params.unit,
+    quantity: params.quantity,
+    internalCode,
+    manufacturerBarcode,
   };
 }
 

@@ -30,6 +30,8 @@ const ROLE_COLORS: Record<string, string> = {
   supervisor: "bg-indigo-100 text-indigo-700",
   gate_security: "bg-rose-100 text-rose-700",
   user: "bg-gray-100 text-gray-700",
+  food_warehouse_manager: "bg-yellow-100 text-yellow-800",
+  food_warehouse_assistant: "bg-lime-100 text-lime-700",
 };
 
 const EMPTY_CREATE = {

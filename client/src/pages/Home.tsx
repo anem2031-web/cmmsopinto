@@ -319,6 +319,8 @@ export default function Home() {
       executive_director: "/reports",
       gate_security: "/gate-security",
       operator: "/tickets",
+      food_warehouse_manager: "/purchase-orders",
+      food_warehouse_assistant: "/purchase-orders",
     };
     const target = roleRedirect[role] || "/tickets";
     setLocation(target);

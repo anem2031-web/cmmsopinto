@@ -60,6 +60,28 @@ export const inventoryCountRouter = router({
       });
     }),
 
+  // ── إضافة صنف جديد كليّاً (غير موجود بالمخزون أصلاً) أثناء جرد جارٍ ──
+  // يُنشئ الصنف بالمخزون مباشرة (كود داخلي + باركود مصنع تلقائيَين) ويُدخله
+  // الرصيد فوراً بالكمية المُدخلة — مختلف عن addItem الذي يبحث بأصناف موجودة مسبقاً.
+  addNewItem: warehouseProcedure
+    .input(z.object({
+      operationId: z.number(),
+      itemName: z.string().trim().min(1, "اسم الصنف مطلوب"),
+      unit: z.string().trim().min(1, "الوحدة مطلوبة"),
+      quantity: z.number().min(0.001, "الكمية يجب أن تكون أكبر من صفر"),
+      cost: z.number().min(0).optional(),   // اختياري دائماً
+    }))
+    .mutation(async ({ input, ctx }) => {
+      return db.addNewItemDuringCount({
+        operationId: input.operationId,
+        itemName: input.itemName,
+        unit: input.unit,
+        quantity: input.quantity,
+        cost: input.cost,
+        createdById: ctx.user.id,
+      });
+    }),
+
   // ── حذف مسودة جرد بالكامل (المسودات فقط، قبل الحفظ النهائي) ──
   deleteOperation: warehouseProcedure
     .input(z.object({ operationId: z.number() }))

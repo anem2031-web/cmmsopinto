@@ -158,6 +158,36 @@ export default function InventoryOperations() {
       }).slice(0, 8)
     : [];
 
+  // ── إضافة صنف جديد كليّاً (غير موجود بالمخزون أصلاً) أثناء جرد يدوي جارٍ ──
+  const [showNewItem, setShowNewItem] = useState(false);
+  const [newItemName, setNewItemName] = useState("");
+  const [newItemUnit, setNewItemUnit] = useState("");
+  const [newItemQty, setNewItemQty] = useState("");
+  const [newItemCost, setNewItemCost] = useState("");
+  const { data: catalogUnits } = trpc.catalog.units.list.useQuery();
+  const addNewItemMut = trpc.inventoryCount.addNewItem.useMutation({
+    onSuccess: (data) => {
+      toast.success(`تم إضافة "${data.itemName}" للمخزون — كود الصنف ${data.internalCode} / باركود ${data.manufacturerBarcode}`);
+      refetchCountDetail();
+      setShowNewItem(false);
+      setNewItemName("");
+      setNewItemUnit("");
+      setNewItemQty("");
+      setNewItemCost("");
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  function submitNewItem() {
+    if (!activeCountId) return;
+    addNewItemMut.mutate({
+      operationId: activeCountId,
+      itemName: newItemName.trim(),
+      unit: newItemUnit,
+      quantity: parseFloat(newItemQty || "0"),
+      cost: newItemCost.trim() !== "" ? parseFloat(newItemCost) : undefined,
+    });
+  }
+
   // ── بدء جرد جديد ──
   const [showNewCount, setShowNewCount] = useState(false);
   const [countScope, setCountScope] = useState<"full" | "partial">("full");
@@ -238,6 +268,27 @@ export default function InventoryOperations() {
   );
   const [settlementItems, setSettlementItems] = useState<any[]>([]);
   const [settlementReason, setSettlementReason] = useState("");
+  const [settlementSearchMode, setSettlementSearchMode] = useState<"name" | "code" | "qr">("name");
+
+  // مسح باركود/QR مباشر لإضافة صنف للتسوية المستقلة
+  function handleSettlementScanResolved(code: string) {
+    const found = ((inventoryList as any[]) || []).find((i: any) =>
+      i.internalCode === code || i.manufacturerBarcode === code || String(i.id) === code
+    );
+    if (!found) { toast.error(`لم يتم العثور على صنف برقم: ${code}`); return; }
+    if (settlementItems.some(s => s.inventoryId === found.id)) { toast.error("الصنف مضاف بالفعل للتسوية"); return; }
+    setSettlementItems(prev => [...prev, { inventoryId: found.id, afterQuantity: found.quantity, itemName: found.itemName }]);
+  }
+  // نتائج البحث بالاسم أو بالرقم (كود داخلي/باركود مصنع) للتسوية المستقلة
+  const settlementSearchResults = settlementSearchMode !== "qr" && countItemSearch.trim().length > 0
+    ? ((inventoryList as any[]) || []).filter((i: any) => {
+        const q = countItemSearch.toLowerCase();
+        const matches = settlementSearchMode === "code"
+          ? (i.internalCode?.toLowerCase().includes(q) || i.manufacturerBarcode?.toLowerCase().includes(q))
+          : i.itemName?.toLowerCase().includes(q);
+        return matches && !settlementItems.some(s => s.inventoryId === i.id);
+      }).slice(0, 20)
+    : [];
 
   const applySettlementMut = trpc.inventoryCount.applySettlement.useMutation({
     onSuccess: (data) => {
@@ -247,14 +298,14 @@ export default function InventoryOperations() {
       setSettlementReason("");
       setSettlementSourceCountId(null);
       refetchCounts();
+      refetchSettlements();
     },
     onError: (e: any) => toast.error(e.message),
   });
 
   // ── الأرشيف (عمليات جرد + تسويات) ──
   const [countView, setCountView] = useState<"active" | "archive">("active");
-  const [archiveTab, setArchiveTab] = useState<"counts" | "settlements">("counts");
-  const { data: settlementsList } = trpc.inventoryCount.listSettlements.useQuery();
+  const { data: settlementsList, refetch: refetchSettlements } = trpc.inventoryCount.listSettlements.useQuery();
   const [printSettlementId, setPrintSettlementId] = useState<number | null>(null);
   const { data: printSettlementDetail } = trpc.inventoryCount.settlementDetails.useQuery(
     { settlementId: printSettlementId! }, { enabled: !!printSettlementId }
@@ -667,7 +718,7 @@ ${op.notes ? `<div class="notes-box">📝 <strong>ملاحظات:</strong> ${op.
       </div>
 
       <Tabs defaultValue="disposal">
-        <TabsList className="grid grid-cols-2 w-full max-w-xs">
+        <TabsList className="grid grid-cols-3 w-full max-w-md">
           <TabsTrigger value="disposal" className="gap-1.5">
             <Trash2 className="w-3.5 h-3.5" />
             الاستبعاد
@@ -675,6 +726,10 @@ ${op.notes ? `<div class="notes-box">📝 <strong>ملاحظات:</strong> ${op.
           <TabsTrigger value="inventory_count" className="gap-1.5">
             <BookOpen className="w-3.5 h-3.5" />
             الجرد
+          </TabsTrigger>
+          <TabsTrigger value="settlements" className="gap-1.5">
+            <ClipboardList className="w-3.5 h-3.5" />
+            التسويات
           </TabsTrigger>
         </TabsList>
 
@@ -753,66 +808,31 @@ ${op.notes ? `<div class="notes-box">📝 <strong>ملاحظات:</strong> ${op.
 
           {countView === "archive" ? (
             <div className="space-y-4">
-              <div className="flex gap-2">
-                <Button size="sm" variant={archiveTab === "counts" ? "default" : "outline"} onClick={() => setArchiveTab("counts")}>
-                  أرشيف الجرد
-                </Button>
-                <Button size="sm" variant={archiveTab === "settlements" ? "default" : "outline"} onClick={() => setArchiveTab("settlements")}>
-                  أرشيف التسويات
-                </Button>
+              <div className="space-y-2">
+                {((countOperations as any[]) || []).filter(op => op.status === "completed").map((op) => (
+                  <Card key={op.id}>
+                    <CardContent className="p-4 flex items-center justify-between">
+                      <div className="cursor-pointer flex-1" onClick={() => { setActiveCountId(op.id); setCountView("active"); }}>
+                        <p className="font-medium">{op.operationTitle || op.operationNumber}</p>
+                        <p className="text-[11px] text-muted-foreground">{op.operationNumber}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {op.scope === "full" ? "شامل" : "جزئي"} — {fmtDate(op.operationDate)} — {op.totalItemsCounted} صنف
+                          {op.totalDiscrepancies > 0 && ` — ${op.totalDiscrepancies} فرق`}
+                        </p>
+                      </div>
+                      <Badge variant={op.status === "completed" ? "default" : "secondary"} className="ml-2">
+                        {op.status === "completed" ? "نهائي" : "مسودة"}
+                      </Badge>
+                      <Button variant="ghost" size="icon" onClick={() => setPrintCountId(op.id)} title="طباعة">
+                        <Printer className="w-4 h-4" />
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+                {!(countOperations as any[])?.some(op => op.status === "completed") && (
+                  <p className="text-sm text-muted-foreground text-center py-8">لا توجد عمليات جرد بالأرشيف</p>
+                )}
               </div>
-
-              {archiveTab === "counts" && (
-                <div className="space-y-2">
-                  {((countOperations as any[]) || []).filter(op => op.status === "completed").map((op) => (
-                    <Card key={op.id}>
-                      <CardContent className="p-4 flex items-center justify-between">
-                        <div className="cursor-pointer flex-1" onClick={() => { setActiveCountId(op.id); setCountView("active"); }}>
-                          <p className="font-medium">{op.operationTitle || op.operationNumber}</p>
-                          <p className="text-[11px] text-muted-foreground">{op.operationNumber}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {op.scope === "full" ? "شامل" : "جزئي"} — {fmtDate(op.operationDate)} — {op.totalItemsCounted} صنف
-                            {op.totalDiscrepancies > 0 && ` — ${op.totalDiscrepancies} فرق`}
-                          </p>
-                        </div>
-                        <Badge variant={op.status === "completed" ? "default" : "secondary"} className="ml-2">
-                          {op.status === "completed" ? "نهائي" : "مسودة"}
-                        </Badge>
-                        <Button variant="ghost" size="icon" onClick={() => setPrintCountId(op.id)} title="طباعة">
-                          <Printer className="w-4 h-4" />
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  ))}
-                  {!(countOperations as any[])?.some(op => op.status === "completed") && (
-                    <p className="text-sm text-muted-foreground text-center py-8">لا توجد عمليات جرد بالأرشيف</p>
-                  )}
-                </div>
-              )}
-
-              {archiveTab === "settlements" && (
-                <div className="space-y-2">
-                  {((settlementsList as any[]) || []).map((s) => (
-                    <Card key={s.id}>
-                      <CardContent className="p-4 flex items-center justify-between">
-                        <div className="flex-1">
-                          <p className="font-medium">{s.settlementNumber}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {s.sourceType === "from_count" ? "من عملية جرد" : "تسوية مستقلة"} — {fmtDate(s.appliedAt)}
-                          </p>
-                          <p className="text-xs text-muted-foreground">{s.reason}</p>
-                        </div>
-                        <Button variant="ghost" size="icon" onClick={() => setPrintSettlementId(s.id)} title="طباعة">
-                          <Printer className="w-4 h-4" />
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  ))}
-                  {!settlementsList?.length && (
-                    <p className="text-sm text-muted-foreground text-center py-8">لا توجد تسويات بالأرشيف</p>
-                  )}
-                </div>
-              )}
             </div>
           ) : (
           <>
@@ -905,7 +925,13 @@ ${op.notes ? `<div class="notes-box">📝 <strong>ملاحظات:</strong> ${op.
                       <Button size="sm" variant={scanMode === "name" ? "default" : "outline"} onClick={() => setScanMode("name")} className="gap-1">
                         <Search className="w-3.5 h-3.5" /> بالاسم
                       </Button>
+                      <Button size="sm" variant="outline" className="gap-1 mr-auto" onClick={() => setShowNewItem(true)}>
+                        <Plus className="w-3.5 h-3.5" /> صنف جديد
+                      </Button>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      صنف غير موجود بالمخزون أصلاً؟ استخدم زر "صنف جديد" لإضافته مباشرة.
+                    </p>
 
                     {scanMode === "qr" && (
                       <BarcodeScanner onScan={handleScanResolved} placeholder="امسح باركود/QR الصنف..." />
@@ -1043,18 +1069,46 @@ ${op.notes ? `<div class="notes-box">📝 <strong>ملاحظات:</strong> ${op.
                 </div>
               )}
 
-              <div className="pt-2">
-                <Button
-                  variant="outline"
-                  onClick={() => { setSettlementSourceCountId(null); setSettlementItems([]); setShowSettlement(true); }}
-                >
-                  تسوية مستقلة (بدون جرد)
-                </Button>
-              </div>
             </div>
           )}
           </>
           )}
+        </TabsContent>
+
+        {/* ══ تبويب التسويات ══ */}
+        <TabsContent value="settlements" className="mt-6 space-y-4">
+          <div className="flex justify-between items-center">
+            <p className="text-sm text-muted-foreground">كل تسويات المخزون — من عمليات جرد أو مستقلة — برقمها المرجعي الفريد</p>
+            <Button
+              className="gap-1.5"
+              onClick={() => { setSettlementSourceCountId(null); setSettlementItems([]); setShowSettlement(true); }}
+            >
+              <Plus className="w-4 h-4" />
+              تسوية مستقلة (بدون جرد)
+            </Button>
+          </div>
+
+          <div className="space-y-2">
+            {((settlementsList as any[]) || []).map((s) => (
+              <Card key={s.id}>
+                <CardContent className="p-4 flex items-center justify-between">
+                  <div className="flex-1">
+                    <p className="font-medium">{s.settlementNumber}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {s.sourceType === "from_count" ? "من عملية جرد" : "تسوية مستقلة"} — {fmtDate(s.appliedAt)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{s.reason}</p>
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={() => setPrintSettlementId(s.id)} title="طباعة">
+                    <Printer className="w-4 h-4" />
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+            {!settlementsList?.length && (
+              <p className="text-sm text-muted-foreground text-center py-8">لا توجد تسويات محفوظة بعد</p>
+            )}
+          </div>
         </TabsContent>
       </Tabs>
 
@@ -1231,6 +1285,57 @@ ${op.notes ? `<div class="notes-box">📝 <strong>ملاحظات:</strong> ${op.
         </DialogContent>
       </Dialog>
 
+      {/* ══ نافذة إضافة صنف جديد كليّاً أثناء الجرد ══ */}
+      <Dialog open={showNewItem} onOpenChange={(v) => !v && setShowNewItem(false)}>
+        <DialogContent className="max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>إضافة صنف جديد للمخزون</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              يُستخدم فقط لصنف فعلي موجود بالمستودع وغير مسجّل بالنظام إطلاقاً. سيُنشأ
+              الصنف بكود داخلي وباركود مصنع تلقائيَين، ويدخل رصيد المخزون فوراً بالكمية أدناه.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-xs">اسم الصنف *</Label>
+              <Input value={newItemName} onChange={e => setNewItemName(e.target.value)} autoFocus />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">الوحدة *</Label>
+              <Select value={newItemUnit} onValueChange={setNewItemUnit}>
+                <SelectTrigger><SelectValue placeholder="اختر الوحدة..." /></SelectTrigger>
+                <SelectContent>
+                  {((catalogUnits as any[]) || []).map((u: any) => (
+                    <SelectItem key={u.id} value={u.nameAr}>{u.nameAr}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">الكمية *</Label>
+                <Input type="number" min={0.001} step={0.5} value={newItemQty} onChange={e => setNewItemQty(e.target.value)} dir="ltr" className="font-mono" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">التكلفة (اختياري)</Label>
+                <Input type="number" min={0} step={0.01} value={newItemCost} onChange={e => setNewItemCost(e.target.value)} dir="ltr" className="font-mono" placeholder="0" />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNewItem(false)}>إلغاء</Button>
+            <Button
+              className="gap-1.5"
+              disabled={!newItemName.trim() || !newItemUnit || !newItemQty || parseFloat(newItemQty || "0") <= 0 || addNewItemMut.isPending}
+              onClick={submitNewItem}
+            >
+              {addNewItemMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              إضافة للمخزون
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ══ نافذة تسوية المخزون ══ */}
       <Dialog open={showSettlement} onOpenChange={setShowSettlement}>
         <DialogContent className="max-w-2xl">
@@ -1287,28 +1392,43 @@ ${op.notes ? `<div class="notes-box">📝 <strong>ملاحظات:</strong> ${op.
             {!settlementSourceCountId && (
               <div className="space-y-1.5">
                 <Label className="text-xs">ابحث عن صنف لإضافته للتسوية</Label>
-                <Input
-                  placeholder="اسم الصنف..."
-                  value={countItemSearch}
-                  onChange={e => setCountItemSearch(e.target.value)}
-                />
-                <div className="max-h-40 overflow-y-auto border rounded-md divide-y">
-                  {((inventoryList as any[]) || [])
-                    .filter(i => i.itemName.includes(countItemSearch) && !settlementItems.some(s => s.inventoryId === i.id))
-                    .slice(0, 20)
-                    .map(i => (
-                      <div
-                        key={i.id}
-                        className="p-2 text-sm cursor-pointer hover:bg-muted/50 flex justify-between"
-                        onClick={() => setSettlementItems(prev => [...prev, {
-                          inventoryId: i.id, afterQuantity: i.quantity, itemName: i.itemName,
-                        }])}
-                      >
-                        <span>{i.itemName}</span>
-                        <span className="text-muted-foreground text-xs">الحالي: {i.quantity} {i.unit}</span>
-                      </div>
-                    ))}
+                <div className="flex gap-2">
+                  <Button size="sm" variant={settlementSearchMode === "qr" ? "default" : "outline"} onClick={() => setSettlementSearchMode("qr")} className="gap-1">
+                    <QrCode className="w-3.5 h-3.5" /> باركود/QR
+                  </Button>
+                  <Button size="sm" variant={settlementSearchMode === "code" ? "default" : "outline"} onClick={() => setSettlementSearchMode("code")} className="gap-1">
+                    <Package className="w-3.5 h-3.5" /> بالرقم
+                  </Button>
+                  <Button size="sm" variant={settlementSearchMode === "name" ? "default" : "outline"} onClick={() => setSettlementSearchMode("name")} className="gap-1">
+                    <Search className="w-3.5 h-3.5" /> بالاسم
+                  </Button>
                 </div>
+
+                {settlementSearchMode === "qr" ? (
+                  <BarcodeScanner onScan={handleSettlementScanResolved} placeholder="امسح باركود/QR الصنف..." />
+                ) : (
+                  <>
+                    <Input
+                      placeholder={settlementSearchMode === "name" ? "ابحث باسم الصنف..." : "ابحث برقم الصنف أو باركود المصنع..."}
+                      value={countItemSearch}
+                      onChange={e => setCountItemSearch(e.target.value)}
+                    />
+                    <div className="max-h-40 overflow-y-auto border rounded-md divide-y">
+                      {settlementSearchResults.map((i: any) => (
+                        <div
+                          key={i.id}
+                          className="p-2 text-sm cursor-pointer hover:bg-muted/50 flex justify-between"
+                          onClick={() => setSettlementItems(prev => [...prev, {
+                            inventoryId: i.id, afterQuantity: i.quantity, itemName: i.itemName,
+                          }])}
+                        >
+                          <span>{i.itemName}</span>
+                          <span className="text-muted-foreground text-xs">الحالي: {i.quantity} {i.unit}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
                 {settlementItems.length > 0 && (
                   <div className="border rounded-lg overflow-x-auto mt-2">
                     <table className="w-full text-sm">

@@ -100,7 +100,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "logistics",
     labelKey: "nav.sections.logistics",
     icon: ShoppingCart,
-    roles: ["delegate","warehouse","accountant","senior_management","executive_director","maintenance_manager","purchase_requester","owner","admin"],
+    roles: ["delegate","warehouse","accountant","senior_management","executive_director","maintenance_manager","purchase_requester","food_warehouse_manager","food_warehouse_assistant","owner","admin"],
     items: [
       { icon: ShoppingCart, labelKey: "nav.purchaseOrders", path: "/purchase-orders" },
       { icon: ShoppingBag,  labelKey: "nav.myItems",        path: "/my-items",
@@ -171,10 +171,10 @@ const NAV_SECTIONS: NavSection[] = [
     id: "catalog",
     labelKey: "nav.sections.catalog",
     icon: BookOpen,
-    roles: ["owner", "admin", "maintenance_manager", "purchase_manager", "purchase_requester", "warehouse"],
+    roles: ["owner", "admin", "maintenance_manager", "purchase_manager", "purchase_requester", "warehouse", "food_warehouse_manager", "food_warehouse_assistant"],
     items: [
       { icon: BookOpen, labelKey: "nav.catalog", path: "/catalog",
-        roles: ["owner", "admin", "maintenance_manager", "purchase_manager", "purchase_requester", "warehouse"] },
+        roles: ["owner", "admin", "maintenance_manager", "purchase_manager", "purchase_requester", "warehouse", "food_warehouse_manager", "food_warehouse_assistant"] },
     ],
   },
   // 7. وحدة التحليل AI

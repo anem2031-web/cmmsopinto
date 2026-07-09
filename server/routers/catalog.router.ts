@@ -27,6 +27,32 @@ import {
 // TAXONOMY LAYER - Hierarchical Classification
 // ============================================================
 
+// الأدوار المقيّدة بتصفح قسم "المطبخ" وشجرته الفرعية فقط بالكتالوج
+const FOOD_WAREHOUSE_ROLES = ["food_warehouse_manager", "food_warehouse_assistant"];
+
+// ── يجمع رقم عقدة "المطبخ" (كود التصنيف 95) وكل أحفادها بشكل تكراري ──
+// نتيجة الدالة تُخزَّن مؤقتاً بالذاكرة لثوانٍ معدودة فقط (الشجرة نادراً ما تتغيّر)
+// تفادياً لاستعلامَين إضافيَّين بكل نداء لأدوار المستودع الغذائي.
+let _foodWarehouseNodeIdsCache: { ids: number[]; expiresAt: number } | null = null;
+async function getFoodWarehouseNodeIds(): Promise<number[]> {
+  if (_foodWarehouseNodeIdsCache && _foodWarehouseNodeIdsCache.expiresAt > Date.now()) {
+    return _foodWarehouseNodeIdsCache.ids;
+  }
+  const db = await getDb();
+  if (!db) return [];
+  const allNodes = await db.select().from(catalogNodes);
+  const root = allNodes.find((n: any) => n.code === "95");
+  if (!root) { _foodWarehouseNodeIdsCache = { ids: [], expiresAt: Date.now() + 30_000 }; return []; }
+
+  const collect = (nodeId: number): number[] => {
+    const children = allNodes.filter((n: any) => n.parentId === nodeId);
+    return [nodeId, ...children.flatMap((c: any) => collect(c.id))];
+  };
+  const ids = collect(root.id);
+  _foodWarehouseNodeIdsCache = { ids, expiresAt: Date.now() + 30_000 };
+  return ids;
+}
+
 export const catalogRouter = router({
 
   // ────────────────────────────────────────────────────────
@@ -49,7 +75,7 @@ export const catalogRouter = router({
           level: z.number().optional(),
         }).optional()
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const db = await getDb();
         if (!db) throw new Error("Database unavailable");
 
@@ -66,7 +92,16 @@ export const catalogRouter = router({
           conditions.push(eq(catalogNodes.level, input.level));
         }
 
-        return await db.select().from(catalogNodes).where(and(...conditions));
+        const results = await db.select().from(catalogNodes).where(and(...conditions));
+
+        // تقييد أدوار المستودع الغذائي على قسم "المطبخ" وشجرته الفرعية فقط
+        const role = (ctx as any)?.user?.role;
+        if (role && FOOD_WAREHOUSE_ROLES.includes(role)) {
+          const allowedIds = new Set(await getFoodWarehouseNodeIds());
+          return results.filter((n: any) => allowedIds.has(n.id));
+        }
+
+        return results;
       }),
 
     /**
@@ -307,7 +342,7 @@ items: router({
           offset: z.number().default(0),
         }).optional()
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const db = await getDb();
         if (!db) throw new Error("Database unavailable");
 
@@ -317,10 +352,21 @@ const conditions = [];
 const activeFilter = input?.isActive !== undefined ? input.isActive : true;
 conditions.push(eq(catalogItems.isActive, activeFilter === true ? 1 : 0));
 
+// تقييد أدوار المستودع الغذائي على قسم "المطبخ" وشجرته الفرعية فقط — يُطبَّق
+// من السيرفر بغض النظر عمّا يرسله العميل، لمنع أي تحايل على القيد من الواجهة
+const role = (ctx as any)?.user?.role;
+let effectiveNodeIds = input?.nodeIds;
+if (role && FOOD_WAREHOUSE_ROLES.includes(role)) {
+  const allowedIds = await getFoodWarehouseNodeIds();
+  effectiveNodeIds = effectiveNodeIds && effectiveNodeIds.length > 0
+    ? effectiveNodeIds.filter(id => allowedIds.includes(id))
+    : allowedIds;
+}
+
 // إصلاح فلترة التصنيف — يدعم nodeId واحد أو مصفوفة nodeIds (للتصنيفات الأب وأحفادها)
-if (input?.nodeIds && input.nodeIds.length > 0) {
-  conditions.push(inArray(catalogItems.nodeId, input.nodeIds));
-} else if (input?.nodeId !== undefined) {
+if (effectiveNodeIds && effectiveNodeIds.length > 0) {
+  conditions.push(inArray(catalogItems.nodeId, effectiveNodeIds));
+} else if (input?.nodeId !== undefined && !(role && FOOD_WAREHOUSE_ROLES.includes(role))) {
   conditions.push(eq(catalogItems.nodeId, input.nodeId));
 }
 

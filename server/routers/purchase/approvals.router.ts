@@ -72,6 +72,11 @@ export const approvalsRouter = router({
         await db.createNotification({ userId: po.requestedById, title: "❌ طلب شراء مرفوض", message: `تم رفض جميع أصناف طلب الشراء رقم ${po.poNumber || input.id} من قبل الحسابات بواسطة ${ctx.user.name}.${input.rejectionReason ? ` السبب: ${input.rejectionReason}` : ""}`, type: "error", relatedPOId: input.id });
       }
     } else {
+      // مبلغ العهدة إلزامي عند الاعتماد الفعلي (غير مطلوب في حالة الرفض الكامل أعلاه)
+      const custodyValue = input.custodyAmount ? parseFloat(input.custodyAmount) : NaN;
+      if (!input.custodyAmount || !input.custodyAmount.trim() || isNaN(custodyValue) || custodyValue <= 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "مبلغ العهدة إلزامي لاعتماد الطلب من الحسابات" });
+      }
       // Normal flow: PO goes to management
       await db.updatePurchaseOrder(input.id, { status: "pending_management", accountingApprovedById: ctx.user.id, accountingApprovedAt: new Date(), accountingNotes: input.notes, custodyAmount: input.custodyAmount || null });
       
@@ -131,6 +136,11 @@ export const approvalsRouter = router({
         status: "rejected", rejectedById: ctx.user.id, rejectedAt: new Date(), rejectionReason: input.rejectionReason,
       });
     } else {
+      // مبلغ العهدة إلزامي عند اعتماد الدفعة فعلياً (غير مطلوب في حالة رفض الدفعة بالكامل أعلاه)
+      const custodyValue = input.custodyAmount ? parseFloat(input.custodyAmount) : NaN;
+      if (!input.custodyAmount || !input.custodyAmount.trim() || isNaN(custodyValue) || custodyValue <= 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "مبلغ العهدة إلزامي لاعتماد الدفعة من الحسابات" });
+      }
       await db.updatePOPricingBatch(batch.id, {
         status: "pending_management",
         accountingApprovedById: ctx.user.id,
@@ -138,6 +148,16 @@ export const approvalsRouter = router({
         accountingNotes: input.notes,
         custodyAmount: input.custodyAmount || null,
       });
+
+      // ── تحديث حالة الطلب العامة على أساس مجموع الدفعات ──
+      // بدون هذا، حالة الطلب الرئيسي تفضل "pending_accounting" للأبد حتى بعد
+      // ما كل دفعاته تتاعتمد من الحسابات وتنتقل فعلياً للإدارة العليا — نفس
+      // النمط المطبّق فعلاً بمرحلة اعتماد الإدارة العليا (approveManagementBatch).
+      const allBatchesAfterAccounting = await db.getPOPricingBatches(po.id);
+      const anyStillPendingAccounting = allBatchesAfterAccounting.some(b => b.status === "pending_accounting");
+      if (!anyStillPendingAccounting && po.status === "pending_accounting") {
+        await db.updatePurchaseOrder(po.id, { status: "pending_management" });
+      }
 
       const mgmt = await db.getUsersByRole("senior_management");
       for (const m of mgmt) {
@@ -434,7 +454,7 @@ export const approvalsRouter = router({
     return { success: true };
   }),
 
-  reviewItems: managerProcedure.input(z.object({
+  reviewItems: protectedProcedure.input(z.object({
     poId: z.number(),
     items: z.array(z.object({
       id: z.number(),
@@ -443,8 +463,25 @@ export const approvalsRouter = router({
       rejectionReason: z.string().optional(),
     })),
   })).mutation(async ({ input, ctx }) => {
+    const isStandardManager = ["maintenance_manager", "purchase_manager", "owner", "admin"].includes(ctx.user.role);
+    const isFoodWarehouseManager = ctx.user.role === "food_warehouse_manager";
+    if (!isStandardManager && !isFoodWarehouseManager) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لهذا الإجراء" });
+    }
+
     const po = await db.getPurchaseOrderById(input.poId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
+
+    // مدير المستودع الغذائي: مقيّد بطلبات مساعد المستودع الغذائي أو طلباته هو شخصياً فقط
+    if (isFoodWarehouseManager) {
+      const requester = po.requestedById ? await db.getUserById(po.requestedById) : null;
+      const isOwnRequest = po.requestedById === ctx.user.id;
+      const isAssistantRequest = (requester as any)?.role === "food_warehouse_assistant";
+      if (!isOwnRequest && !isAssistantRequest) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "لا يمكنك اعتماد هذا الطلب" });
+      }
+    }
+
     if (po.status !== "pending_review") {
       throw new TRPCError({ code: "BAD_REQUEST", message: "طلب الشراء ليس في مرحلة المراجعة" });
     }

@@ -178,6 +178,8 @@ const en: TranslationKeys = {
     owner: "Owner",
     admin: "System Admin",
     user: "User",
+    food_warehouse_manager: "Food Warehouse Manager",
+    food_warehouse_assistant: "Food Warehouse Assistant",
   },
 
   ticketStatus: {
