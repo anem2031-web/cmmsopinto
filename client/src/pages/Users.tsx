@@ -252,7 +252,7 @@ export default function UsersPage() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-semibold text-sm truncate">{u.name || "-"}</h3>
-                        {u.username && (
+                        {u.username && currentUser?.role !== "warehouse" && (
                           <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded font-mono">
                             @{u.username}
                           </span>
