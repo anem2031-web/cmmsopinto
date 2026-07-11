@@ -63,8 +63,9 @@ export const usersRouter = router({
     phone: z.string().optional(),
     department: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
-    if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
-      throw new TRPCError({ code: "FORBIDDEN", message: "فقط المالك يمكنه إنشاء مستخدمين" });
+    // دور "مستودع" مسموح له بالإضافة فقط (بدون تعديل/حذف/تغيير أدوار — مقيّدة بباقي الدوال أدناه)
+    if (ctx.user.role !== "owner" && ctx.user.role !== "admin" && ctx.user.role !== "warehouse") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية إنشاء مستخدمين" });
     }
     const existing = await db.getUserByUsername(input.username);
     if (existing) throw new TRPCError({ code: "CONFLICT", message: "اسم المستخدم موجود مسبقاً" });

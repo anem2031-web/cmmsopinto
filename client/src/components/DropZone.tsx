@@ -3,7 +3,7 @@
  * Additive layer: does NOT replace existing upload logic, only adds D&D capability
  */
 import { useRef, useState, useCallback } from "react";
-import { Upload, Loader2, CheckCircle2, XCircle, RotateCcw, X, FileText, Image, Camera } from "lucide-react";
+import { Upload, Loader2, CheckCircle2, XCircle, RotateCcw, X, FileText, Image, Camera, ScanLine, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +31,11 @@ type DropZoneProps = {
   className?: string;
   disabled?: boolean;
   enableCamera?: boolean; // إظهار زر "التقاط صورة" بجانب زر "رفع من الجهاز"
+  enableScanner?: boolean; // إظهار زر "مسح ضوئي من الطابعة" (يحتاج تشغيل خدمة السكانر المحلية على الجهاز)
 };
+
+const SCANNER_HELPER_URL = "http://localhost:5588";
+const SCANNER_HELPER_DOWNLOAD_URL = "/downloads/scanner-helper.zip";
 
 const DEFAULT_ACCEPT = "image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const DEFAULT_MAX_MB = 10;
@@ -58,9 +62,13 @@ export default function DropZone({
   className,
   disabled = false,
   enableCamera = false,
+  enableScanner = false,
 }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [files, setFiles] = useState<UploadedFile[]>([]);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scannerNotInstalled, setScannerNotInstalled] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
@@ -117,9 +125,17 @@ export default function DropZone({
     if (disabled) return;
     const maxMB = maxSizeMB * 1024 * 1024;
     const toAdd: UploadedFile[] = [];
+    const skippedReasons: string[] = [];
 
     for (const file of rawFiles.slice(0, maxFiles)) {
-      if (file.size > maxMB) continue; // skip oversized
+      if (file.size > maxMB) {
+        skippedReasons.push(`"${file.name}" حجمه ${(file.size / (1024 * 1024)).toFixed(1)}MB — أكبر من الحد المسموح (${maxSizeMB}MB)`);
+        continue;
+      }
+      if (file.size === 0) {
+        skippedReasons.push(`"${file.name}" وصل فارغًا (0 بايت) — أعد المحاولة`);
+        continue;
+      }
       const entry: UploadedFile = {
         id: `${Date.now()}-${Math.random()}`,
         file,
@@ -130,6 +146,11 @@ export default function DropZone({
         status: "pending",
       };
       toAdd.push(entry);
+    }
+
+    if (skippedReasons.length > 0) {
+      setScanError(skippedReasons.join(" — "));
+      setScannerNotInstalled(false);
     }
 
     if (toAdd.length === 0) return;
@@ -156,6 +177,49 @@ export default function DropZone({
     e.target.value = "";
   };
 
+  // ── مسح ضوئي من الطابعة عبر خدمة السكانر المحلية (scanner-helper) ──
+  // تشتغل فقط لو الخدمة شغّالة على نفس جهاز المستخدم على http://localhost:5588
+  const handleScan = async () => {
+    if (disabled || isScanning) return;
+    setScanError(null);
+    setScannerNotInstalled(false);
+    setIsScanning(true);
+    try {
+      // تايم آوت يدوي (بدل AbortSignal.timeout غير المدعومة في كل المتصفحات)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      let healthRes: Response;
+      try {
+        healthRes = await fetch(`${SCANNER_HELPER_URL}/health`, { signal: controller.signal });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      if (!healthRes.ok) throw new Error(`الخدمة ردّت لكن بحالة غير سليمة (HTTP ${healthRes.status})`);
+    } catch (err: any) {
+      setIsScanning(false);
+      setScannerNotInstalled(true);
+      // نعرض تفاصيل الخطأ الحقيقي (مش رسالة عامة) عشان يسهل تشخيصه
+      const detail = err?.name === "AbortError" ? "انتهت المهلة قبل ما الخدمة تردّ" : (err?.message || String(err));
+      setScanError(`خدمة السكانر المحلية مش شغّالة على جهازك. (${detail})`);
+      return;
+    }
+
+    try {
+      const scanRes = await fetch(`${SCANNER_HELPER_URL}/scan`, { method: "POST" });
+      if (!scanRes.ok) {
+        const errData = await scanRes.json().catch(() => null);
+        throw new Error(errData?.error || "فشل المسح الضوئي");
+      }
+      const blob = await scanRes.blob();
+      const file = new File([blob], `scan-${Date.now()}.jpg`, { type: "image/jpeg" });
+      await processFiles([file]);
+    } catch (err: any) {
+      setScanError(err?.message || "تعذر إتمام المسح الضوئي");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
   const removeFile = (id: string) => {
     setFiles(prev => {
       const updated = prev.filter(f => f.id !== id);
@@ -175,7 +239,7 @@ export default function DropZone({
   return (
     <div className={cn("space-y-3", className)}>
       {/* منطقة الرفع / الالتقاط */}
-      {enableCamera ? (
+      {(enableCamera || enableScanner) ? (
         <div
           onDrop={handleDrop}
           onDragOver={handleDragOver}
@@ -197,27 +261,29 @@ export default function DropZone({
             onChange={handleInputChange}
             disabled={disabled}
           />
-          <input
-            ref={cameraInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={handleInputChange}
-            disabled={disabled}
-          />
+          {enableCamera && (
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={handleInputChange}
+              disabled={disabled}
+            />
+          )}
 
-          {isUploading ? (
+          {isUploading || isScanning ? (
             <div className="flex flex-col items-center gap-2 py-4">
               <Loader2 className="w-8 h-8 text-primary animate-spin" />
-              <p className="text-sm font-medium">جاري الرفع...</p>
+              <p className="text-sm font-medium">{isScanning ? "جاري المسح الضوئي..." : "جاري الرفع..."}</p>
             </div>
           ) : (
             <div className="space-y-2.5">
               <p className="text-xs text-center text-muted-foreground">
                 {isDragging ? "أفلت الملفات هنا" : (sublabel || label || "اختر طريقة الإضافة")}
               </p>
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className={cn("grid gap-2.5", enableCamera && enableScanner ? "grid-cols-3" : "grid-cols-2")}>
                 <button
                   type="button"
                   onClick={() => !disabled && inputRef.current?.click()}
@@ -231,20 +297,65 @@ export default function DropZone({
                   <Upload className="w-6 h-6 text-muted-foreground" />
                   <span className="text-xs font-medium">رفع من الجهاز</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => !disabled && cameraInputRef.current?.click()}
-                  disabled={disabled}
-                  className={cn(
-                    "flex flex-col items-center gap-1.5 py-4 px-2 rounded-lg border-2 border-dashed transition-all select-none",
-                    "border-muted-foreground/30 hover:border-primary/60 hover:bg-muted/30",
-                    disabled && "cursor-not-allowed"
-                  )}
-                >
-                  <Camera className="w-6 h-6 text-muted-foreground" />
-                  <span className="text-xs font-medium">التقاط صورة</span>
-                </button>
+                {enableCamera && (
+                  <button
+                    type="button"
+                    onClick={() => !disabled && cameraInputRef.current?.click()}
+                    disabled={disabled}
+                    className={cn(
+                      "flex flex-col items-center gap-1.5 py-4 px-2 rounded-lg border-2 border-dashed transition-all select-none",
+                      "border-muted-foreground/30 hover:border-primary/60 hover:bg-muted/30",
+                      disabled && "cursor-not-allowed"
+                    )}
+                  >
+                    <Camera className="w-6 h-6 text-muted-foreground" />
+                    <span className="text-xs font-medium">التقاط صورة</span>
+                  </button>
+                )}
+                {enableScanner && (
+                  <button
+                    type="button"
+                    onClick={handleScan}
+                    disabled={disabled}
+                    className={cn(
+                      "flex flex-col items-center gap-1.5 py-4 px-2 rounded-lg border-2 border-dashed transition-all select-none",
+                      "border-muted-foreground/30 hover:border-primary/60 hover:bg-muted/30",
+                      disabled && "cursor-not-allowed"
+                    )}
+                  >
+                    <ScanLine className="w-6 h-6 text-muted-foreground" />
+                    <span className="text-xs font-medium">مسح ضوئي من الطابعة</span>
+                  </button>
+                )}
               </div>
+
+              {/* رسالة الخطأ العادية (مثلاً فشل مسح فعلي بعد ما الخدمة كانت شغّالة) */}
+              {scanError && !scannerNotInstalled && (
+                <p className="text-xs text-destructive text-center bg-destructive/10 rounded-md py-1.5 px-2">{scanError}</p>
+              )}
+
+              {/* حالة خاصة: الخدمة المحلية مش مثبّتة/شغّالة — نعرض رابط تحميل مباشر بدل رسالة خطأ عادية */}
+              {scannerNotInstalled && (
+                <div className="text-center bg-amber-50 border border-amber-200 rounded-md py-2.5 px-3 space-y-1.5">
+                  <p className="text-xs text-amber-800">
+                    محتاج تشغّل "خدمة السكانر المحلية" على جهازك الأول (مرة واحدة بس).
+                  </p>
+                  {scanError && (
+                    <p className="text-[11px] text-amber-600 font-mono bg-amber-100/60 rounded px-2 py-1 break-all">{scanError}</p>
+                  )}
+                  <a
+                    href={SCANNER_HELPER_DOWNLOAD_URL}
+                    download
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-900 bg-amber-100 hover:bg-amber-200 transition-colors rounded-md px-3 py-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    تحميل برنامج السكانر المساعد
+                  </a>
+                  <p className="text-[11px] text-amber-700">
+                    بعد التحميل: فُك ضغط الملف، ثم دبل-كليك على <code className="font-mono">start.bat</code> جوه المجلد وسيبه شغّال، وارجع اضغط الزر تاني.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -1,0 +1,13 @@
+{
+  "name": "cmms-scanner-helper",
+  "version": "1.0.0",
+  "description": "خدمة محلية صغيرة تشغّل السكانر (Epson L6270 أو أي سكانر يدعم WIA) وتُرجع الصورة الممسوحة لواجهة نظام CMMS عبر HTTP محلي",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}

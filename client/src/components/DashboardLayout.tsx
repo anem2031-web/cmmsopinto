@@ -193,12 +193,12 @@ const NAV_SECTIONS: NavSection[] = [
     id: "admin",
     labelKey: "nav.sections.adminTools",
     icon: Shield,
-    roles: ["owner","admin"],
+    roles: ["owner","admin","warehouse"],
     items: [
       { icon: Users,     labelKey: "nav.users",              path: "/users" },
-      { icon: Shield,    labelKey: "nav.auditLog",           path: "/audit-log" },
-      { icon: Database,  labelKey: "backup.title",           path: "/backup" },
-      { icon: Languages, labelKey: "nav.translationMonitor", path: "/translation-monitor" },
+      { icon: Shield,    labelKey: "nav.auditLog",           path: "/audit-log", roles: ["owner","admin"] },
+      { icon: Database,  labelKey: "backup.title",           path: "/backup", roles: ["owner","admin"] },
+      { icon: Languages, labelKey: "nav.translationMonitor", path: "/translation-monitor", roles: ["owner","admin"] },
     ],
   },
   {

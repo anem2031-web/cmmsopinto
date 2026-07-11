@@ -99,6 +99,8 @@ export default function UsersPage() {
   });
 
   const canManage = ["admin", "owner"].includes(currentUser?.role || "");
+  // دور "المستودع" مسموح له بإضافة مستخدمين جدد فقط (بدون تعديل/حذف/تعطيل)
+  const canCreate = canManage || currentUser?.role === "warehouse";
 
   // Create dialog
   const [createOpen, setCreateOpen] = useState(false);
@@ -168,7 +170,7 @@ export default function UsersPage() {
             إدارة أعضاء الفريق وتحديد صلاحياتهم
           </p>
         </div>
-        {canManage && (
+        {canCreate && (
           <Button onClick={() => { setCreateForm(EMPTY_CREATE); setCreateOpen(true); }} className="gap-2">
             <UserPlus className="w-4 h-4" />
             إضافة مستخدم جديد

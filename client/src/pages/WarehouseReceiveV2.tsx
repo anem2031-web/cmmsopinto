@@ -488,9 +488,11 @@ export default function WarehouseReceiveV2() {
                 <DropZone
                   accept="image/*,application/pdf"
                   maxFiles={1}
+                  maxSizeMB={15}
                   label="ارفع صورة الفاتورة أو PDF"
                   sublabel="اختر طريقة إضافة صورة الفاتورة"
                   enableCamera
+                  enableScanner
                   onFilesUploaded={(files) => files[0]?.status === "done" && setInvoiceFile(files[0])}
                 />
               )}
