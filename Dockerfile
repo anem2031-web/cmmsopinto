@@ -34,10 +34,9 @@ COPY . .
 RUN pnpm build
 
 # Remove dev dependencies after build
-RUN pnpm prune --prod
 
 # Expose port
-EXPOSE 8080
+EXPOSE 3000
 
 # Start the server
 CMD ["node", "dist/index.js"]

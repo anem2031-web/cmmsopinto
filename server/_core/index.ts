@@ -111,10 +111,11 @@ async function startServer() {
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
-        upgradeInsecureRequests: [],
+        upgradeInsecureRequests: null,
       },
     },
     crossOriginEmbedderPolicy: false,
+    hsts: false,
   }));
 
   // ============================================================
