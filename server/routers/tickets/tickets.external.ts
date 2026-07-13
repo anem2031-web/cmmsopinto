@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, gateSecurityProcedure, delegateProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 
 export const ticketsExternalRouter = router({
   approveGateExit: gateSecurityProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {

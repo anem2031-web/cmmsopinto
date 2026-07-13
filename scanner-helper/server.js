@@ -18,6 +18,15 @@ const PORT = 5588;
 const app = express();
 app.use(cors()); // مفتوح محليًا فقط — الخدمة أصلاً غير متاحة إلا من نفس الجهاز
 
+// ── دعم "Private Network Access" (سياسة أمان في المتصفحات الحديثة، خصوصاً Chrome) ──
+// بدون الهيدر ده، أي طلب fetch() جافاسكريبت من صفحة الموقع لهذا البورت المحلي
+// هيتمنع بصمت (Failed to fetch)، حتى لو فتح نفس الرابط مباشرة في المتصفح شغّال عادي.
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Private-Network", "true");
+  next();
+});
+app.options("*", cors()); // معالجة صريحة لأي طلب preflight (OPTIONS)
+
 app.get("/health", (req, res) => {
   res.json({ ok: true, message: "خدمة السكانر المحلية شغّالة" });
 });

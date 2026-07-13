@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, managerProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 
 // Vendor management
 export const vendorsRouter = router({

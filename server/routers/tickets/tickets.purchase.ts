@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 
 export const ticketsPurchaseRouter = router({
   requestPurchase: protectedProcedure.input(z.object({

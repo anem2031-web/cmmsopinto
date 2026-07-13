@@ -1,8 +1,8 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure, managerProcedure } from "../_shared/procedures";
-import { translateFields, detectLanguage } from "../../services/translation";
-import * as db from "../../db";
+import { translateFields, detectLanguage } from "../../services/translation/translation";
+import * as db from "../../_core/db";
 
 export const ticketsApprovalsRouter = router({
   approve: managerProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {

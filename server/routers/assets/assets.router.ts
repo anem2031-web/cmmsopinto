@@ -1,10 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure, managerProcedure } from "../_shared/procedures";
-import { translateFields, detectLanguage, type SupportedLanguage } from "../../services/translation";
-import { storageRename } from "../../storage";
-import { translationCache } from "../../translationEngine";
-import * as db from "../../db";
+import { translateFields, detectLanguage, type SupportedLanguage } from "../../services/translation/translation";
+import { storageRename } from "../../_core/storage";
+import { translationCache } from "../../services/translation/translationEngine";
+import * as db from "../../_core/db";
 
 export const assetsRouter = router({
   list: protectedProcedure.input(z.object({

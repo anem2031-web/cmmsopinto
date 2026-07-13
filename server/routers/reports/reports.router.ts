@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { router, protectedProcedure, managerProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 
 export const reportsRouter = router({
   ticketsByStatus: protectedProcedure.query(async () => {

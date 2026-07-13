@@ -2,7 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure, managerProcedure, supervisorProcedure,
   warehouseProcedure, accountantProcedure, managementProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 
 export const ticketsWorkflowRouter = router({
   submitForTriage: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {

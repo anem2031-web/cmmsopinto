@@ -3,11 +3,11 @@
  * يُرسل إشعار تذكيري للفني إذا لم يُحدَّث أمر العمل خلال 24 ساعة من موعده
  * يُشغَّل كل ساعتين
  */
-import { getDb } from "../db";
+import { getDb } from "../_core/db";
 import { pmWorkOrders, preventivePlans } from "../../drizzle/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { notifyOwner } from "../_core/notification";
-import { sendPushToUser } from "../webPush";
+import { sendPushToUser } from "../services/notifications/webPush";
 
 const REMINDER_THRESHOLD_HOURS = 24;
 

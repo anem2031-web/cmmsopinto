@@ -2,7 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { router, protectedProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 import { cacheManager, cacheKeys, invalidateCache } from "../../_core/cache";
 
 export const usersRouter = router({

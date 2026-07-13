@@ -1,4 +1,4 @@
-import type { TranslationKeys } from "./ar";
+import type { TranslationKeys } from "@/i18n/ar";
 
 const en: TranslationKeys = {
   appName: "Computerized Maintenance Management System",

@@ -1,10 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure, managerProcedure, warehouseProcedure, delegateProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 import { notifyOwner } from "../../_core/notification";
-import { detectLanguage } from "../../services/translation";
-import { queueTranslation } from "../../translationEngine";
+import { detectLanguage } from "../../services/translation/translation";
+import { queueTranslation } from "../../services/translation/translationEngine";
 import { notifyItemRejection } from "../_shared/router-helpers";
 
 // ── دالة مشتركة: ترجمة أصناف طلب الشراء في الخلفية ──────────────────────────

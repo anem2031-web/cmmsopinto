@@ -3,12 +3,12 @@
  * ينشئ أوامر عمل تلقائياً للخطط المستحقة — بدون أي ربط بالبلاغات
  * يُرسل push notification للفني المعيّن عند إنشاء كل أمر عمل
  */
-import { getDb } from "../db";
+import { getDb } from "../_core/db";
 import { preventivePlans, pmWorkOrders } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { notifyOwner } from "../_core/notification";
-import { calcNextDueDate, generateWorkOrderNumber } from "../db";
-import { sendPushToUser } from "../webPush";
+import { calcNextDueDate, generateWorkOrderNumber } from "../_core/db";
+import { sendPushToUser } from "../services/notifications/webPush";
 
 // ── Cron reliability: prevent concurrent runs ────────────────────────────────
 let _pmAutomationRunning = false;

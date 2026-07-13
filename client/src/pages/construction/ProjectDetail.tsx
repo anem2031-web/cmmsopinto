@@ -13,15 +13,15 @@ import {
   Package, GitMerge, Pencil, CheckCircle2, AlertTriangle,
   Clock, TrendingUp, Layers
 } from "lucide-react";
-import ProjectKanban from "./ProjectKanban";
-import ProjectGantt from "./ProjectGantt";
-import ProjectMembers from "./ProjectMembers";
-import DailyReportTab from "./DailyReportTab";
-const ProjectWhiteboard = lazy(() => import("./ProjectWhiteboard"));
-const ProjectMindMap = lazy(() => import("./ProjectMindMap"));
-import ProjectAutomations from "./ProjectAutomations";
-import PhaseManager from "../../components/construction/PhaseManager";
-import ConstructionDetailModal from "../../components/construction/ConstructionDetailModal";
+import ProjectKanban from "@/pages/construction/ProjectKanban";
+import ProjectGantt from "@/pages/construction/ProjectGantt";
+import ProjectMembers from "@/pages/construction/ProjectMembers";
+import DailyReportTab from "@/pages/construction/DailyReportTab";
+const ProjectWhiteboard = lazy(() => import("@/pages/construction/ProjectWhiteboard"));
+const ProjectMindMap = lazy(() => import("@/pages/construction/ProjectMindMap"));
+import ProjectAutomations from "@/pages/construction/ProjectAutomations";
+import PhaseManager from "@/components/construction/PhaseManager";
+import ConstructionDetailModal from "@/components/construction/ConstructionDetailModal";
 
 const statusColors: Record<string, string> = {
   planning:  "bg-slate-100 text-slate-700",

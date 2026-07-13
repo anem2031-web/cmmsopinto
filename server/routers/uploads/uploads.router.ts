@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { nanoid } from "nanoid";
 import { router, protectedProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 
 export const uploadsRouter = router({
   getPresignedUrl: protectedProcedure.input(z.object({

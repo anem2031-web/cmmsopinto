@@ -5,7 +5,7 @@
  */
 
 import { eq, and, sql } from "drizzle-orm";
-import { getDb } from "../db";
+import { getDb } from "../_core/db";
 import {
   constructionAutomations,
   constructionTasks,

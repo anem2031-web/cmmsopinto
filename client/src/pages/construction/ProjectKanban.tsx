@@ -7,9 +7,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Clock, AlertTriangle, User, Paperclip, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
-import ConstructionDetailModal from "../../components/construction/ConstructionDetailModal";
-import HoldReasonModal from "../../components/construction/HoldReasonModal";
-import TaskForm from "../../components/construction/TaskForm";
+import ConstructionDetailModal from "@/components/construction/ConstructionDetailModal";
+import HoldReasonModal from "@/components/construction/HoldReasonModal";
+import TaskForm from "@/components/construction/TaskForm";
 
 const COLUMNS = [
   { key: "new",               label: "جديدة",              color: "bg-slate-500",  light: "bg-slate-50  border-slate-200" },

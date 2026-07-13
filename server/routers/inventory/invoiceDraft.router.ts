@@ -6,7 +6,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, warehouseProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 import { analyzeInvoiceFromUrl } from "../../services/ocr/invoiceOcr.service";
 
 export const invoiceDraftRouter = router({

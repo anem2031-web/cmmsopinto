@@ -1,12 +1,149 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { eq, asc, and, desc, gte, lte } from "drizzle-orm";
 import { router, protectedProcedure, managerProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 import { invokeLLM } from "../../_core/llm";
-import { detectLanguage, type SupportedLanguage } from "../../services/translation";
-import { queueTranslation, translationCache } from "../../translationEngine";
+import { notifyOwner } from "../../_core/notification";
+import { detectLanguage, type SupportedLanguage } from "../../services/translation/translation";
+import { queueTranslation, translationCache } from "../../services/translation/translationEngine";
 
 export const preventiveRouter = router({
+  // ─── Branch Tree (شجرة فروع الصيانة الدورية) ──────────────────────────
+  listTree: protectedProcedure.query(async () => {
+    return db.listBranchTree();
+  }),
+
+  getBranch: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    const branch = await db.getBranchWithChildren(input.id);
+    if (!branch) throw new TRPCError({ code: "NOT_FOUND", message: "الفرع غير موجود" });
+    return branch;
+  }),
+
+  getBranchPath: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    return db.getBranchPath(input.id);
+  }),
+
+  createBranch: managerProcedure.input(z.object({
+    title: z.string().min(1),
+    description: z.string().optional(),
+    parentId: z.number().optional(),
+    isGroupOnly: z.boolean().default(false),
+    assetId: z.number().optional(),
+    siteId: z.number().optional(),
+    // إلزامية فقط للفروع التنفيذية (isGroupOnly = false) — يُتحقق أدناه لا في الـschema
+    frequency: z.enum(["daily", "weekly", "monthly", "quarterly", "biannual", "annual"]).optional(),
+    frequencyValue: z.number().default(1),
+    estimatedDurationMinutes: z.number().optional(),
+    assignedToId: z.number().optional(),
+    checklist: z.array(z.object({ id: z.string(), text: z.string(), required: z.boolean().optional() })).optional(),
+    nextDueDate: z.string().optional(),
+  })).mutation(async ({ input, ctx }) => {
+    if (!input.isGroupOnly && !input.frequency) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "التكرار إلزامي لأي فرع تنفيذي (غير تجميعي)" });
+    }
+    // وراثة الإعدادات: لو ما حُدد تكرار/فني وفيه أب، نرث من الأب
+    let inherited: { frequency?: any; frequencyValue?: number; assignedToId?: number } = {};
+    if (input.parentId) {
+      const parent = await db.getPreventivePlanById(input.parentId);
+      if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "فرع الأب غير موجود" });
+      if (!input.isGroupOnly) {
+        inherited.frequency = input.frequency ?? parent.frequency ?? undefined;
+        inherited.frequencyValue = input.frequencyValue ?? parent.frequencyValue ?? 1;
+        inherited.assignedToId = input.assignedToId ?? parent.assignedToId ?? undefined;
+      }
+    }
+    const planNumber = await db.generatePlanNumber();
+    const nextDue = !input.isGroupOnly
+      ? (input.nextDueDate ? new Date(input.nextDueDate) : db.calcNextDueDate(new Date(), inherited.frequency ?? input.frequency!, inherited.frequencyValue ?? input.frequencyValue))
+      : undefined;
+    const result = await db.createBranch({
+      ...input,
+      frequency: input.isGroupOnly ? undefined : (inherited.frequency ?? input.frequency),
+      frequencyValue: input.isGroupOnly ? undefined : (inherited.frequencyValue ?? input.frequencyValue),
+      assignedToId: input.isGroupOnly ? undefined : (inherited.assignedToId ?? input.assignedToId),
+      planNumber,
+      checklist: input.checklist ?? [],
+      nextDueDate: nextDue,
+      createdById: ctx.user.id,
+    });
+    if (result?.id) {
+      const planLang = await detectLanguage(input.title).catch(() => "ar" as const);
+      queueTranslation({
+        entityType: "PM_PLAN",
+        entityId: result.id,
+        fields: [
+          { fieldName: "title", text: input.title },
+          ...(input.description ? [{ fieldName: "description", text: input.description }] : []),
+        ],
+        sourceLanguage: planLang,
+        userId: ctx.user.id,
+      }).catch(e => console.error("[PM_PLAN] Queue translation failed:", e));
+
+      if (input.checklist && input.checklist.length > 0) {
+        const ddb = await db.getDb();
+        if (ddb) {
+          const { pmChecklistItems } = await import("../../../drizzle/schema");
+          for (let i = 0; i < input.checklist.length; i++) {
+            const item = input.checklist[i];
+            if (!item.text?.trim()) continue;
+            const itemLang = await detectLanguage(item.text).catch(() => "ar" as const);
+            const inserted = await ddb.insert(pmChecklistItems).values({
+              planId: result.id,
+              text: item.text,
+              orderIndex: i,
+              isRequired: item.required ?? true,
+              originalLanguage: itemLang,
+            });
+            const itemId = Number((inserted as any)[0].insertId);
+            queueTranslation({
+              entityType: "PM_CHECKLIST",
+              entityId: itemId,
+              fields: [{ fieldName: "text", text: item.text }],
+              sourceLanguage: itemLang,
+            }).catch(e => console.error("[PM_CHECKLIST] Queue translation failed:", e));
+          }
+        }
+      }
+    }
+    return result;
+  }),
+
+  updateBranch: managerProcedure.input(z.object({
+    id: z.number(),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    parentId: z.number().nullable().optional(),
+    isGroupOnly: z.boolean().optional(),
+    assetId: z.number().optional(),
+    siteId: z.number().optional(),
+    frequency: z.enum(["daily", "weekly", "monthly", "quarterly", "biannual", "annual"]).optional(),
+    frequencyValue: z.number().optional(),
+    estimatedDurationMinutes: z.number().optional(),
+    assignedToId: z.number().optional(),
+    isActive: z.boolean().optional(),
+    nextDueDate: z.string().optional(),
+  })).mutation(async ({ input }) => {
+    const { id, ...data } = input;
+    return db.updateBranch(id, {
+      ...data,
+      nextDueDate: data.nextDueDate ? new Date(data.nextDueDate) : undefined,
+    });
+  }),
+
+  // يرجع أيضاً سبب المنع (عدد الأبناء/أوامر العمل) لعرضه بوضوح بالواجهة قبل محاولة الحذف
+  getBranchDeletionBlockers: managerProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    return db.getBranchDeletionBlockers(input.id);
+  }),
+
+  deleteBranch: managerProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    try {
+      return await db.deleteBranch(input.id);
+    } catch (e: any) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: e.message ?? "تعذّر حذف الفرع" });
+    }
+  }),
+
   listPlans: protectedProcedure.input(z.object({
     assetId: z.number().optional(),
     siteId: z.number().optional(),
@@ -128,6 +265,39 @@ export const preventiveRouter = router({
     return wo;
   }),
 
+  // يحذف أمر عمل — مسموح فقط طالما لم يبدأ الفحص فعلياً (انظر db.deletePMWorkOrder)
+  deleteWorkOrder: managerProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    try {
+      return await db.deletePMWorkOrder(input.id);
+    } catch (e: any) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: e.message ?? "تعذّر حذف أمر العمل" });
+    }
+  }),
+
+  // ─── الحل الهجين لإنشاء أمر العمل ──────────────────────────────────────
+  // يرجع كل الفروع التنفيذية المرشّحة تحت فرع معيّن (الفرع نفسه إن كان تنفيذياً
+  // + كل أحفاده التنفيذيين). لو رجعت مرشّح واحد بس، الواجهة تنشئ مباشرة بدون
+  // إظهار نافذة اختيار (فرع بلا أبناء تنفيذيين إضافيين).
+  previewWorkOrderCandidates: protectedProcedure.input(z.object({ planId: z.number() })).query(async ({ input }) => {
+    const candidates = await db.getExecutableDescendants(input.planId);
+    return { candidates, needsSelection: candidates.length > 1 };
+  }),
+
+  createHybridWorkOrder: managerProcedure.input(z.object({
+    planIds: z.array(z.number()).min(1),
+    scheduledDate: z.string(),
+  })).mutation(async ({ input, ctx }) => {
+    try {
+      return await db.createHybridWorkOrder({
+        planIds: input.planIds,
+        scheduledDate: new Date(input.scheduledDate),
+        createdById: ctx.user.id,
+      });
+    } catch (e: any) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: e.message ?? "تعذّر إنشاء أمر العمل" });
+    }
+  }),
+
   generateWorkOrder: managerProcedure.input(z.object({
     planId: z.number(),
     scheduledDate: z.string(),
@@ -152,7 +322,7 @@ export const preventiveRouter = router({
     // ─── إشعار push للفني المعيّن ───
     if (plan.assignedToId) {
       try {
-        const { sendPushToUser } = await import("./webPush");
+        const { sendPushToUser } = await import("../../services/notifications/webPush");
         const scheduledDateStr = new Date(input.scheduledDate).toLocaleDateString("ar-SA");
         await sendPushToUser(plan.assignedToId, {
           title: "تكليف جديد: صيانة وقائية 🔧",
@@ -397,14 +567,12 @@ export const preventiveRouter = router({
   })).mutation(async ({ input, ctx }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmExecutionSessions, pmWorkOrders, pmChecklistItems } = await import("../../../drizzle/schema");
+    const { pmExecutionSessions, pmWorkOrders } = await import("../../../drizzle/schema");
     // Get work order
     const wo = await db.getPMWorkOrderById(input.workOrderId);
     if (!wo) throw new TRPCError({ code: "NOT_FOUND", message: "أمر العمل غير موجود" });
-    // Get checklist items from the plan
-    const items = await ddb.select().from(pmChecklistItems)
-      .where(eq(pmChecklistItems.planId, wo.planId))
-      .orderBy();
+    // بنود الفحص عبر كل الفروع المرتبطة بأمر العمل (فرع واحد أو أكثر — الحل الهجين)
+    const items = await db.getWorkOrderChecklistItems(input.workOrderId);
     // Check if session already exists
     const existing = await ddb.select().from(pmExecutionSessions)
       .where(eq(pmExecutionSessions.workOrderId, input.workOrderId));
@@ -481,13 +649,11 @@ export const preventiveRouter = router({
   getExecutionProgress: protectedProcedure.input(z.object({ workOrderId: z.number() })).query(async ({ input }) => {
     const ddb = await db.getDb();
     if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
-    const { pmExecutionResults, pmExecutionSessions, pmChecklistItems, pmWorkOrders } = await import("../../../drizzle/schema");
-    const { eq } = await import("drizzle-orm");
+    const { pmExecutionResults, pmExecutionSessions } = await import("../../../drizzle/schema");
     const wo = await db.getPMWorkOrderById(input.workOrderId);
     if (!wo) throw new TRPCError({ code: "NOT_FOUND", message: "أمر العمل غير موجود" });
-    const items = await ddb.select().from(pmChecklistItems)
-      .where(eq(pmChecklistItems.planId, wo.planId))
-      .orderBy();
+    // بنود الفحص عبر كل الفروع المرتبطة (فرع واحد أو أكثر — الحل الهجين)
+    const items = await db.getWorkOrderChecklistItems(input.workOrderId);
     const results = await ddb.select().from(pmExecutionResults)
       .where(eq(pmExecutionResults.workOrderId, input.workOrderId));
     const sessions = await ddb.select().from(pmExecutionSessions)
@@ -604,7 +770,12 @@ export const preventiveRouter = router({
       assetId: input.assetId ?? wo.assetId ?? undefined,
       siteId: input.siteId ?? wo.siteId ?? undefined,
       reportedById: ctx.user.id,
-      category: "corrective",
+      // "corrective" ليست قيمة صالحة بعمود category (enum محدود بـ
+      // electrical/plumbing/hvac/structural/mechanical/general/safety/cleaning)
+      // — استخدام قيمة غير موجودة كان يفشل الإدخال بالكامل. "general" قيمة
+      // آمنة دائماً؛ مصدر التذكرة (صيانة دورية) موثّق بالفعل بنص الوصف
+      // وبالربط عبر linkedTicketId، فلا داعي لتصنيف category خاص بها.
+      category: "general",
     });
     // Link ticket to execution result
     await ddb.update(pmExecutionResults)

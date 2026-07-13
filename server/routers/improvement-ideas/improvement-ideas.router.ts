@@ -1,9 +1,9 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure, ideaTriageProcedure, managementProcedure } from "../_shared/procedures";
-import { detectLanguage, type SupportedLanguage } from "../../services/translation";
-import * as db from "../../db";
-import * as ideasDb from "../../improvementIdeas";
+import { detectLanguage, type SupportedLanguage } from "../../services/translation/translation";
+import * as db from "../../_core/db";
+import * as ideasDb from "../../services/improvement-ideas/improvementIdeas";
 
 // الأدوار صاحبة الرؤية الكاملة (الفرز + التصنيف + اتخاذ القرار النهائي مجتمعين برؤية كل المقترحات)
 const FULL_VISIBILITY_ROLES = ["maintenance_manager", "senior_management", "executive_director", "owner", "admin"];

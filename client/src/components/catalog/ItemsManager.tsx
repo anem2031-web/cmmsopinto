@@ -1,5 +1,5 @@
-import CatalogExportButton from "./CatalogExportButton";
-import CatalogImportButton from "./CatalogImportButton";
+import CatalogExportButton from "@/components/catalog/CatalogExportButton";
+import CatalogImportButton from "@/components/catalog/CatalogImportButton";
 import React, { useState, useMemo, useEffect } from "react";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";

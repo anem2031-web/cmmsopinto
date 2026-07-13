@@ -3,13 +3,17 @@ WORKDIR /app
 
 # Install Chromium and required system dependencies for Puppeteer on Alpine Linux
 # Required for delegate purchasing items PDF export (Puppeteer rendering engine)
-# Note: 'nss' removed as standalone package in Alpine v3.21+ (included in chromium deps)
 RUN apk update && apk add --no-cache \
     chromium \
+    nss \
     freetype \
+    freetype-dev \
     harfbuzz \
     ca-certificates \
-    ttf-freefont
+    ttf-freefont \
+    font-noto-arabic \
+    dbus \
+    eudev
 
 # Tell puppeteer-core where to find Chromium on Alpine Linux
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser

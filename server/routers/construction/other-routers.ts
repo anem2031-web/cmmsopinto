@@ -2,7 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { eq, desc, asc, and, count, sql } from "drizzle-orm";
 import { router, protectedProcedure } from "../_shared/procedures";
-import { getDb } from "../../db";
+import { getDb } from "../../_core/db";
 import {
   constructionTaskComments,
   constructionTaskDependencies,

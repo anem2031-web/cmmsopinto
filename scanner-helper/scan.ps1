@@ -1,12 +1,13 @@
 # ============================================================
-# scan.ps1 — يشغّل السكانر عبر WIA (Windows Image Acquisition)
-# ويحفظ الصورة الممسوحة كملف JPEG في المسار المُمرَّر.
+# scan.ps1 - Drives the scanner via WIA (Windows Image Acquisition)
+# and saves the scanned image as a JPEG file at the given path.
 #
-# يعمل مع أي سكانر مسجّل كجهاز WIA بويندوز (يشمل Epson L6270
-# وأغلب طابعات/سكانرات Epson و Canon و HP الحديثة).
+# Works with any scanner registered as a WIA device on Windows
+# (includes Epson L6270 and most modern Epson/Canon/HP scanners).
 #
-# الاستخدام: powershell -ExecutionPolicy Bypass -File scan.ps1 -OutputPath "C:\temp\scan.jpg"
-# المخرجات: سطر JSON واحد على stdout: {"success":true,"path":"..."} أو {"success":false,"error":"..."}
+# Usage: powershell -ExecutionPolicy Bypass -File scan.ps1 -OutputPath "C:\temp\scan.jpg"
+# Output: a single JSON line on stdout:
+#   {"success":true,"path":"..."} or {"success":false,"error":"..."}
 # ============================================================
 
 param(
@@ -25,12 +26,12 @@ try {
     $manager = New-Object -ComObject WIA.DeviceManager
 
     if ($manager.DeviceInfos.Count -eq 0) {
-        Write-Result $false @{ error = "لم يتم العثور على أي سكانر متصل. تأكد إن السكانر شغّال ومتوصّل، وإنه ظاهر في تطبيق 'Windows Fax and Scan' الجاهز بويندوز." }
+        Write-Result $false @{ error = "No scanner found. Make sure the scanner is powered on, connected, and visible in the Windows 'Fax and Scan' app." }
         exit 1
     }
 
-    # اختيار أول جهاز سكانر (Scanner) — لو فيه أكتر من جهاز WIA (طابعة + كاميرا مثلاً)
-    # بنفضّل أي جهاز من نوع Scanner (Type = 1) بدل أول جهاز عشوائي
+    # Pick the first Scanner-type device (Type = 1) if multiple WIA devices exist
+    # (e.g. a printer that also registers as a camera or fax device)
     $deviceInfo = $null
     for ($i = 1; $i -le $manager.DeviceInfos.Count; $i++) {
         $candidate = $manager.DeviceInfos.Item($i)
@@ -41,8 +42,8 @@ try {
     $device = $deviceInfo.Connect()
     $item = $device.Items.Item(1)
 
-    # ── ضبط إعدادات المسح (لون، دقة 300 نقطة/بوصة) — بمحاولة آمنة لأن بعض
-    # السكانرات لا تدعم كل الخصائص، فنتجاهل أي فشل بضبط خاصية بعينها ──
+    # Set scan settings (color, 300 DPI) - best-effort, ignore failures since
+    # not every scanner supports every property
     function Set-WiaProperty($properties, $propId, $value) {
         try {
             foreach ($p in $properties) {
@@ -52,16 +53,39 @@ try {
     }
 
     Set-WiaProperty $item.Properties 6146 1     # Current Intent: 1 = Color
-    Set-WiaProperty $item.Properties 6147 300   # Horizontal Resolution (DPI)
+    Set-WiaProperty $item.Properties 6147 300   # Horizontal Resolution (DPI) - matches direct Windows scan quality; JPEG re-encode below keeps size small
     Set-WiaProperty $item.Properties 6148 300   # Vertical Resolution (DPI)
 
-    # صيغة JPEG القياسية بـ WIA
+    # Standard WIA JPEG format GUID (note: many drivers ignore this and return BMP anyway)
     $wiaFormatJPEG = "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}"
     $image = $item.Transfer($wiaFormatJPEG)
 
-    # حذف أي ملف قديم بنفس المسار قبل الحفظ (WIA بيرفض الحفظ فوق ملف موجود)
+    # Remove any old file at this path first (WIA refuses to overwrite an existing file)
     if (Test-Path $OutputPath) { Remove-Item $OutputPath -Force }
-    $image.SaveFile($OutputPath)
+
+    # ── Re-encode to a guaranteed-standard JPEG via .NET ──
+    # WIA drivers often return BMP or non-standard JPEG regardless of the requested
+    # format GUID. Server-side image libraries (e.g. sharp) then reject the upload
+    # with "unsupported image format". Round-tripping through System.Drawing
+    # guarantees a plain baseline JPEG and also keeps the file size reasonable.
+    $rawPath = [System.IO.Path]::ChangeExtension($OutputPath, ".raw.tmp")
+    if (Test-Path $rawPath) { Remove-Item $rawPath -Force }
+    $image.SaveFile($rawPath)
+
+    Add-Type -AssemblyName System.Drawing
+    $bmp = [System.Drawing.Image]::FromFile($rawPath)
+    try {
+        $jpegCodec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
+            Where-Object { $_.MimeType -eq "image/jpeg" }
+        $encParams = New-Object System.Drawing.Imaging.EncoderParameters(1)
+        $encParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter(
+            [System.Drawing.Imaging.Encoder]::Quality, [long]85)
+        $bmp.Save($OutputPath, $jpegCodec, $encParams)
+    }
+    finally {
+        $bmp.Dispose()
+        Remove-Item $rawPath -Force -ErrorAction SilentlyContinue
+    }
 
     Write-Result $true @{ path = $OutputPath }
 }

@@ -2,8 +2,8 @@ import { cacheManager, cacheKeys, invalidateCache } from "../../_core/cache";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure } from "../_shared/procedures";
-import { translateFields, detectLanguage, type SupportedLanguage } from "../../services/translation";
-import * as db from "../../db";
+import { translateFields, detectLanguage, type SupportedLanguage } from "../../services/translation/translation";
+import * as db from "../../_core/db";
 
 export const sitesRouter = router({
   list: protectedProcedure.query(async () => {

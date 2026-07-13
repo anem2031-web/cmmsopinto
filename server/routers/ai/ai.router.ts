@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { router, protectedProcedure } from "../_shared/procedures";
 import { invokeLLM, invokeClaudeLLM } from "../../_core/llm";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 
 export const aiRouter = router({
   analyze: protectedProcedure.input(z.object({

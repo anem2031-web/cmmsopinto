@@ -1,5 +1,5 @@
-import * as db from "../../db";
-import { detectLanguage, translateFields, type SupportedLanguage } from "../../services/translation";
+import * as db from "../../_core/db";
+import { detectLanguage, translateFields, type SupportedLanguage } from "../../services/translation/translation";
 
 export { detectLanguage, translateFields };
 export type { SupportedLanguage };

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { eq, and, asc, gte, lte } from "drizzle-orm";
 import { router, protectedProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 
 export const dashboardRouter = router({
   stats: protectedProcedure.query(async () => {

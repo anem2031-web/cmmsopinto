@@ -1,13 +1,21 @@
 @echo off
-chcp 65001 >nul
 cd /d "%~dp0"
+
 if not exist node_modules (
-    echo تثبيت المكتبات المطلوبة لأول مرة...
+    echo Installing required packages, please wait...
     call npm install
+    if errorlevel 1 (
+        echo.
+        echo npm install FAILED. Make sure Node.js is installed correctly.
+        echo.
+        pause
+        exit /b 1
+    )
 )
+
 echo.
-echo تشغيل خدمة السكانر المحلية...
-echo سيب النافذة دي شغّالة وارجع للموقع.
+echo Starting local scanner service...
+echo Keep this window open, then go back to the website.
 echo.
 node server.js
 pause

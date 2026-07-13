@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChevronDown, ChevronLeft, Plus, Trash2, GripVertical, Layers, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
-import ConstructionDetailModal, { type ModalEntityType } from "./ConstructionDetailModal";
+import ConstructionDetailModal, { type ModalEntityType } from "@/components/construction/ConstructionDetailModal";
 
 interface Props { projectId: number; projectName?: string; }
 

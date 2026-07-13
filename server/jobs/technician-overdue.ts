@@ -1,4 +1,4 @@
-import { getDb } from "../db";
+import { getDb } from "../_core/db";
 import { tickets, technicians } from "../../drizzle/schema";
 import { eq, and, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { notifyOwner } from "../_core/notification";

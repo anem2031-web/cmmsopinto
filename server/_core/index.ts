@@ -13,20 +13,20 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { RedisStore } from "rate-limit-redis";
 import IORedis from "ioredis";
 import multer from "multer";
-import { storagePut, storageGetStream, storagePresignedPut } from "../storage";
+import { storagePut, storageGetStream, storagePresignedPut } from "./storage";
 import { nanoid } from "nanoid";
 import sharp from "sharp";
-import { exportTicketsToExcel, exportPurchaseOrdersToExcel, exportTechnicianPerformanceToExcel, exportAuditLogToExcel, exportInventoryToExcel, exportPreventivePlansToExcel, exportPMWorkOrdersToExcel, generateDelegateItemsPDF, generatePurchaseRequestPDF } from "../exportService";
-import { generateWorkflowGuidePDF } from "../workflowPdfService";
+import { exportTicketsToExcel, exportPurchaseOrdersToExcel, exportTechnicianPerformanceToExcel, exportAuditLogToExcel, exportInventoryToExcel, exportPreventivePlansToExcel, exportPMWorkOrdersToExcel, generateDelegateItemsPDF, generatePurchaseRequestPDF } from "../services/export/exportService";
+import { generateWorkflowGuidePDF } from "../services/pdf/workflowPdfService";
 import { runTechnicianOverdueJob } from "../jobs/technician-overdue";
 import { runPMAutomationJob } from "../jobs/pm-automation";
 import { runPMWorkOrderReminderJob } from "../jobs/pm-reminder";
 import { runSlaOverduePushJob } from "../jobs/sla-overdue-push";
 import { runBackupCleanupJob } from "../jobs/backup-cleanup";
 import { runConstructionAutomation } from "../jobs/construction-automation";
-import { getDb } from "../db";
-import { generatePMWorkOrderPDF } from "../pmWorkOrderPdfService";
-import { generateTicketPDF } from "../ticketPdfService";
+import { getDb } from "./db";
+import { generatePMWorkOrderPDF } from "../services/pdf/pmWorkOrderPdfService";
+import { generateTicketPDF } from "../services/pdf/ticketPdfService";
 import { sdk } from "./sdk";
 
 // ============================================================
@@ -452,7 +452,7 @@ async function startServer() {
       const batchId = batchIdRaw ? parseInt(batchIdRaw as string) : undefined;
       const user = req.authenticatedUser;
       const buffer = await generatePurchaseRequestPDF(poId, user.id, batchId);
-      const { getPurchaseOrderById } = await import("../db");
+      const { getPurchaseOrderById } = await import("./db");
       const po = await getPurchaseOrderById(poId);
       const filename = po?.poNumber
         ? (batchId ? `${po.poNumber}-batch${batchId}.pdf` : `${po.poNumber}.pdf`)
@@ -495,7 +495,7 @@ async function startServer() {
   // استعادة الـ translation jobs المعلقة عند بدء التشغيل
   setTimeout(async () => {
     try {
-      const { recoverPendingTranslations } = await import("../translationEngine");
+      const { recoverPendingTranslations } = await import("../services/translation/translationEngine");
       await recoverPendingTranslations();
     } catch (e) {
       console.error("[Startup] Translation recovery failed:", e);

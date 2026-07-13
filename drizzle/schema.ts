@@ -554,12 +554,20 @@ export type PMFrequency = typeof pmFrequencies[number];
 export const preventivePlans = mysqlTable("preventive_plans", {
   id: int("id").autoincrement().primaryKey(),
   planNumber: varchar("planNumber", { length: 50 }).notNull().unique(),
+  // parentId: يشير لفرع الأب في شجرة الصيانة الدورية (null = فرع جذر).
+  // لا يوجد عمود "مستوى" ثابت بقصد — العمق خاصية طبيعية للشجرة (قائمة تجاور)
+  // وليس قيداً مبرمجاً في قاعدة البيانات؛ الواجهة فقط تنصح بحد 4 مستويات.
+  parentId: int("parentId"),
+  // isGroupOnly: فرع تجميعي بحت (عادة الجذر) — لا يُنشأ منه أمر عمل ولا يدخل الأتمتة الدورية.
+  isGroupOnly: boolean("isGroupOnly").default(false).notNull(),
   title: varchar("title", { length: 200 }).notNull(),
   description: text("description"),
   assetId: int("assetId"),
   siteId: int("siteId"),
-  frequency: mysqlEnum("frequency", ["daily", "weekly", "monthly", "quarterly", "biannual", "annual"]).notNull(),
-  frequencyValue: int("frequencyValue").default(1).notNull(),
+  // frequency/frequencyValue اختياريان الآن: الفروع التجميعية (isGroupOnly) ما تحتاج جدولة.
+  // تبقى إلزامية منطقياً (تُتحقق في الـ router) لأي فرع تنفيذي (isGroupOnly = false).
+  frequency: mysqlEnum("frequency", ["daily", "weekly", "monthly", "quarterly", "biannual", "annual"]),
+  frequencyValue: int("frequencyValue").default(1),
   estimatedDurationMinutes: int("estimatedDurationMinutes"),
   assignedToId: int("assignedToId"),
   checklist: json("checklist"),
@@ -588,13 +596,20 @@ export const pmWorkOrderStatuses = ["scheduled", "in_progress", "completed", "ov
 export const pmWorkOrders = mysqlTable("pm_work_orders", {
   id: int("id").autoincrement().primaryKey(),
   workOrderNumber: varchar("workOrderNumber", { length: 50 }).notNull().unique(),
-  planId: int("planId").notNull(),
+  // planId: أصبح اختيارياً — يُستخدم كـ"فرع رئيسي/مرجعي" مختصر للعرض والفلترة السريعة فقط.
+  // المرجع الكامل والموثوق لكل الفروع المرتبطة بأمر العمل (فرع واحد أو أكثر) هو جدول
+  // pm_work_order_branches أدناه. أي منطق جديد يجب أن يقرأ من الجدول لا من هذا العمود.
+  planId: int("planId"),
   assetId: int("assetId"),
   siteId: int("siteId"),
   title: varchar("title", { length: 200 }).notNull(),
   scheduledDate: timestamp("scheduledDate").notNull(),
   completedDate: timestamp("completedDate"),
   status: mysqlEnum("status", ["scheduled", "in_progress", "completed", "overdue", "cancelled"]).default("scheduled").notNull(),
+  // hasPendingMaterials: علم مُحدَّث تلقائياً (denormalized) يبيّن إن فيه بند/بنود بانتظار
+  // توريد مواد (rejected_to_purchase أو ready_for_pickup) حتى بعد اكتمال الأمر — يُستخدم
+  // للفلترة السريعة وعرض شارة "معلّق" بدون الحاجة لـ JOIN مع جدول طلبات المواد كل مرة.
+  hasPendingMaterials: boolean("hasPendingMaterials").default(false).notNull(),
   assignedToId: int("assignedToId"),
   checklistResults: json("checklistResults"),
   technicianNotes: text("technicianNotes"),
@@ -1794,3 +1809,78 @@ export const inventorySettlementNumberCounter = mysqlTable("inventory_settlement
   id:   int("id").autoincrement().primaryKey(),
   year: int("year").notNull(),
 });
+
+// ============================================================
+// PM TREE — أمر العمل متعدد الفروع (الحل الهجين)
+// ============================================================
+// يربط أمر عمل وقائي واحد بواحد أو أكثر من فروع preventivePlans المُختارة
+// عند إنشائه (تنفيذ مباشر / كل الفروع / اختيار جزئي). لكل فرع هنا نسخة
+// مستقلة من "بنود الفحص" تُشتق من pmChecklistItems الخاصة بذاك الفرع.
+export const pmWorkOrderBranches = mysqlTable("pm_work_order_branches", {
+  id:          int("id").autoincrement().primaryKey(),
+  workOrderId: int("workOrderId").notNull(),
+  planId:      int("planId").notNull(), // الفرع (preventivePlans.id)
+  createdAt:   timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  workOrderPlanIdx: index("pm_wo_branches_wo_plan_idx").on(table.workOrderId, table.planId),
+}));
+export type PMWorkOrderBranch = typeof pmWorkOrderBranches.$inferSelect;
+export type InsertPMWorkOrderBranch = typeof pmWorkOrderBranches.$inferInsert;
+
+// ============================================================
+// PM MATERIAL REQUESTS — طلب مواد يمر إلزامياً عبر المستودع
+// ============================================================
+// الحالة الإجمالية للطلب (ملخّص مبني على بنوده — التفاصيل الفعلية والقرارات
+// تكون على مستوى كل بند في pm_material_request_items لأن أمين المستودع قد
+// يعتمد صنفاً ويرفض آخر ضمن نفس الطلب).
+export const pmMaterialRequestStatuses = ["pending", "processed"] as const;
+export type PMMaterialRequestStatus = typeof pmMaterialRequestStatuses[number];
+
+export const pmMaterialRequests = mysqlTable("pm_material_requests", {
+  id:               int("id").autoincrement().primaryKey(),
+  workOrderId:      int("workOrderId").notNull(),
+  checklistItemId:  int("checklistItemId"), // البند الذي استدعى طلب المواد (اختياري)
+  requestedById:    int("requestedById").notNull(), // الفني
+  requestNote:      text("requestNote"),
+  status:           mysqlEnum("status", [...pmMaterialRequestStatuses]).default("pending").notNull(),
+  reviewedById:     int("reviewedById"), // أمين المستودع
+  reviewedAt:       timestamp("reviewedAt"),
+  createdAt:        timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:        timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type PMMaterialRequest = typeof pmMaterialRequests.$inferSelect;
+export type InsertPMMaterialRequest = typeof pmMaterialRequests.$inferInsert;
+
+// حالات كل صنف ضمن الطلب — تمثّل دورة الحياة الكاملة المتفق عليها:
+// pending → (approved | approved_partial | rejected_to_purchase) →
+//   [rejected_to_purchase] → arrived_at_warehouse → delivered
+//   [approved / approved_partial] → delivered (تسليم مباشر من المخزون الموجود)
+export const pmMaterialRequestItemStatuses = [
+  "pending",
+  "approved",
+  "approved_partial",
+  "rejected_to_purchase",
+  "arrived_at_warehouse",
+  "ready_for_pickup",
+  "delivered",
+] as const;
+export type PMMaterialRequestItemStatus = typeof pmMaterialRequestItemStatuses[number];
+
+export const pmMaterialRequestItems = mysqlTable("pm_material_request_items", {
+  id:                   int("id").autoincrement().primaryKey(),
+  requestId:            int("requestId").notNull(),
+  inventoryItemId:      int("inventoryItemId"),
+  itemNameSnapshot:     varchar("itemNameSnapshot", { length: 300 }).notNull(), // نسخة من الاسم وقت الطلب (يبقى صحيحاً حتى لو تغيّر/حُذف الصنف لاحقاً)
+  unit:                 varchar("unit", { length: 50 }),
+  requestedQuantity:    decimal("requestedQuantity", { precision: 12, scale: 3 }).notNull(),
+  approvedQuantity:     decimal("approvedQuantity", { precision: 12, scale: 3 }),
+  status:               mysqlEnum("status", [...pmMaterialRequestItemStatuses]).default("pending").notNull(),
+  warehouseNote:        text("warehouseNote"),
+  linkedPurchaseOrderId: int("linkedPurchaseOrderId"), // عند التحويل لطلب شراء (rejected_to_purchase)
+  deliveredById:        int("deliveredById"),
+  deliveredAt:          timestamp("deliveredAt"),
+  createdAt:            timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:            timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type PMMaterialRequestItem = typeof pmMaterialRequestItems.$inferSelect;
+export type InsertPMMaterialRequestItem = typeof pmMaterialRequestItems.$inferInsert;

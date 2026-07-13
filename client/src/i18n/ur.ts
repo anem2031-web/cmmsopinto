@@ -1,4 +1,4 @@
-import type { TranslationKeys } from "./ar";
+import type { TranslationKeys } from "@/i18n/ar";
 
 const ur: any = {
   appName: "مربوط دیکھ بھال انتظامی نظام",

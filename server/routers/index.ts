@@ -56,7 +56,7 @@ import { kpiRouter } from "./system/kpi.router";
 import { auditRouter } from "./system/audit.router";
 import { backupsRouter } from "./system/backups.router";
 import { preventiveRouter } from "./system/preventive.router";
-import { catalogRouter } from "./catalog.router";
+import { catalogRouter } from "./catalog/catalog.router";
 import { improvementIdeasRouter } from "./improvement-ideas/improvement-ideas.router";
 import { constructionRouter } from "./construction/index";
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { router, protectedProcedure, warehouseProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 
 // Stock movement queries — complements inventory.router.ts
 export const stockRouter = router({

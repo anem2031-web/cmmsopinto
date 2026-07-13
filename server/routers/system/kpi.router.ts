@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { router, managerProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 
 export const kpiRouter = router({
   getTicketTimelines: managerProcedure.query(async () => {

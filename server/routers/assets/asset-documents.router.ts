@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { router, protectedProcedure, managerProcedure } from "../_shared/procedures";
-import * as db from "../../db";
-import { storageRename } from "../../storage";
+import * as db from "../../_core/db";
+import { storageRename } from "../../_core/storage";
 
 // Asset documents, photos, and RFID tag management
 export const assetDocumentsRouter = router({

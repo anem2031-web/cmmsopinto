@@ -3,7 +3,7 @@
  * Deletes backup records older than 30 days from the backups table.
  * Runs daily via setInterval registered in server/_core/index.ts.
  */
-import { getDb } from "../db";
+import { getDb } from "../_core/db";
 import { backups } from "../../drizzle/schema";
 import { lt } from "drizzle-orm";
 

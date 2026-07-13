@@ -1,9 +1,9 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure, managerProcedure } from "../_shared/procedures";
-import { detectLanguage, type SupportedLanguage } from "../../services/translation";
-import { queueTranslation, translationCache } from "../../translationEngine";
-import * as db from "../../db";
+import { detectLanguage, type SupportedLanguage } from "../../services/translation/translation";
+import { queueTranslation, translationCache } from "../../services/translation/translationEngine";
+import * as db from "../../_core/db";
 
 export const ticketsRouter = router({
   list: protectedProcedure.input(z.object({

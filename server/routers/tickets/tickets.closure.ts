@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure, managerProcedure, supervisorProcedure } from "../_shared/procedures";
-import * as db from "../../db";
+import * as db from "../../_core/db";
 
 export const ticketsClosureRouter = router({
   getConfirmation: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
