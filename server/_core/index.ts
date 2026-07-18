@@ -16,6 +16,7 @@ import multer from "multer";
 import { storagePut, storageGetStream, storagePresignedPut } from "./storage";
 import { nanoid } from "nanoid";
 import sharp from "sharp";
+import { transcodeVideoToCompatibleMp4 } from "./videoTranscode";
 import { exportTicketsToExcel, exportPurchaseOrdersToExcel, exportTechnicianPerformanceToExcel, exportAuditLogToExcel, exportInventoryToExcel, exportPreventivePlansToExcel, exportPMWorkOrdersToExcel, generateDelegateItemsPDF, generatePurchaseRequestPDF } from "../services/export/exportService";
 import { generateWorkflowGuidePDF } from "../services/pdf/workflowPdfService";
 import { runTechnicianOverdueJob } from "../jobs/technician-overdue";
@@ -305,6 +306,7 @@ async function startServer() {
     try {
       if (!req.file) return res.status(400).json({ error: "No file provided" });
       const isImage = req.file.mimetype.startsWith("image/");
+      const isVideo = req.file.mimetype.startsWith("video/");
       let fileBuffer = req.file.buffer;
       let mimeType = req.file.mimetype;
       let ext = req.file.originalname.split(".").pop() || "bin";
@@ -317,6 +319,20 @@ async function startServer() {
           .toBuffer();
         mimeType = "image/webp";
         ext = "webp";
+      }
+
+      // تحويل أي فيديو (WebM أو MP4 غير قياسي من تسجيل المتصفح) إلى
+      // MP4/H.264 قياسي 100% متوافق مع كل الأجهزة، خصوصاً Safari/آيفون
+      // التي ترفض ملفات الفيديو غير المطابقة تماماً للمعيار (بعكس Chrome المتساهل)
+      if (isVideo) {
+        try {
+          fileBuffer = await transcodeVideoToCompatibleMp4(req.file.buffer);
+          mimeType = "video/mp4";
+          ext = "mp4";
+        } catch (transcodeError: any) {
+          console.error("[Video Transcode] فشل التحويل، سيتم رفع الملف الأصلي كما هو:", transcodeError.message);
+          // في حال فشل التحويل لأي سبب، نرفع الملف الأصلي بدل إيقاف العملية بالكامل
+        }
       }
       const fileKey = `cmms/uploads/${Date.now()}-${nanoid(8)}.${ext}`;
       await storagePut(fileKey, fileBuffer, mimeType);
