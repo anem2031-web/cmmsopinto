@@ -1306,7 +1306,7 @@ const visibleItems = useMemo(() => {
                     </p>
                     {batch.custodyAmount && (
                       <p className="text-xs text-amber-700 font-medium mt-0.5">
-                        مبلغ العهدة: {Number(batch.custodyAmount).toLocaleString("ar-SA")} ر.س.
+                        المندوب عليه عهدة بمبلغ: {Number(batch.custodyAmount).toLocaleString("ar-SA")} ر.س.
                       </p>
                     )}
                   </div>
@@ -1341,7 +1341,7 @@ const visibleItems = useMemo(() => {
                 {isAccountant && batch.status === "pending_accounting" && (
                   <div className="flex gap-2 items-end flex-wrap">
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-orange-700">مبلغ العهدة المُصرف للمندوب (ر.س.) *</Label>
+                      <Label className="text-[11px] text-orange-700">المندوب عليه عهدة بمبلغ (ر.س.) *</Label>
                       <Input
                         type="number"
                         placeholder="0.00"
@@ -1392,7 +1392,7 @@ const visibleItems = useMemo(() => {
           <CardHeader className="pb-2"><CardTitle className="text-base text-orange-800">{t.purchaseOrders.accountingApproval}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-orange-800">مبلغ العهدة المُصرف للمندوب (ر.س.) *</label>
+              <label className="text-xs font-medium text-orange-800">المندوب عليه عهدة بمبلغ (ر.س.) *</label>
               <Input type="number" placeholder={t.purchaseOrders.custodyAmountPlaceholder} value={custodyAmount} onChange={e => setCustodyAmount(e.target.value)} className="bg-white" />
             </div>
             
@@ -1508,7 +1508,7 @@ const visibleItems = useMemo(() => {
               <span className="text-amber-700 text-sm font-bold">ع</span>
             </div>
             <div>
-              <p className="text-xs text-amber-700 font-medium">مبلغ العهدة المُصرف للمندوب</p>
+              <p className="text-xs text-amber-700 font-medium">المندوب عليه عهدة بمبلغ</p>
               <p className="text-lg font-bold text-amber-800">{Number(po.custodyAmount).toLocaleString("ar-SA")} ر.س.</p>
             </div>
           </CardContent>

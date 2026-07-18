@@ -166,8 +166,8 @@ await db.createAuditLog({ userId: ctx.user.id, action: "update_ticket", entityTy
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
     const ticket = await db.getTicketById(input.id);
     if (!ticket) throw new TRPCError({ code: "NOT_FOUND", message: "البلاغ غير موجود" });
-    // Only owner/admin/manager can delete
-    if (!["owner", "admin", "maintenance_manager"].includes(ctx.user.role)) {
+    // Only owner/admin can delete
+    if (!["owner", "admin"].includes(ctx.user.role)) {
       throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لحذف البلاغات" });
     }
     await db.deleteTicket(input.id);

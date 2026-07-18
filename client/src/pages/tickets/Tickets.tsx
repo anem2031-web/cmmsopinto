@@ -71,6 +71,7 @@ export default function Tickets() {
   const utils = trpc.useUtils();
 
   const canManage = user && ["owner", "admin", "maintenance_manager"].includes(user.role);
+  const canDelete = user && ["owner", "admin"].includes(user.role);
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -295,7 +296,7 @@ export default function Tickets() {
                         <Pencil className="w-4 h-4" />
                       </Button>
                     )}
-                    {canManage && (
+                    {canDelete && (
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={(e) => openDelete(ticket, e)}>
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -425,7 +426,7 @@ export default function Tickets() {
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>{t.common.cancel}</Button>
-            <Button variant="destructive" onClick={() => deleteMutation.mutate(selectedTicket.id)} disabled={deleteMutation.isPending}>
+            <Button variant="destructive" onClick={() => deleteMutation.mutate({ id: selectedTicket.id })} disabled={deleteMutation.isPending}>
               {t.common.delete}
             </Button>
           </DialogFooter>

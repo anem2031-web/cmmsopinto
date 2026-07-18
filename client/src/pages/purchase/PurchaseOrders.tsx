@@ -5,9 +5,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationPrevious,
+  PaginationNext,
+} from "@/components/ui/pagination";
 import { Input } from "@/components/ui/input";
 import { Plus, ShoppingCart, Trash2, User, Package, Search } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { useStaticLabels } from "@/hooks/useContentTranslation";
@@ -44,6 +52,10 @@ export default function PurchaseOrders() {
   const [dateTo, setDateTo] = useState("");
   const [requestedById, setRequestedById] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // ── تقسيم الصفحات (Pagination): 10 طلبات بكل صفحة ──
+  const PAGE_SIZE = 10;
+  const [currentPage, setCurrentPage] = useState(1);
 
   const canDelete = user && ["owner", "admin"].includes(user.role);
   const canFilterByUser = user && FULL_ACCESS_ROLES.includes(user.role);
@@ -110,6 +122,15 @@ export default function PurchaseOrders() {
     ].filter(Boolean).map(String);
     return haystack.some(field => field.toLowerCase().includes(normalizedSearch));
   });
+
+  // إعادة التعيين للصفحة الأولى تلقائياً عند تغيّر أي فلتر أو البحث
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, dateFrom, dateTo, requestedById, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredPos.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedPos = filteredPos.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <div className="space-y-6">
@@ -220,7 +241,7 @@ export default function PurchaseOrders() {
         </CardContent></Card>
       ) : (
         <div className="space-y-2">
-          {filteredPos.map(po => (
+          {paginatedPos.map(po => (
             <Card key={po.id} className="hover:shadow-lg hover:border-primary/20 transition-all duration-200 cursor-pointer" onClick={() => setLocation(`/purchase-orders/${po.id}`)}>
               <CardContent className="p-4">
                 <div className="flex items-center justify-between gap-4">
@@ -263,6 +284,51 @@ export default function PurchaseOrders() {
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+
+      {/* شريط التنقل بين الصفحات */}
+      {!isLoading && filteredPos.length > PAGE_SIZE && (
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <p className="text-xs text-muted-foreground">
+            {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filteredPos.length)} {t.common.of || "من"} {filteredPos.length} {t.common.results || "نتيجة"}
+          </p>
+          <Pagination className="mx-0 w-auto justify-end">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); setCurrentPage(p => Math.max(1, p - 1)); }}
+                  className={safePage === 1 ? "pointer-events-none opacity-40" : ""}
+                />
+              </PaginationItem>
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter(p => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1)
+                .map((p, idx, arr) => (
+                  <Fragment key={p}>
+                    {idx > 0 && arr[idx - 1] !== p - 1 && (
+                      <PaginationItem><span className="px-2 text-muted-foreground">…</span></PaginationItem>
+                    )}
+                    <PaginationItem>
+                      <PaginationLink
+                        href="#"
+                        isActive={p === safePage}
+                        onClick={(e) => { e.preventDefault(); setCurrentPage(p); }}
+                      >
+                        {p}
+                      </PaginationLink>
+                    </PaginationItem>
+                  </Fragment>
+                ))}
+              <PaginationItem>
+                <PaginationNext
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); setCurrentPage(p => Math.min(totalPages, p + 1)); }}
+                  className={safePage === totalPages ? "pointer-events-none opacity-40" : ""}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
         </div>
       )}
 

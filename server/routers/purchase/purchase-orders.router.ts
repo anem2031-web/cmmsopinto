@@ -671,15 +671,23 @@ export const purchaseOrdersRouter = router({
     if (["funded", "partially_purchased", "completed"].includes(po.status)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن حذف طلب شراء مموّل أو مكتمل" });
     }
+    // نحذف الطلب أولاً — الحذف هو العملية الأساسية ويجب أن ينجح دائماً
     await db.deletePurchaseOrder(input.id);
     await db.createAuditLog({ userId: ctx.user.id, action: "delete_po", entityType: "purchase_order", entityId: input.id, oldValues: { poNumber: po.poNumber, status: po.status, notes: po.notes } });
-    // Notify managers about PO deletion
-    const poDelManagers = await db.getManagerUsers();
-    for (const mgr of poDelManagers) {
-      if (mgr.id !== ctx.user.id) {
-        await db.createNotification({ userId: mgr.id, title: `حذف طلب شراء #${po.poNumber}`, message: `قام ${ctx.user.name} بحذف طلب الشراء`, type: "po_deleted", relatedPOId: input.id });
+
+    // إشعار المدراء أمر ثانوي: نغلّفه بـ try/catch حتى لا يظهر أي خطأ للمستخدم
+    // أو يفشل شيء بعد نجاح الحذف الفعلي، حتى لو حصل خطأ غير متوقع في الإشعارات مستقبلاً
+    try {
+      const poDelManagers = await db.getManagerUsers();
+      for (const mgr of poDelManagers) {
+        if (mgr.id !== ctx.user.id) {
+          await db.createNotification({ userId: mgr.id, title: `حذف طلب شراء #${po.poNumber}`, message: `قام ${ctx.user.name} بحذف طلب الشراء`, type: "po_deleted", relatedPOId: input.id });
+        }
       }
+    } catch (notifyError) {
+      console.error("[PO Delete] فشل إرسال إشعار الحذف (تم الحذف بنجاح رغم ذلك):", notifyError);
     }
+
     return { success: true };
   }),
 
@@ -901,8 +909,11 @@ export const purchaseOrdersRouter = router({
       await db.updatePOItem(item.id, { batchId });
     }
 
-    // أول دفعة فقط تنقل حالة الطلب إلى pending_accounting (إن لم يكن قد سبقها ذلك)
-    if (po.status === "pending_estimate" || po.status === "revision_needed") {
+    // أي دفعة تسعير جديدة (أولى أو لاحقة) تُعيد الطلب لحالة "بانتظار اعتماد الحسابات"
+    // بغض النظر عن المرحلة التي وصلها الطلب سابقاً (approved / partial_purchase / purchased...)،
+    // حتى يظهر بشكل صحيح عند الفلترة من شاشة الحسابات/الإدارة العليا، ولا يُشترط تسعير الطلب بالكامل.
+    // الاستثناء الوحيد: طلب مغلق أو مرفوض نهائياً لا يجب أن تتغير حالته.
+    if (!["closed", "rejected"].includes(po.status)) {
       await db.updatePurchaseOrder(input.purchaseOrderId, { status: "pending_accounting" });
     }
 
