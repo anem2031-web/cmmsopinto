@@ -206,7 +206,7 @@ if (currentImagesCount + incomingImagesCount > 4) {
 }
 
 const valid = fileArray.filter(f => {
-      if (!allowed.includes(f.type) && !f.type.startsWith("image/")) {
+      if (!allowed.includes(f.type) && !f.type.startsWith("image/") && !f.type.startsWith("video/")) {
         toast.error(`${at.invalidFileType || "نوع ملف غير مدعوم"}: ${f.name}`);
         return false;
       }

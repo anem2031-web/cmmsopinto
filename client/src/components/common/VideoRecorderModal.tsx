@@ -108,7 +108,7 @@ export default function VideoRecorderModal({ open, onClose, onRecorded }: Props)
 
   const startRecording = () => {
     if (!streamRef.current) return;
-    const { mimeType, ext } = pickMimeType();
+    const { mimeType } = pickMimeType();
     chunksRef.current = [];
 
     const options: MediaRecorderOptions = {
@@ -130,11 +130,15 @@ export default function VideoRecorderModal({ open, onClose, onRecorded }: Props)
     };
 
     recorder.onstop = () => {
-      const blobType = recorder.mimeType || "video/webm";
-      const blob = new Blob(chunksRef.current, { type: blobType });
-      const finalExt = blobType.includes("mp4") ? "mp4" : ext;
+      const rawType = recorder.mimeType || "video/webm";
+      // تبسيط النوع: إزالة معلومات الـ codecs (مثل ";codecs=avc1.42e01e,mp4a.40.2")
+      // لأن بعض المتصفحات (خصوصاً Chrome على أندرويد) ترجع النوع الكامل بالتفاصيل،
+      // ما يفشل مطابقته مع قائمة الأنواع المسموحة في صفحة إنشاء البلاغ.
+      const normalizedType = rawType.includes("mp4") ? "video/mp4" : "video/webm";
+      const blob = new Blob(chunksRef.current, { type: normalizedType });
+      const finalExt = normalizedType === "video/mp4" ? "mp4" : "webm";
       const file = new File([blob], `ticket-video-${Date.now()}.${finalExt}`, {
-        type: blobType,
+        type: normalizedType,
       });
       onRecorded(file);
       handleClose();
