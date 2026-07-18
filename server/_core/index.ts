@@ -226,6 +226,9 @@ async function startServer() {
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/vnd.ms-excel",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        // فيديو البلاغات (مسجل من المتصفح عبر MediaRecorder، مضغوط مسبقاً ~720p/1.5Mbps)
+        "video/mp4",
+        "video/webm",
       ]);
       if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
         cb(null, true);
