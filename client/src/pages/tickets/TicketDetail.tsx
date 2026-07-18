@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { STATUS_COLORS, PRIORITY_COLORS } from "@shared/types";
 import {
   ArrowRight, Clock, User, MapPin, CheckCircle2, Wrench, ShoppingCart,
-  Camera, Loader2, FileText, AlertCircle, ExternalLink, Upload, X, ZoomIn, Download
+  Camera, Loader2, FileText, AlertCircle, ExternalLink, Upload, X, ZoomIn, Download, Video, PlayCircle
 } from "lucide-react";
 import { useState, useMemo, useCallback } from "react";
 import { toast } from "sonner";
@@ -22,6 +22,47 @@ import { useStaticLabels } from "@/hooks/useContentTranslation";
 import { useResolvedTranslation, getLocalizedName } from "@/hooks/useTranslatedField";
 import DropZone, { type UploadedFile } from "@/components/common/DropZone";
 import { TechnicianCombobox } from "@/components/tickets/TechnicianCombobox";
+
+// ── مشغّل فيديو للمرفقات ──
+// بعض المتصفحات (تحديداً Safari على آيفون) لا تدعم صيغة WebM إطلاقاً،
+// بعكس Chrome على الأندرويد أو الكمبيوتر التي تدعمها بلا مشاكل.
+// هذا المكوّن يعرض مشغّل فيديو حقيقي، وإن فشل التشغيل يعرض رسالة واضحة
+// بدل شاشة سوداء/معطوبة بدون تفسير، مع خيار فتح/تحميل الملف مباشرة كبديل.
+function AttachmentVideo({ url, fileName }: { url: string; fileName: string }) {
+  const [playbackError, setPlaybackError] = useState(false);
+
+  if (playbackError) {
+    return (
+      <div className="w-full h-28 flex flex-col items-center justify-center bg-muted/50 gap-1.5 p-2 text-center">
+        <AlertCircle className="w-6 h-6 text-amber-500" />
+        <p className="text-[10px] text-muted-foreground leading-tight">
+          هذا المتصفح لا يدعم تشغيل هذا الفيديو مباشرة
+        </p>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[10px] text-primary underline flex items-center gap-1"
+        >
+          <Download className="w-3 h-3" /> تحميل الفيديو
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <video
+      src={url}
+      controls
+      playsInline
+      preload="metadata"
+      className="w-full h-28 object-cover bg-black"
+      onError={() => setPlaybackError(true)}
+    >
+      متصفحك لا يدعم عرض الفيديو
+    </video>
+  );
+}
 
 export default function TicketDetail() {
   const [, params] = useRoute("/tickets/:id");
@@ -442,6 +483,13 @@ const { getField } = useResolvedTranslation(
                           </div>
                           <div className="px-2 py-1.5 text-xs truncate text-muted-foreground group-hover:text-primary">
                             {att.fileName}
+                          </div>
+                        </div>
+                      ) : att.mimeType?.startsWith("video/") ? (
+                        <div key={att.id} className="group border rounded-lg overflow-hidden">
+                          <AttachmentVideo url={mediaUrl(att.fileUrl)} fileName={att.fileName} />
+                          <div className="px-2 py-1.5 text-xs truncate text-muted-foreground flex items-center gap-1">
+                            <Video className="w-3 h-3 flex-shrink-0" /> {att.fileName}
                           </div>
                         </div>
                       ) : (

@@ -20,7 +20,13 @@ const MAX_DURATION_SEC = 13; // حد أقصى لمدة التسجيل (قابل 
 // أفضل mimeType متاح في المتصفح الحالي (يفضّل H.264/MP4، ثم WebM كبديل)
 function pickMimeType(): { mimeType: string; ext: string } {
   const candidates = [
-    { mimeType: 'video/mp4;codecs="avc1.42E01E,mp4a.40.2"', ext: "mp4" },
+    // نجرّب أكثر من بروفايل H.264 لأن بعض أجهزة أندرويد تدعم بروفايل معيّن دون آخر،
+    // وأي نجاح هنا يعني توافق أوسع مع Safari/آيفون لاحقاً (الذي لا يدعم WebM إطلاقاً)
+    { mimeType: 'video/mp4;codecs="avc1.42E01E,mp4a.40.2"', ext: "mp4" }, // H.264 Baseline
+    { mimeType: 'video/mp4;codecs="avc1.4D401E,mp4a.40.2"', ext: "mp4" }, // H.264 Main
+    { mimeType: 'video/mp4;codecs="avc1.64001E,mp4a.40.2"', ext: "mp4" }, // H.264 High
+    { mimeType: 'video/mp4;codecs=h264,aac', ext: "mp4" },
+    { mimeType: 'video/mp4;codecs=avc1', ext: "mp4" },
     { mimeType: "video/mp4", ext: "mp4" },
     { mimeType: 'video/webm;codecs="vp9,opus"', ext: "webm" },
     { mimeType: 'video/webm;codecs="vp8,opus"', ext: "webm" },
