@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button";
 //   https://دومينك.com/tag/16
 // حيث "16" هو نفس رقم "بطاقة RFID" المسجّل على الأصل داخل النظام
 // (وليس المعرّف الداخلي لقاعدة البيانات). هذه الصفحة تبحث عن الأصل بهذا الرقم
-// وتحوّل المستخدم تلقائياً لصفحة تفاصيله الفعلية /asset/:id
+// وتحوّل المستخدم تلقائياً لصفحة إنشاء بلاغ صيانة جديد مع تعبئة الأصل
+// (والموقع/القسم إن وُجدا) تلقائياً، بنفس فكرة مسح NFC من داخل التطبيق في الأندرويد.
 export default function NfcRedirect() {
   const [, params] = useRoute("/tag/:rfidTag");
   const [, navigate] = useLocation();
@@ -22,7 +23,10 @@ export default function NfcRedirect() {
 
   useEffect(() => {
     if (data?.asset?.id) {
-      navigate(`/asset/${data.asset.id}`, { replace: true });
+      const qs = new URLSearchParams();
+      qs.set("assetId", String(data.asset.id));
+      if (data.asset.siteId) qs.set("siteId", String(data.asset.siteId));
+      navigate(`/tickets/new?${qs.toString()}`, { replace: true });
     }
   }, [data, navigate]);
 
@@ -54,11 +58,11 @@ export default function NfcRedirect() {
     );
   }
 
-  // بمجرد نجاح البحث، الـ useEffect أعلاه سيحوّل المستخدم تلقائياً
+  // بمجرد نجاح البحث، الـ useEffect أعلاه سيحوّل المستخدم تلقائياً لنموذج بلاغ الصيانة
   return (
     <div className="flex flex-col items-center justify-center h-[60vh] gap-3 text-muted-foreground">
       <Loader2 className="w-8 h-8 animate-spin" />
-      <p className="text-sm">جاري التحويل...</p>
+      <p className="text-sm">جاري فتح نموذج بلاغ الصيانة...</p>
     </div>
   );
 }
