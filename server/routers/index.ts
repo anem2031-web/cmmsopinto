@@ -56,6 +56,7 @@ import { kpiRouter } from "./system/kpi.router";
 import { auditRouter } from "./system/audit.router";
 import { backupsRouter } from "./system/backups.router";
 import { preventiveRouter } from "./system/preventive.router";
+import { pmPlansRouter } from "./system/pmPlans.router";
 import { catalogRouter } from "./catalog/catalog.router";
 import { improvementIdeasRouter } from "./improvement-ideas/improvement-ideas.router";
 import { constructionRouter } from "./construction/index";
@@ -122,6 +123,7 @@ purchaseOrders: router({
   audit: auditRouter,
   backups: backupsRouter,
   preventive: preventiveRouter,
+  pmPlans: pmPlansRouter,
 
   // ── وحدة الكتالوج المستقلة ──
   catalog: catalogRouter,

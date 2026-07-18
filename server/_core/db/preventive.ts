@@ -171,20 +171,34 @@ export async function updateBranch(id: number, data: Partial<InsertPreventivePla
   if (data.parentId !== undefined && data.parentId === id) {
     throw new Error("لا يمكن أن يكون الفرع أباً لنفسه");
   }
+  // منع تعديل اسم "قسم الصيانة" إذا كان مرتبطاً بأي خطة فرعية (التصميم الجديد المستقل عن الشجرة)
+  const titleFieldsChanged = ["title", "title_ar", "title_en", "title_ur"].some(
+    (f) => (data as any)[f] !== undefined
+  );
+  if (titleFieldsChanged) {
+    const { countSubPlansLinkedToBranch } = await import("./pmPlans");
+    const linkedCount = await countSubPlansLinkedToBranch(id);
+    if (linkedCount > 0) {
+      throw new Error(`لا يمكن تعديل اسم هذا القسم لارتباطه بـ ${linkedCount} خطة صيانة — عدّل الخطط أو انقلها أولاً`);
+    }
+  }
   await db.update(preventivePlans).set(data).where(eq(preventivePlans.id, id));
   return { success: true };
 }
 
 // تحقق قبل الحذف: هل عند الفرع أبناء؟ هل عنده أوامر عمل مرتبطة (مباشرة أو عبر الحل الهجين)؟
-export async function getBranchDeletionBlockers(id: number): Promise<{ childrenCount: number; workOrdersCount: number }> {
+export async function getBranchDeletionBlockers(id: number): Promise<{ childrenCount: number; workOrdersCount: number; linkedSubPlansCount: number }> {
   const db = await getDb();
-  if (!db) return { childrenCount: 0, workOrdersCount: 0 };
+  if (!db) return { childrenCount: 0, workOrdersCount: 0, linkedSubPlansCount: 0 };
   const children = await db.select({ cnt: count() }).from(preventivePlans).where(eq(preventivePlans.parentId, id));
   const directWOs = await db.select({ cnt: count() }).from(pmWorkOrders).where(eq(pmWorkOrders.planId, id));
   const branchWOs = await db.select({ cnt: count() }).from(pmWorkOrderBranches).where(eq(pmWorkOrderBranches.planId, id));
+  const { countSubPlansLinkedToBranch } = await import("./pmPlans");
+  const linkedSubPlansCount = await countSubPlansLinkedToBranch(id);
   return {
     childrenCount: children[0]?.cnt ?? 0,
     workOrdersCount: (directWOs[0]?.cnt ?? 0) + (branchWOs[0]?.cnt ?? 0),
+    linkedSubPlansCount,
   };
 }
 
@@ -197,6 +211,9 @@ export async function deleteBranch(id: number) {
   }
   if (blockers.workOrdersCount > 0) {
     throw new Error(`لا يمكن حذف هذا الفرع لوجود ${blockers.workOrdersCount} أمر عمل مرتبط به`);
+  }
+  if (blockers.linkedSubPlansCount > 0) {
+    throw new Error(`لا يمكن حذف هذا القسم لارتباطه بـ ${blockers.linkedSubPlansCount} خطة صيانة — احذف الخطط أولاً`);
   }
   // بنود الفحص الخاصة بالفرع تُحذف معه (لا فائدة من بقائها يتيمة)
   await db.delete(pmChecklistItems).where(eq(pmChecklistItems.planId, id));
@@ -351,22 +368,46 @@ export async function generateWorkOrderNumber() {
 // مع اسم الفرع (planTitle) مرفق بكل بند لتُستخدم بتجميع العرض في شاشة التنفيذ.
 // للتوافق مع أوامر العمل القديمة (قبل الشجرة الهرمية) بدون صفوف بـ
 // pm_work_order_branches، يرجع تلقائياً لاستخدام wo.planId المفرد.
-export async function getWorkOrderChecklistItems(workOrderId: number) {
+// دالة مشتركة: تجيب بنود الفحص لمجموعة فروع (planIds) مرتّبة حسب نفس ترتيب
+// المصفوفة المُمرَّرة (كل فرع كتلة متتالية) ثم orderIndex داخل كل فرع. تُستخدم
+// من مكانين: بعد إنشاء أمر العمل (getWorkOrderChecklistItems) ومن معاينة
+// "توليد أمر عمل" قبل الإنشاء الفعلي (previewChecklistItems بالراوتر).
+export async function getChecklistItemsForPlanIds(planIds: number[]) {
   const db = await getDb();
-  if (!db) return [];
-  const wo = await getPMWorkOrderById(workOrderId);
-  if (!wo) return [];
-  const branchRows = await db.select().from(pmWorkOrderBranches).where(eq(pmWorkOrderBranches.workOrderId, workOrderId));
-  const planIds = branchRows.length > 0 ? branchRows.map(b => b.planId) : (wo.planId ? [wo.planId] : []);
-  if (planIds.length === 0) return [];
-  const items = await db.select().from(pmChecklistItems).where(inArray(pmChecklistItems.planId, planIds)).orderBy(asc(pmChecklistItems.orderIndex));
-  // نرفق اسم الفرع لكل بند لتجميع العرض بالواجهة
+  if (!db || planIds.length === 0) return [];
+  const items = await db.select().from(pmChecklistItems).where(inArray(pmChecklistItems.planId, planIds));
+  const planOrder = new Map<number, number>(planIds.map((id, idx) => [id, idx]));
+  items.sort((a, b) => {
+    const branchDiff = (planOrder.get(a.planId) ?? 0) - (planOrder.get(b.planId) ?? 0);
+    if (branchDiff !== 0) return branchDiff;
+    return a.orderIndex - b.orderIndex;
+  });
   const plansById = new Map<number, PreventivePlan>();
   for (const pid of planIds) {
     const p = await getPreventivePlanById(pid);
     if (p) plansById.set(pid, p);
   }
   return items.map(it => ({ ...it, planTitle: plansById.get(it.planId)?.title ?? "" }));
+}
+
+export async function getWorkOrderChecklistItems(workOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const wo = await getPMWorkOrderById(workOrderId);
+  if (!wo) return [];
+  // التصميم الجديد أولاً: أمر عمل مرتبط بخطة فرعية مستقلة (pm_sub_plans) —
+  // بنوده من pm_sub_plan_checklist_items، بنفس شكل البنود القديمة تماماً
+  // (نفس الأعمدة id/orderIndex/text/isRequired) مع planTitle = عنوان الخطة الفرعية.
+  if ((wo as any).subPlanId) {
+    const { getSubPlanChecklist, getSubPlanById } = await import("./pmPlans");
+    const subPlan = await getSubPlanById((wo as any).subPlanId);
+    const items = await getSubPlanChecklist((wo as any).subPlanId);
+    return items.map((it: any) => ({ ...it, planTitle: subPlan?.title ?? "" }));
+  }
+  // التصميم القديم: عبر pm_work_order_branches أو planId المفرد
+  const branchRows = await db.select().from(pmWorkOrderBranches).where(eq(pmWorkOrderBranches.workOrderId, workOrderId));
+  const planIds = branchRows.length > 0 ? branchRows.map(b => b.planId) : (wo.planId ? [wo.planId] : []);
+  return getChecklistItemsForPlanIds(planIds);
 }
 
 // حذف أمر عمل — مسموح فقط طالما لم يبدأ الفحص فعلياً (لا توجد جلسة تنفيذ، والحالة لا تزال "scheduled").

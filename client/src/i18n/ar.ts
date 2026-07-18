@@ -736,7 +736,15 @@ const ar = {
     workOrders: "أوامر العمل",
     addPlan: "إضافة خطة",
     editPlan: "تعديل الخطة",
+    responsibleSection: "قسم الصيانة المسؤول",
+    section: "القسم",
+    selectSiteFirst: "اختر الموقع أولاً",
+    selectSectionFirst: "اختر القسم أولاً",
+    noBranchForSite: "لا يوجد قسم مرتبط بهذا الموقع في الشجرة بعد — أنشئه أولاً من تبويب الشجرة",
+    noSubBranchForSection: "لا يوجد قسم صيانة مسؤول تحت هذا القسم بعد — أنشئه أولاً من تبويب الشجرة",
+    selectSectionRequired: "اختر قسم الصيانة المسؤول قبل الحفظ",
     planTitle: "عنوان الخطة",
+    autoTitleHint: "يُبنى العنوان تلقائياً: القسم-قسم الصيانة المسؤول-التكرار (مثال: البقالة-السباكة-شهري)",
     planNumber: "رقم الخطة",
     frequency: "التكرار",
     daily: "يومي",
@@ -873,6 +881,7 @@ const ar = {
   pmExecution: {
     loadingItems: "جاري تحميل بنود الفحص...",
     checklistItem: "بند الفحص",
+    completedItems: "البنود المنجزة",
     required: "إلزامي",
     ok: "سليم ✓",
     fixed: "تم إصلاحه",
@@ -882,7 +891,9 @@ const ar = {
     finishedSuccess: "تم إنهاء الفحص بنجاح!",
     startSessionError: "فشل في بدء جلسة الفحص:",
     error: "خطأ:",
+    openTicketSuccess: "تم فتح البلاغ بنجاح، رقم البلاغ:",
     openTicketError: "خطأ في فتح البلاغ:",
+    
   },
   // Technicians page
   techniciansPage: {

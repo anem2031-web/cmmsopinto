@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import PMPlansPanel from "@/components/preventive/PMPlansPanel";
 import {
   Plus, Calendar, Clock, CheckSquare, AlertTriangle,
   Play, Trash2, Edit, ClipboardList, Camera, Loader2, Eye,
@@ -82,6 +83,8 @@ export default function PreventiveMaintenance() {
   const [previewPlan, setPreviewPlan] = useState<any | null>(null);
   const [previewPlanId, setPreviewPlanId] = useState<number | null>(null);
   const [planForm, setPlanForm] = useState<PlanForm>(defaultPlanForm);
+  const [planRootId, setPlanRootId] = useState(""); // القسم (عنوان الشجرة/الفرع الجذر) — قد يوجد أكثر من قسم واحد تحت نفس الموقع
+  const [planSectionId, setPlanSectionId] = useState(""); // قسم الصيانة المسؤول — تفرّع تحت "القسم" الذي ستُنشأ الخطة الجديدة تحته
   const [deletePlanId, setDeletePlanId] = useState<number | null>(null);
   const [deleteWOId, setDeleteWOId] = useState<number | null>(null);
   const [generateWOPlanId, setGenerateWOPlanId] = useState<number | null>(null);
@@ -117,29 +120,64 @@ export default function PreventiveMaintenance() {
   const { data: workOrders = [], isLoading: woLoading } = trpc.preventive.listWorkOrders.useQuery({});
   const { data: assets = [] } = trpc.assets.list.useQuery({});
   const { data: sites = [] } = trpc.sites.list.useQuery();
+  const { data: branchTree = [] } = trpc.preventive.listTree.useQuery();
+  const { data: editBranchPath = [] } = trpc.preventive.getBranchPath.useQuery(
+    { id: editPlanId! },
+    { enabled: !!editPlanId }
+  );
   // Phase 4: use listTechnicians as primary source for PM assignee dropdown and display.
   // users.list is still available if other parts of the page need it, but PM assignment
   // should now resolve names through the technician-specific query.
   const { data: users = [] } = trpc.users.list.useQuery();
   const { data: pmTechnicians = [] } = trpc.users.listTechnicians.useQuery();
 
-  const createPlanMut = trpc.preventive.createPlan.useMutation({
+  // كل الأقسام (فروع جذرية) المرتبطة بالموقع المختار — قد يكون فيه أكثر من قسم تحت نفس الموقع.
+  // الخطة الجديدة تُنشأ كفرع حقيقي تحت "قسم الصيانة المسؤول" المختار (نفس شجرة preventive_plans)،
+  // وتظهر تلقائياً في تبويب الشجرة وفي التصفّح التدريجي بتبويب الخطط عبر "عرض الفروع".
+  const rootOptionsForSite = useMemo(
+    () => (branchTree as any[]).filter((r: any) => r.siteId != null && String(r.siteId) === planForm.siteId),
+    [branchTree, planForm.siteId]
+  );
+  const selectedRootBranch = useMemo(
+    () => rootOptionsForSite.find((r: any) => String(r.id) === planRootId),
+    [rootOptionsForSite, planRootId]
+  );
+  const sectionOptions: any[] = selectedRootBranch?.children ?? [];
+
+  // عند فتح نافذة التعديل، نشتق الموقع (جذر المسار) والقسم (الجذر نفسه) وقسم الصيانة المسؤول (الأب المباشر) من مسار الفرع الحالي
+  useEffect(() => {
+    if (editPlanId && editBranchPath.length > 0) {
+      const root = editBranchPath[0] as any;
+      const parent = editBranchPath.length >= 2 ? (editBranchPath[editBranchPath.length - 2] as any) : null;
+      setPlanForm(f => ({ ...f, siteId: root?.siteId ? String(root.siteId) : f.siteId }));
+      setPlanRootId(root ? String(root.id) : "");
+      setPlanSectionId(parent ? String(parent.id) : "");
+    }
+  }, [editPlanId, editBranchPath]);
+
+  const createBranchMut = trpc.preventive.createBranch.useMutation({
     onSuccess: () => {
       toast.success(t.preventive.planCreated);
       utils.preventive.listPlans.invalidate();
+      utils.preventive.listTree.invalidate();
       setShowPlanForm(false);
       setPlanForm(defaultPlanForm);
+      setPlanRootId("");
+      setPlanSectionId("");
     },
     onError: (e) => toast.error(e.message),
   });
 
-  const updatePlanMut = trpc.preventive.updatePlan.useMutation({
+  const updateBranchMut = trpc.preventive.updateBranch.useMutation({
     onSuccess: () => {
       toast.success(t.preventive.planUpdated);
       utils.preventive.listPlans.invalidate();
+      utils.preventive.listTree.invalidate();
       setShowPlanForm(false);
       setEditPlanId(null);
       setPlanForm(defaultPlanForm);
+      setPlanRootId("");
+      setPlanSectionId("");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -193,6 +231,20 @@ export default function PreventiveMaintenance() {
     }
   }, [candidatesQuery.data]);
 
+  // ── معاينة الفني + قائمة التحقق قبل التأكيد الفعلي ──
+  // لو ما فيه اختيار (فرع وحيد بلا أبناء)، نعرض كل المرشحين. لو فيه اختيار،
+  // نعرض بس الفروع المُحدَّدة حاليًا (تتحدث لحظياً مع كل تغيير بالتحديد).
+  const previewCandidates = candidatesQuery.data
+    ? (candidatesQuery.data.needsSelection
+        ? candidatesQuery.data.candidates.filter((c: any) => selectedCandidateIds.has(c.id))
+        : candidatesQuery.data.candidates)
+    : [];
+  const previewPlanIds = previewCandidates.map((c: any) => c.id);
+  const previewItemsQuery = trpc.preventive.previewChecklistItems.useQuery(
+    { planIds: previewPlanIds },
+    { enabled: previewPlanIds.length > 0 }
+  );
+
   const toggleCandidate = (id: number) => {
     setSelectedCandidateIds(prev => {
       const next = new Set(prev);
@@ -223,11 +275,14 @@ export default function PreventiveMaintenance() {
   });
 
   const handlePlanSubmit = () => {
+    if (!computedPlanTitle) {
+      toast.error(t.preventive.selectSectionRequired);
+      return;
+    }
     const payload = {
-      title: planForm.title,
+      title: computedPlanTitle,
       description: planForm.description || undefined,
       assetId: planForm.assetId ? Number(planForm.assetId) : undefined,
-      siteId: planForm.siteId ? Number(planForm.siteId) : undefined,
       frequency: planForm.frequency,
       frequencyValue: planForm.frequencyValue ? Number(planForm.frequencyValue) : 1,
       estimatedDurationMinutes: planForm.estimatedDurationMinutes ? Number(planForm.estimatedDurationMinutes) : undefined,
@@ -236,10 +291,25 @@ export default function PreventiveMaintenance() {
       nextDueDate: planForm.nextDueDate || undefined,
     };
     if (editPlanId) {
-      updatePlanMut.mutate({ id: editPlanId, ...payload });
+      updateBranchMut.mutate({ id: editPlanId, ...payload, parentId: planSectionId ? Number(planSectionId) : undefined });
     } else {
-      createPlanMut.mutate(payload);
+      if (!planSectionId) {
+        toast.error(t.preventive.selectSectionRequired);
+        return;
+      }
+      createBranchMut.mutate({ ...payload, parentId: Number(planSectionId), isGroupOnly: false });
     }
+  };
+
+  const handlePlanSiteChange = (v: string) => {
+    setPlanForm(f => ({ ...f, siteId: v === "none" ? "" : v }));
+    setPlanRootId(""); // إعادة تعيين القسم عند تغيير الموقع لأن خيارات القسم تختلف حسب الموقع
+    setPlanSectionId("");
+  };
+
+  const handlePlanRootChange = (v: string) => {
+    setPlanRootId(v === "none" ? "" : v);
+    setPlanSectionId(""); // إعادة تعيين قسم الصيانة المسؤول لأن خياراته تختلف حسب القسم المختار
   };
 
   const openEditPlan = (plan: any) => {
@@ -256,6 +326,7 @@ export default function PreventiveMaintenance() {
       checklist: plan.checklist ?? [],
       nextDueDate: plan.nextDueDate ? new Date(plan.nextDueDate).toISOString().split("T")[0] : "",
     });
+    // الموقع والقسم وقسم الصيانة المسؤول يُشتقّون تلقائياً من مسار الفرع الفعلي عبر useEffect أعلاه (editBranchPath)
     setShowPlanForm(true);
   };
 
@@ -327,6 +398,26 @@ export default function PreventiveMaintenance() {
     };
     return map[f] ?? f;
   };
+
+  // قسم الصيانة المسؤول المختار حالياً (لبناء العنوان الديناميكي)
+  const selectedSectionBranch = useMemo(
+    () => sectionOptions.find((s: any) => String(s.id) === planSectionId),
+    [sectionOptions, planSectionId]
+  );
+
+  // العنوان الديناميكي: القسم-قسم الصيانة المسؤول-التكرار (مثال: البقالة-السباكة-شهري)
+  const computedPlanTitle = useMemo(() => {
+    if (selectedRootBranch && selectedSectionBranch) {
+      const parts: string[] = [
+        getField(selectedRootBranch, "title") || selectedRootBranch.title,
+        getField(selectedSectionBranch, "title") || selectedSectionBranch.title,
+        freqLabel(planForm.frequency),
+      ];
+      return parts.join("-");
+    }
+    // لا تحديد كامل بعد (أو تعديل خطة قديمة بدون إعادة اختيار القسم) — نعرض العنوان المخزّن الحالي إن وجد
+    return planForm.title || "";
+  }, [selectedRootBranch, selectedSectionBranch, planForm.frequency, planForm.title, language]);
 
   const woStatusLabel = (s: WOStatus) => {
     const map: Record<WOStatus, string> = {
@@ -428,12 +519,6 @@ export default function PreventiveMaintenance() {
           <h1 className="text-2xl font-bold">{t.preventive.title}</h1>
           <p className="text-muted-foreground text-sm">{t.preventive.description}</p>
         </div>
-        {tab === "plans" && (
-          <Button onClick={() => { setEditPlanId(null); setPlanForm(defaultPlanForm); setShowPlanForm(true); }}>
-            <Plus className="h-4 w-4 ml-2" />
-            {t.preventive.addPlan}
-          </Button>
-        )}
       </div>
 
       {/* Stats */}
@@ -490,210 +575,10 @@ export default function PreventiveMaintenance() {
         </TabsContent>
 
         {/* ── Plans Tab ── */}
-        <TabsContent value="plans" className="mt-4 space-y-4">
-          {/* فلاتر الخطط */}
-          <Card className="border-dashed">
-            <CardContent className="p-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <div className="relative">
-                  <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder={t.common.searchPlaceholder || "بحث..."}
-                    value={planSearch}
-                    onChange={e => setPlanSearch(e.target.value)}
-                    className="pr-9"
-                  />
-                </div>
-                <Select value={planFilterAsset} onValueChange={setPlanFilterAsset}>
-                  <SelectTrigger><SelectValue placeholder={t.common.asset || "الأصل"} /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{t.common.allAssets || "جميع الأصول"}</SelectItem>
-                    {assets.map((a: any) => <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={planFilterSite} onValueChange={setPlanFilterSite}>
-                  <SelectTrigger><SelectValue placeholder={t.common.location || "الموقع"} /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{t.common.allSites || "جميع المواقع"}</SelectItem>
-                    {sites.map((s: any) => <SelectItem key={s.id} value={String(s.id)}>{getLocalizedName(s, language)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={planFilterFreq} onValueChange={setPlanFilterFreq}>
-                  <SelectTrigger><SelectValue placeholder={t.preventive?.frequency || "التكرار"} /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{t.preventive?.allFrequencies || "جميع التكرارات"}</SelectItem>
-                    {(["daily","weekly","monthly","quarterly","biannual","annual"] as Frequency[]).map(f => (
-                      <SelectItem key={f} value={f}>{freqLabel(f)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {hasActivePlanFilters && (
-                <div className="flex items-center gap-2 mt-2">
-                  <span className="text-xs text-muted-foreground">{t.common.results || "النتائج"}: {filteredPlans.length} {t.common.of || "من"} {plans.filter((p: any) => !p.isGroupOnly).length}</span>
-                  <Button variant="ghost" size="sm" className="h-6 text-xs gap-1" onClick={() => { setPlanSearch(""); setPlanFilterAsset("all"); setPlanFilterSite("all"); setPlanFilterFreq("all"); }}>
-                    <X className="h-3 w-3" /> {t.common.clearFilters || "مسح الفلاتر"}
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* مسار التنقّل (Breadcrumb) للتصفّح التدريجي بالشجرة */}
-          <div className="flex items-center gap-1.5 flex-wrap text-sm">
-            <Button
-              variant={browseParentId === null ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 gap-1 px-2"
-              onClick={() => setBrowseParentId(null)}
-            >
-              <Home className="h-3.5 w-3.5" /> الرئيسية
-            </Button>
-            {browsePath.map((node: any) => (
-              <span key={node.id} className="flex items-center gap-1.5">
-                <ChevronLeft className="h-3.5 w-3.5 text-muted-foreground" />
-                <Button
-                  variant={browseParentId === node.id ? "secondary" : "ghost"}
-                  size="sm"
-                  className="h-7 px-2"
-                  onClick={() => setBrowseParentId(node.id)}
-                >
-                  {node.title}
-                </Button>
-              </span>
-            ))}
-          </div>
-
-          {plansLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {[1,2,3].map(i => <Card key={i} className="animate-pulse"><CardContent className="p-4 h-40 bg-muted/30" /></Card>)}
-            </div>
-          ) : visibleLevelNodes.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
-              <ClipboardList className="h-12 w-12 mx-auto mb-3 opacity-30" />
-              <p>{hasActivePlanFilters ? "لا توجد نتائج للفلاتر المحددة" : (browseParentId ? "لا توجد فروع فرعية هنا" : t.preventive.noPlans)}</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {visibleLevelNodes.map((node: any) => {
-                const hasChildren = (childrenByParent.get(node.id) ?? []).length > 0;
-                const isOverdue = node.nextDueDate && new Date(node.nextDueDate) < new Date() && node.isActive !== false;
-                const isInactive = node.isActive === false;
-                const assetName = assets.find((a: any) => a.id === node.assetId)?.name;
-                const siteName = sites.find((s: any) => s.id === node.siteId)?.name;
-                const assigneeName = (pmTechnicians.find((u: any) => u.id === node.assignedToId) as any)?.name
-                  ?? users.find((u: any) => u.id === node.assignedToId)?.name;
-                const matchCount = hasChildren ? countMatchingDescendants(node) : 0;
-
-                return (
-                  <Card key={node.id} className={`hover:shadow-md transition-shadow ${isOverdue ? "border-red-200 dark:border-red-800" : ""} ${isInactive ? "opacity-60" : ""}`}>
-                    <CardHeader className="pb-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          {!node.isGroupOnly && <p className="text-xs text-muted-foreground">{node.planNumber}</p>}
-                          <CardTitle className="text-base truncate">{getField(node, "title")}</CardTitle>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {node.isGroupOnly ? (
-                            <Badge variant="outline" className="text-xs gap-1"><FolderTree className="h-3 w-3" /> تجميعي</Badge>
-                          ) : (
-                            <Badge variant="outline">{freqLabel(node.frequency)}</Badge>
-                          )}
-                          {isInactive && <Badge variant="secondary" className="text-xs">{t.common.inactive || "متوقف"}</Badge>}
-                        </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      {assetName && (
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <FileText className="h-3 w-3" /> {assetName}
-                        </div>
-                      )}
-                      {siteName && (
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <Filter className="h-3 w-3" /> {siteName}
-                        </div>
-                      )}
-                      {!node.isGroupOnly && node.nextDueDate && (
-                        <div className={`flex items-center gap-1 text-xs ${isOverdue ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
-                          <Calendar className="h-3 w-3" />
-                          {t.preventive.nextDueDate}: {new Date(node.nextDueDate).toLocaleDateString()}
-                          {isOverdue && <AlertTriangle className="h-3 w-3 mr-1" />}
-                        </div>
-                      )}
-                      {!node.isGroupOnly && node.estimatedDurationMinutes && (
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <Clock className="h-3 w-3" />
-                          {node.estimatedDurationMinutes} {t.common.minutes || "دقيقة"}
-                        </div>
-                      )}
-                      {!node.isGroupOnly && node.checklist && node.checklist.length > 0 && (
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <CheckSquare className="h-3 w-3" />
-                          {node.checklist.length} {t.preventive.checklist}
-                        </div>
-                      )}
-                      {!node.isGroupOnly && assigneeName && (
-                        <div className="text-xs text-muted-foreground truncate">
-                          👤 {assigneeName}
-                        </div>
-                      )}
-                      {hasChildren && (
-                        <div className="text-xs text-muted-foreground">
-                          {matchCount} فرع تنفيذي بداخله
-                        </div>
-                      )}
-
-                      <div className="flex gap-2 pt-2 flex-wrap">
-                        {!node.isGroupOnly && (
-                          <Button
-                            size="sm" variant="default" className="flex-1"
-                            disabled={isInactive}
-                            onClick={() => { setGenerateWOPlanId(node.id); setGenerateDate(new Date().toISOString().split("T")[0]); }}
-                          >
-                            <Play className="h-3 w-3 ml-1" />
-                            {t.preventive.generateWorkOrder}
-                          </Button>
-                        )}
-                        {hasChildren && (
-                          <Button
-                            size="sm" variant={node.isGroupOnly ? "default" : "outline"}
-                            className={node.isGroupOnly ? "flex-1" : ""}
-                            onClick={() => setBrowseParentId(node.id)}
-                          >
-                            عرض الفروع <ChevronLeft className="h-3 w-3 mr-1" />
-                          </Button>
-                        )}
-                        <Button size="sm" variant="outline" onClick={() => { setPreviewPlan(node); setPreviewPlanId(node.id); }} title="استعراض">
-                          <Eye className="h-3 w-3" />
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => openEditPlan(node)} title="تعديل">
-                          <Edit className="h-3 w-3" />
-                        </Button>
-                        {!node.isGroupOnly && (
-                          <Button
-                            size="sm" variant="outline"
-                            className={isInactive ? "text-green-600 hover:text-green-700" : "text-orange-500 hover:text-orange-600"}
-                            title={isInactive ? "تفعيل الخطة" : "تعطيل الخطة"}
-                            onClick={() => toggleActiveMut.mutate({ id: node.id, isActive: !node.isActive })}
-                            disabled={toggleActiveMut.isPending}
-                          >
-                            {isInactive ? <Power className="h-3 w-3" /> : <PowerOff className="h-3 w-3" />}
-                          </Button>
-                        )}
-                        <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => setDeletePlanId(node.id)} title="حذف">
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+        <TabsContent value="plans" className="mt-4">
+          <PMPlansPanel />
         </TabsContent>
 
-        {/* ── Work Orders Tab ── */}
         <TabsContent value="workOrders" className="mt-4 space-y-4">
           {/* فلاتر أوامر العمل */}
           <Card className="border-dashed">
@@ -825,7 +710,7 @@ export default function PreventiveMaintenance() {
       </Dialog>
 
       {/* ── Plan Form Dialog ── */}
-      <Dialog open={showPlanForm} onOpenChange={(o) => { if (!o) { setShowPlanForm(false); setEditPlanId(null); setPlanForm(defaultPlanForm); } }}>
+      <Dialog open={showPlanForm} onOpenChange={(o) => { if (!o) { setShowPlanForm(false); setEditPlanId(null); setPlanForm(defaultPlanForm); setPlanRootId(""); setPlanSectionId(""); } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editPlanId ? t.preventive.editPlan : t.preventive.addPlan}</DialogTitle>
@@ -833,7 +718,8 @@ export default function PreventiveMaintenance() {
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <Label>{t.preventive.planTitle} *</Label>
-              <Input value={planForm.title} onChange={e => setPlanForm(f => ({ ...f, title: e.target.value }))} />
+              <Input value={computedPlanTitle} disabled readOnly placeholder={t.preventive.autoTitleHint} />
+              <p className="text-xs text-muted-foreground mt-1">{t.preventive.autoTitleHint}</p>
             </div>
             <div>
               <Label>{t.preventive.frequency}</Label>
@@ -851,14 +737,50 @@ export default function PreventiveMaintenance() {
               <Input type="number" value={planForm.estimatedDurationMinutes} onChange={e => setPlanForm(f => ({ ...f, estimatedDurationMinutes: e.target.value }))} />
             </div>
             <div>
-              <Label>{t.assets.location}</Label>
-              <Select value={planForm.siteId || "none"} onValueChange={v => setPlanForm(f => ({ ...f, siteId: v === "none" ? "" : v }))}>
+              <Label>{t.assets.location} *</Label>
+              <Select value={planForm.siteId || "none"} onValueChange={handlePlanSiteChange}>
                 <SelectTrigger><SelectValue placeholder={t.common.none} /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">{t.common.none}</SelectItem>
                   {sites.map((s: any) => <SelectItem key={s.id} value={String(s.id)}>{getLocalizedName(s, language)}</SelectItem>)}
                 </SelectContent>
               </Select>
+            </div>
+            <div>
+              <Label>{t.preventive.section} *</Label>
+              {!planForm.siteId ? (
+                <p className="text-xs text-muted-foreground mt-2">{t.preventive.selectSiteFirst}</p>
+              ) : rootOptionsForSite.length === 0 ? (
+                <p className="text-xs text-amber-600 mt-2">{t.preventive.noBranchForSite}</p>
+              ) : (
+                <Select value={planRootId || "none"} onValueChange={handlePlanRootChange}>
+                  <SelectTrigger><SelectValue placeholder={t.common.none} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t.common.none}</SelectItem>
+                    {rootOptionsForSite.map((r: any) => (
+                      <SelectItem key={r.id} value={String(r.id)}>{getField(r, "title") || r.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            <div>
+              <Label>{t.preventive.responsibleSection} *</Label>
+              {!planRootId ? (
+                <p className="text-xs text-muted-foreground mt-2">{t.preventive.selectSectionFirst}</p>
+              ) : sectionOptions.length === 0 ? (
+                <p className="text-xs text-amber-600 mt-2">{t.preventive.noSubBranchForSection}</p>
+              ) : (
+                <Select value={planSectionId || "none"} onValueChange={v => setPlanSectionId(v === "none" ? "" : v)}>
+                  <SelectTrigger><SelectValue placeholder={t.common.none} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t.common.none}</SelectItem>
+                    {sectionOptions.map((sec: any) => (
+                      <SelectItem key={sec.id} value={String(sec.id)}>{getField(sec, "title") || sec.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div>
               <Label>{t.preventive.assignedTo}</Label>
@@ -874,16 +796,6 @@ export default function PreventiveMaintenance() {
             <div>
               <Label>{t.preventive.nextDueDate}</Label>
               <Input type="date" value={planForm.nextDueDate} onChange={e => setPlanForm(f => ({ ...f, nextDueDate: e.target.value }))} />
-            </div>
-            <div>
-              <Label>{t.assets.assetName}</Label>
-              <Select value={planForm.assetId || "none"} onValueChange={v => setPlanForm(f => ({ ...f, assetId: v === "none" ? "" : v }))}>
-                <SelectTrigger><SelectValue placeholder={t.common.none} /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">{t.common.none}</SelectItem>
-                  {assets.map((a: any) => <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
             </div>
             <div className="col-span-2">
               <Label>{t.common.description}</Label>
@@ -920,8 +832,11 @@ export default function PreventiveMaintenance() {
             <Button variant="outline" onClick={() => { setShowPlanForm(false); setEditPlanId(null); setPlanForm(defaultPlanForm); }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={handlePlanSubmit} disabled={!planForm.title || createPlanMut.isPending || updatePlanMut.isPending}>
-              {createPlanMut.isPending || updatePlanMut.isPending ? t.common.saving : t.common.save}
+            <Button
+              onClick={handlePlanSubmit}
+              disabled={!computedPlanTitle || (!editPlanId && !planSectionId) || createBranchMut.isPending || updateBranchMut.isPending}
+            >
+              {createBranchMut.isPending || updateBranchMut.isPending ? t.common.saving : t.common.save}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -965,6 +880,50 @@ export default function PreventiveMaintenance() {
                 </p>
               </div>
             ) : null}
+
+            {/* ── معاينة: الفني المسؤول + قائمة التحقق كاملة قبل الإنشاء الفعلي ── */}
+            {candidatesQuery.data && previewCandidates.length > 0 && (
+              <div className="space-y-3 border rounded-md p-3 bg-muted/30">
+                {previewCandidates.map((c: any) => (
+                  <div key={c.id} className="space-y-1">
+                    {previewCandidates.length > 1 && (
+                      <p className="text-sm font-semibold">{c.title}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      الفني المسؤول:{" "}
+                      <span className="font-medium text-foreground">
+                        {(pmTechnicians.find((u: any) => u.id === c.assignedToId) as any)?.name
+                          ?? users.find((u: any) => u.id === c.assignedToId)?.name
+                          ?? "غير معيّن"}
+                      </span>
+                    </p>
+                  </div>
+                ))}
+
+                <div className="space-y-1">
+                  <Label className="text-xs">قائمة التحقق ({previewItemsQuery.data?.length ?? 0} بند)</Label>
+                  {previewItemsQuery.isLoading ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+                      <Loader2 className="h-3 w-3 animate-spin" /> جاري تحميل قائمة التحقق...
+                    </div>
+                  ) : previewItemsQuery.data && previewItemsQuery.data.length > 0 ? (
+                    <ul className="max-h-40 overflow-y-auto space-y-1 text-sm">
+                      {previewItemsQuery.data.map((item: any) => (
+                        <li key={item.id} className="flex items-start gap-1.5">
+                          <span className="text-muted-foreground shrink-0">•</span>
+                          <span>{item.text}</span>
+                          {previewCandidates.length > 1 && (
+                            <Badge variant="outline" className="text-[10px] shrink-0">{item.planTitle}</Badge>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">لا يوجد بنود فحص مضافة لهذا الفرع.</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setGenerateWOPlanId(null); setSelectedCandidateIds(new Set()); }}>{t.common.cancel}</Button>

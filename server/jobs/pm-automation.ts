@@ -4,10 +4,10 @@
  * يُرسل push notification للفني المعيّن عند إنشاء كل أمر عمل
  */
 import { getDb } from "../_core/db";
-import { preventivePlans, pmWorkOrders } from "../../drizzle/schema";
+import { preventivePlans, pmWorkOrders, pmSubPlans } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { notifyOwner } from "../_core/notification";
-import { calcNextDueDate, generateWorkOrderNumber } from "../_core/db";
+import { calcNextDueDate, generateWorkOrderNumber, createWorkOrderFromSubPlan } from "../_core/db";
 import { sendPushToUser } from "../services/notifications/webPush";
 
 // ── Cron reliability: prevent concurrent runs ────────────────────────────────
@@ -103,6 +103,41 @@ async function _runPMAutomationJobCore() {
       console.error(`[PM Automation] Error for plan ${plan.planNumber}:`, err);
     }
   }
+
+  // ============================================================
+  // التصميم الجديد (مستقل عن الشجرة): الخطط الفرعية pm_sub_plans
+  // يعمل بالتوازي مع الحلقة أعلاه (القديمة، على preventivePlans) دون التأثير
+  // عليها إطلاقاً — الاثنان يُبقيان شغّالين لحين اكتمال واختبار النظام الجديد
+  // بالكامل، وبعدها يُزال الجزء الخاص بـ preventivePlans أعلاه في تنظيف لاحق.
+  // ============================================================
+  let subPlanCreatedCount = 0;
+  let subPlanNotifiedCount = 0;
+
+  try {
+    const activeSubPlans = await db.select().from(pmSubPlans).where(eq(pmSubPlans.isActive, true));
+
+    for (const subPlan of activeSubPlans) {
+      try {
+        if (!subPlan.nextDueDate) continue;
+        const dueDate = new Date(subPlan.nextDueDate);
+        if (dueDate > now) continue;
+
+        const created = await createWorkOrderFromSubPlan({ subPlanId: subPlan.id, scheduledDate: dueDate });
+        subPlanCreatedCount++;
+        console.log(`[PM Automation] (sub-plan) Created WO ${created.workOrderNumber} for sub-plan #${subPlan.id} (${subPlan.title})`);
+        if (subPlan.assignedToId) subPlanNotifiedCount++;
+      } catch (subErr) {
+        errors.push(`SubPlan ${subPlan.id}: ${String(subErr)}`);
+        console.error(`[PM Automation] (sub-plan) Error for sub-plan ${subPlan.id}:`, subErr);
+      }
+    }
+  } catch (subPlansFetchErr) {
+    console.error("[PM Automation] Failed to fetch active sub-plans:", subPlansFetchErr);
+    errors.push(`Sub-plans fetch failed: ${String(subPlansFetchErr)}`);
+  }
+
+  createdCount += subPlanCreatedCount;
+  notifiedCount += subPlanNotifiedCount;
 
   if (createdCount > 0) {
     try {

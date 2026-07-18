@@ -983,7 +983,15 @@ list: protectedProcedure.input(z.object({
       dateFrom: input?.dateFrom,
       dateTo: input?.dateTo,
     });
-    return allPOs.filter(po => poIds.includes(po.id));
+    // itemCount الأصلي = إجمالي أصناف الطلب كله (لكل الأدوار). للمندوب تحديداً
+    // يجب أن يعكس عدد أصنافه هو فقط ضمن هذا الطلب، وليس إجمالي كل المناديب.
+    const myItemCountByPO = new Map<number, number>();
+    for (const it of items) {
+      myItemCountByPO.set(it.purchaseOrderId, (myItemCountByPO.get(it.purchaseOrderId) ?? 0) + 1);
+    }
+    return allPOs
+      .filter(po => poIds.includes(po.id))
+      .map(po => ({ ...po, itemCount: myItemCountByPO.get(po.id) ?? 0 }));
   }
 
   // الأدوار الكاملة الصلاحيات: تقبل جميع الفلاتر بما فيها requestedById

@@ -243,7 +243,10 @@ export default function PurchaseOrders() {
                       </span>
                       {po.totalEstimatedCost && <span>{t.purchaseOrders.totalEstimated}: {Number(po.totalEstimatedCost).toLocaleString(locale)} {currency}</span>}
                       {po.totalActualCost && <span>{t.purchaseOrders.totalActual}: {Number(po.totalActualCost).toLocaleString(locale)} {currency}</span>}
-                      <span>{new Date(po.createdAt).toLocaleDateString(locale)}</span>
+                      <span>
+                        {new Date(po.createdAt).toLocaleDateString(locale)}
+                        {((po as any).delegateCount ?? 0) > 1 && <span className="text-amber-600 font-medium"> - متعدد</span>}
+                      </span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">

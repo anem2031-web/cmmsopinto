@@ -554,6 +554,10 @@ export type PMFrequency = typeof pmFrequencies[number];
 export const preventivePlans = mysqlTable("preventive_plans", {
   id: int("id").autoincrement().primaryKey(),
   planNumber: varchar("planNumber", { length: 50 }).notNull().unique(),
+  // sectionId: يربط الفرع (عادة الفرع الجذر) بقسم حقيقي من جدول sections
+  // (إدارة الأقسام) — اختياري، يُستخدم فقط لما يُنشأ الفرع من داخل موقع مختار
+  // بشجرة الصيانة الوقائية. عنوان الفرع بهذي الحالة = اسم القسم المختار.
+  sectionId: int("sectionId"),
   // parentId: يشير لفرع الأب في شجرة الصيانة الدورية (null = فرع جذر).
   // لا يوجد عمود "مستوى" ثابت بقصد — العمق خاصية طبيعية للشجرة (قائمة تجاور)
   // وليس قيداً مبرمجاً في قاعدة البيانات؛ الواجهة فقط تنصح بحد 4 مستويات.
@@ -596,10 +600,12 @@ export const pmWorkOrderStatuses = ["scheduled", "in_progress", "completed", "ov
 export const pmWorkOrders = mysqlTable("pm_work_orders", {
   id: int("id").autoincrement().primaryKey(),
   workOrderNumber: varchar("workOrderNumber", { length: 50 }).notNull().unique(),
-  // planId: أصبح اختيارياً — يُستخدم كـ"فرع رئيسي/مرجعي" مختصر للعرض والفلترة السريعة فقط.
-  // المرجع الكامل والموثوق لكل الفروع المرتبطة بأمر العمل (فرع واحد أو أكثر) هو جدول
-  // pm_work_order_branches أدناه. أي منطق جديد يجب أن يقرأ من الجدول لا من هذا العمود.
+  // planId: عمود قديم من التصميم السابق (الخطط كجزء من شجرة preventivePlans) —
+  // لم يعد يُستخدم في التصميم الجديد، أُبقي بدون حذف فقط للتوافق أثناء الانتقال.
   planId: int("planId"),
+  // subPlanId: المرجع الجديد والمعتمد — يشير لـ pm_sub_plans.id (الخطة الفرعية
+  // المستقلة عن الشجرة). كل أمر عمل جديد في التصميم الجديد يُنشأ بهذا العمود.
+  subPlanId: int("subPlanId"),
   assetId: int("assetId"),
   siteId: int("siteId"),
   title: varchar("title", { length: 200 }).notNull(),
@@ -1884,3 +1890,74 @@ export const pmMaterialRequestItems = mysqlTable("pm_material_request_items", {
 });
 export type PMMaterialRequestItem = typeof pmMaterialRequestItems.$inferSelect;
 export type InsertPMMaterialRequestItem = typeof pmMaterialRequestItems.$inferInsert;
+
+// ============================================================
+// PM PLANS (NEW ARCHITECTURE) — خطط الصيانة الدورية منفصلة عن الشجرة
+// ============================================================
+// الشجرة (preventivePlans) تبقى هيكلاً تنظيمياً بحتاً (موقع ← قسم تشغيلي ←
+// أقسام صيانة) ولا تتأثر أبداً بإنشاء/تعديل/حذف أي خطة. الجداول التالية
+// مستقلة تماماً، وتشير لعقد الشجرة بحقول عادية (بدون قيود FK فعلية بقاعدة
+// البيانات، اتساقاً مع بقية المشروع) لأغراض القراءة فقط.
+
+// pm_main_plans: البطاقة الرئيسية — واحدة فقط لكل فرع تشغيلي (فرع جذري في
+// preventivePlans، parentId IS NULL). العنوان لا يُخزَّن هنا؛ يُشتق دائماً
+// وقت العرض من اسم الفرع + اسم الموقع (مصدر حقيقة واحد لا يتكرر).
+export const pmMainPlans = mysqlTable("pm_main_plans", {
+  id:            int("id").autoincrement().primaryKey(),
+  branchId:      int("branchId").notNull(), // preventivePlans.id (فرع تشغيلي جذري) — فريد
+  createdById:   int("createdById").notNull(),
+  createdAt:     timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:     timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type PMMainPlan = typeof pmMainPlans.$inferSelect;
+export type InsertPMMainPlan = typeof pmMainPlans.$inferInsert;
+
+// pm_sub_plans: الخطة الفرعية الفعلية (تكرار + قسم صيانة مسؤول + مسؤول
+// التنفيذ + وصف). عنوانها يُولَّد تلقائياً في الراوتر من "التكرار + قسم
+// الصيانة" ويُخزَّن هنا (مع نسخ الترجمة) لأنه فعلياً بيانات الخطة لا مجرد عرض.
+export const pmSubPlans = mysqlTable("pm_sub_plans", {
+  id:                       int("id").autoincrement().primaryKey(),
+  mainPlanId:               int("mainPlanId").notNull(),
+  sectionBranchId:          int("sectionBranchId").notNull(), // preventivePlans.id (قسم الصيانة، عادة ابن مباشر للفرع الجذري)
+  title:                    varchar("title", { length: 300 }).notNull(),
+  title_ar:                 varchar("title_ar", { length: 300 }),
+  title_en:                 varchar("title_en", { length: 300 }),
+  title_ur:                 varchar("title_ur", { length: 300 }),
+  originalLanguage:         mysqlEnum("originalLanguage", ["ar", "en", "ur"]).default("ar").notNull(),
+  frequency:                mysqlEnum("frequency", ["daily", "weekly", "monthly", "quarterly", "biannual", "annual"]).notNull(),
+  frequencyValue:           int("frequencyValue").default(1).notNull(),
+  estimatedDurationMinutes: int("estimatedDurationMinutes"),
+  assignedToId:             int("assignedToId"),
+  description:              text("description"),
+  description_ar:           text("description_ar"),
+  description_en:           text("description_en"),
+  description_ur:           text("description_ur"),
+  isActive:                 boolean("isActive").default(true).notNull(),
+  nextDueDate:              timestamp("nextDueDate"),
+  lastGeneratedAt:          timestamp("lastGeneratedAt"),
+  createdById:              int("createdById").notNull(),
+  createdAt:                timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:                timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type PMSubPlan = typeof pmSubPlans.$inferSelect;
+export type InsertPMSubPlan = typeof pmSubPlans.$inferInsert;
+
+// pm_sub_plan_checklist_items: قائمة التحقق الخاصة بكل خطة فرعية — مستقلة
+// عن pm_checklist_items القديم (المرتبط بالشجرة). لا قوالب مشتركة؛ كل خطة
+// فرعية تملك بنودها الخاصة.
+export const pmSubPlanChecklistItems = mysqlTable("pm_sub_plan_checklist_items", {
+  id:               int("id").autoincrement().primaryKey(),
+  subPlanId:        int("subPlanId").notNull(),
+  orderIndex:       int("orderIndex").default(0).notNull(),
+  text:             text("text").notNull(),
+  text_ar:          text("text_ar"),
+  text_en:          text("text_en"),
+  text_ur:          text("text_ur"),
+  originalLanguage: mysqlEnum("originalLanguage", ["ar", "en", "ur"]).default("ar").notNull(),
+  isRequired:       boolean("isRequired").default(true).notNull(),
+  createdAt:        timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:        timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type PMSubPlanChecklistItem = typeof pmSubPlanChecklistItems.$inferSelect;
+export type InsertPMSubPlanChecklistItem = typeof pmSubPlanChecklistItems.$inferInsert;
+

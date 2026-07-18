@@ -16,6 +16,7 @@ export * from "./deletes";
 export * from "./backups";
 export * from "./assets";
 export * from "./preventive";
+export * from "./pmPlans";
 export * from "./warehouse-receipts";
 export * from "./warehouse-returns";
 export * from "./invoice-drafts";

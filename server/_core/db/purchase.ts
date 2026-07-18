@@ -185,6 +185,22 @@ export async function getPurchaseOrders(filters?: {
     .where(inArray(purchaseOrderItems.purchaseOrderId, poIds))
     .groupBy(purchaseOrderItems.purchaseOrderId);
 
+  // عدد المناديب المختلفين المسندة لهم أصناف بكل طلب — لتمييز الطلبات الموزَّعة على أكثر من مندوب
+  const delegateRows = await db
+    .select({
+      purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+      delegateId: purchaseOrderItems.delegateId,
+    })
+    .from(purchaseOrderItems)
+    .where(inArray(purchaseOrderItems.purchaseOrderId, poIds));
+  const delegateSetByPO = new Map<number, Set<number>>();
+  for (const row of delegateRows) {
+    if (row.delegateId == null) continue;
+    const set = delegateSetByPO.get(row.purchaseOrderId) ?? new Set<number>();
+    set.add(row.delegateId);
+    delegateSetByPO.set(row.purchaseOrderId, set);
+  }
+
   // استعلام 3: جلب أسماء الأصناف لكل طلب دفعة واحدة (للبحث الديناميكي)
   const itemRows = await db
     .select({
@@ -216,6 +232,7 @@ export async function getPurchaseOrders(filters?: {
   return poList.map(po => ({
     ...po,
     itemCount: countMap.get(po.id) ?? 0,
+    delegateCount: delegateSetByPO.get(po.id)?.size ?? 0,
     itemNames: namesMap.get(po.id) ?? [],
     itemNames_en: namesMapEn.get(po.id) ?? [],
     itemNames_ar: namesMapAr.get(po.id) ?? [],

@@ -7,6 +7,7 @@ import { invokeLLM } from "../../_core/llm";
 import { notifyOwner } from "../../_core/notification";
 import { detectLanguage, type SupportedLanguage } from "../../services/translation/translation";
 import { queueTranslation, translationCache } from "../../services/translation/translationEngine";
+import { DEFAULT_SECTION_TITLES, getDefaultChecklistFor } from "../../_core/pmDefaultChecklists";
 
 export const preventiveRouter = router({
   // ─── Branch Tree (شجرة فروع الصيانة الدورية) ──────────────────────────
@@ -31,6 +32,7 @@ export const preventiveRouter = router({
     isGroupOnly: z.boolean().default(false),
     assetId: z.number().optional(),
     siteId: z.number().optional(),
+    sectionId: z.number().optional(),
     // إلزامية فقط للفروع التنفيذية (isGroupOnly = false) — يُتحقق أدناه لا في الـschema
     frequency: z.enum(["daily", "weekly", "monthly", "quarterly", "biannual", "annual"]).optional(),
     frequencyValue: z.number().default(1),
@@ -117,6 +119,7 @@ export const preventiveRouter = router({
     isGroupOnly: z.boolean().optional(),
     assetId: z.number().optional(),
     siteId: z.number().optional(),
+    sectionId: z.number().optional(),
     frequency: z.enum(["daily", "weekly", "monthly", "quarterly", "biannual", "annual"]).optional(),
     frequencyValue: z.number().optional(),
     estimatedDurationMinutes: z.number().optional(),
@@ -142,6 +145,100 @@ export const preventiveRouter = router({
     } catch (e: any) {
       throw new TRPCError({ code: "BAD_REQUEST", message: e.message ?? "تعذّر حذف الفرع" });
     }
+  }),
+
+  // ─── الأقسام الأساسية للصيانة الدورية ───────────────────────────────────
+  // يُنشئ تحت فرع جذر مُختار (موقع/فرع منشأة) الأقسام الثابتة الثمانية
+  // (معدات التشغيل، الكهرباء، ...) كفروع تنفيذية مباشرة تحت الموقع (بدون أي
+  // تجميع وسيط "يومي/أسبوعي/شهري"). كل قسم يُنشأ بتكرار افتراضي "يومي" مع
+  // قائمة فحصه اليومية الجاهزة — والفني يقدر يغيّر التكرار لاحقاً من نموذج
+  // تعديل الفرع، وقتها تتحدّث قائمة الفحص تلقائياً (انظر getSuggestedChecklist).
+  // آمن للتكرار: أي قسم موجود مسبقاً بنفس العنوان تحت هذا الموقع يُتخطّى
+  // بصمت، ولا تُلمس بنوده الحالية.
+  applyDefaultSections: managerProcedure.input(z.object({
+    rootId: z.number(),
+  })).mutation(async ({ input, ctx }) => {
+    const root = await db.getPreventivePlanById(input.rootId);
+    if (!root) throw new TRPCError({ code: "NOT_FOUND", message: "الفرع المحدد غير موجود" });
+
+    const ddb = await db.getDb();
+    if (!ddb) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خطأ في قاعدة البيانات" });
+    const { pmChecklistItems, preventivePlans } = await import("../../../drizzle/schema");
+
+    if (!Array.isArray(DEFAULT_SECTION_TITLES) || DEFAULT_SECTION_TITLES.length === 0) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "تعذّر تحميل قائمة الأقسام الافتراضية (pmDefaultChecklists) — تأكد من وجود الملف بمساره الصحيح",
+      });
+    }
+
+    let createdCount = 0;
+    let skippedCount = 0;
+
+    const existingSections = await ddb.select().from(preventivePlans).where(eq(preventivePlans.parentId, input.rootId));
+
+    for (const title of DEFAULT_SECTION_TITLES) {
+      if (existingSections.some(s => s.title === title)) {
+        skippedCount++;
+        continue;
+      }
+      const planNumber = await db.generatePlanNumber();
+      const dailyItems = getDefaultChecklistFor(title, "daily");
+      const nextDue = db.calcNextDueDate(new Date(), "daily", 1);
+      const createdSection = await db.createBranch({
+        title,
+        parentId: input.rootId,
+        isGroupOnly: false,
+        frequency: "daily",
+        frequencyValue: 1,
+        nextDueDate: nextDue,
+        planNumber,
+        checklist: [],
+        originalLanguage: "ar",
+        createdById: ctx.user.id,
+      } as any);
+      createdCount++;
+
+      for (let i = 0; i < dailyItems.length; i++) {
+        const text = dailyItems[i];
+        const inserted = await ddb.insert(pmChecklistItems).values({
+          planId: createdSection.id,
+          text,
+          orderIndex: i,
+          isRequired: true,
+          originalLanguage: "ar",
+        });
+        const itemId = Number((inserted as any)[0].insertId);
+        queueTranslation({
+          entityType: "PM_CHECKLIST",
+          entityId: itemId,
+          fields: [{ fieldName: "text", text }],
+          sourceLanguage: "ar",
+        }).catch(e => console.error("[applyDefaultSections] Queue translation failed:", e));
+      }
+
+      queueTranslation({
+        entityType: "PM_PLAN",
+        entityId: createdSection.id!,
+        fields: [{ fieldName: "title", text: title }],
+        sourceLanguage: "ar",
+        userId: ctx.user.id,
+      }).catch(e => console.error("[applyDefaultSections] Queue translation failed:", e));
+    }
+
+    return { createdCount, skippedCount };
+  }),
+
+  // ─── اقتراح قائمة فحص جاهزة عند اختيار نوع الخطة (التكرار) ──────────────
+  // يُستدعى من نموذج تعديل/إنشاء الفرع كل ما تغيّر حقل "التكرار"، بشرط أن
+  // يطابق عنوان الفرع أحد الأقسام القياسية (تطابق حرفي). لا يعدّل أي بيانات
+  // — يرجع فقط النصوص المقترحة، والقرار (تطبيق أو تجاهل، مع تأكيد إذا فيه
+  // بنود موجودة مسبقاً) يبقى بالواجهة.
+  getSuggestedChecklist: protectedProcedure.input(z.object({
+    title: z.string(),
+    frequency: z.enum(["daily", "weekly", "monthly", "quarterly", "biannual", "annual"]),
+  })).query(async ({ input }) => {
+    return { items: getDefaultChecklistFor(input.title, input.frequency) };
   }),
 
   listPlans: protectedProcedure.input(z.object({
@@ -281,6 +378,14 @@ export const preventiveRouter = router({
   previewWorkOrderCandidates: protectedProcedure.input(z.object({ planId: z.number() })).query(async ({ input }) => {
     const candidates = await db.getExecutableDescendants(input.planId);
     return { candidates, needsSelection: candidates.length > 1 };
+  }),
+
+  // معاينة بنود الفحص لمجموعة فروع قبل إنشاء أمر العمل فعليًا — تُستخدم بنافذة
+  // "توليد أمر عمل" لعرض قائمة التحقق كاملة (وليس بس عدد البنود) قبل التأكيد.
+  previewChecklistItems: protectedProcedure.input(z.object({
+    planIds: z.array(z.number()).min(1),
+  })).query(async ({ input }) => {
+    return db.getChecklistItemsForPlanIds(input.planIds);
   }),
 
   createHybridWorkOrder: managerProcedure.input(z.object({
@@ -766,7 +871,7 @@ export const preventiveRouter = router({
       title: `خلل مكتشف أثناء الفحص الدوري: ${wo.title}`,
       description: `${input.description}\n\n📋 المصدر: صيانة دورية رقم ${wo.workOrderNumber}`,
       priority: "high",
-      status: "open",
+      status: "new",
       assetId: input.assetId ?? wo.assetId ?? undefined,
       siteId: input.siteId ?? wo.siteId ?? undefined,
       reportedById: ctx.user.id,

@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowRight, Upload, Loader2, X, FileText, CheckCircle2, AlertCircle, CloudUpload } from "lucide-react";
+import { ArrowRight, Upload, Loader2, X, FileText, CheckCircle2, AlertCircle, CloudUpload, Video } from "lucide-react";
+import VideoRecorderModal from "@/components/common/VideoRecorderModal";
 import { useState, useRef, useCallback, useEffect, DragEvent } from "react";
 import { toast } from "sonner";
 import { useTranslation, useLanguage } from "@/contexts/LanguageContext";
@@ -78,6 +79,7 @@ export default function CreateTicket() {
   );
   const [fileEntries, setFileEntries] = useState<FileEntry[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [isRecorderOpen, setIsRecorderOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const at = (t as any).attachments || {};
@@ -183,6 +185,7 @@ const allowed = [
   "image/gif",
   "image/webp",
   "video/mp4",
+  "video/webm",
   "application/pdf",
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -230,6 +233,10 @@ if (f.size > maxSize) {
     // Start uploading each file
     newEntries.forEach(entry => uploadFile(entry));
   }, [at, uploadFile]);
+
+  const handleRecordedVideo = (file: File) => {
+    addFiles([file]);
+  };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -343,25 +350,14 @@ if (f.size > maxSize) {
           </div>
 
           {/* Site + Asset */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>{t.tickets.site}</Label>
-              <Select value={form.siteId} onValueChange={v => setForm(f => ({ ...f, siteId: v, sectionId: "" }))}>
-                <SelectTrigger><SelectValue placeholder={t.tickets.site} /></SelectTrigger>
-                <SelectContent>
-                  {sites?.map(s => <SelectItem key={s.id} value={String(s.id)}>{getLocalizedName(s, language)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>{t.assets.title || "الأصل"}</Label>
-              <Select value={form.assetId} onValueChange={v => setForm(f => ({ ...f, assetId: v }))}>
-                <SelectTrigger><SelectValue placeholder={t.assets.title} /></SelectTrigger>
-                <SelectContent>
-                  {assets?.map((a: any) => <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-2">
+            <Label>{t.tickets.site}</Label>
+            <Select value={form.siteId} onValueChange={v => setForm(f => ({ ...f, siteId: v, sectionId: "" }))}>
+              <SelectTrigger><SelectValue placeholder={t.tickets.site} /></SelectTrigger>
+              <SelectContent>
+                {sites?.map(s => <SelectItem key={s.id} value={String(s.id)}>{getLocalizedName(s, language)}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Section */}
@@ -377,6 +373,17 @@ if (f.size > maxSize) {
               </Select>
             </div>
           )}
+
+          <div className="space-y-2">
+            <Label>{t.assets.title || "الأصل"}</Label>
+            <Select value={form.assetId} onValueChange={v => setForm(f => ({ ...f, assetId: v }))}>
+              <SelectTrigger><SelectValue placeholder={t.assets.title} /></SelectTrigger>
+              <SelectContent>
+                {assets?.map((a: any) => <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* Location Detail */}
           <div className="space-y-2">
             <Label>{"أخرى"}</Label>
@@ -393,6 +400,17 @@ if (f.size > maxSize) {
                 </span>
               )}
             </div>
+
+            {/* زر تصوير فيديو مضغوط مباشرة من الكاميرا */}
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => setIsRecorderOpen(true)}
+            >
+              <Video className="w-4 h-4 ml-2" />
+              تصوير فيديو للمشكلة
+            </Button>
 
             {/* Hidden file input */}
             <input
@@ -544,6 +562,12 @@ if (f.size > maxSize) {
           </Button>
         </CardContent>
       </Card>
+
+      <VideoRecorderModal
+        open={isRecorderOpen}
+        onClose={() => setIsRecorderOpen(false)}
+        onRecorded={handleRecordedVideo}
+      />
     </div>
   );
 }

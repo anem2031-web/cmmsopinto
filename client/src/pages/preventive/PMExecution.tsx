@@ -80,18 +80,11 @@ export default function PMExecution({ workOrderId, onClose }: PMExecutionProps) 
   const getItemResult = (itemId: number) =>
     results.find((r: any) => r.checklistItemId === itemId);
 
-  const groupedItems: { branchTitle: string; items: any[] }[] = [];
-  {
-    const indexByTitle = new Map<string, number>();
-    for (const item of items) {
-      const branchTitle = item.planTitle || "بنود الفحص";
-      if (!indexByTitle.has(branchTitle)) {
-        indexByTitle.set(branchTitle, groupedItems.length);
-        groupedItems.push({ branchTitle, items: [] });
-      }
-      groupedItems[indexByTitle.get(branchTitle)!].items.push(item);
-    }
-  }
+  // البند الحالي: أول بند بدون نتيجة، بنفس ترتيب البنود القادم من الخادم
+  // (يحافظ على تسلسل الفروع لأن كل فرع تُضاف بنوده كتلة واحدة متتالية)
+  const currentItem = items.find((it: any) => !getItemResult(it.id));
+  const currentItemNumber = Math.min(completedItems + 1, totalItems);
+  const completedItemsList = items.filter((it: any) => getItemResult(it.id));
 
   const handleOk = (itemId: number) => {
     submitItemMutation.mutate({
@@ -150,7 +143,7 @@ export default function PMExecution({ workOrderId, onClose }: PMExecutionProps) 
           description: issueDescription,
         }, {
           onSuccess: (data) => {
-            toast.success(`${t.pmExecution.openTicketError} ${data.ticketNumber}`);
+            toast.success(`${t.pmExecution.openTicketSuccess} ${data.ticketNumber}`);
             setShowIssueDialog(false);
             setIssueDescription("");
             setActiveItemId(null);
@@ -250,78 +243,78 @@ export default function PMExecution({ workOrderId, onClose }: PMExecutionProps) 
         </div>
       </div>
 
-      {totalItems > 0 && (
-        <div className="space-y-5">
-          {groupedItems.map((group) => (
-            <div key={group.branchTitle} className="space-y-2">
-              {groupedItems.length > 1 && (
-                <h4 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
-                  <ClipboardList className="w-3.5 h-3.5" /> {group.branchTitle}
-                </h4>
-              )}
-              <div className="space-y-2">
-                {group.items.map((item: any) => {
-                  const result = getItemResult(item.id);
-                  return (
-                    <div
-                      key={item.id}
-                      className={`rounded-xl border-2 p-3 flex items-center gap-3 ${
-                        !result ? "bg-card border-primary/15" :
-                        result.status === "ok" ? "bg-green-50 border-green-200" :
-                        result.status === "fixed" ? "bg-blue-50 border-blue-200" :
-                        "bg-red-50 border-red-200"
-                      }`}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm leading-relaxed">{item.text}</p>
-                        {item.isRequired && !result && (
-                          <Badge variant="destructive" className="text-[10px] px-1.5 py-0 mt-1">{t.pmExecution.required}</Badge>
-                        )}
-                        {result?.status === "fixed" && result.fixNotes && (
-                          <p className="text-xs text-blue-700 mt-1">🔧 {result.fixNotes}</p>
-                        )}
-                      </div>
+      {totalItems > 0 && !isAllDone && currentItem && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-semibold text-muted-foreground flex items-center gap-1.5">
+              <ClipboardList className="w-3.5 h-3.5" />
+              {currentItem.planTitle || t.pmExecution.checklistItem}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {t.pmExecution.checklistItem} {currentItemNumber} / {totalItems}
+            </span>
+          </div>
 
-                      {!result ? (
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            onClick={() => handleOk(item.id)}
-                            disabled={submitItemMutation.isPending}
-                            title={t.pmExecution.ok}
-                            className="w-10 h-10 rounded-lg bg-green-100 hover:bg-green-200 border border-green-300 flex items-center justify-center transition-colors disabled:opacity-50"
-                          >
-                            <CheckCircle2 className="w-5 h-5 text-green-700" />
-                          </button>
-                          <button
-                            onClick={() => openFixedDialog(item.id)}
-                            disabled={submitItemMutation.isPending}
-                            title={t.pmExecution.fixed}
-                            className="w-10 h-10 rounded-lg bg-blue-100 hover:bg-blue-200 border border-blue-300 flex items-center justify-center transition-colors disabled:opacity-50"
-                          >
-                            <Wrench className="w-5 h-5 text-blue-700" />
-                          </button>
-                          <button
-                            onClick={() => openIssueDialog(item.id)}
-                            disabled={submitItemMutation.isPending}
-                            title={t.pmExecution.defective}
-                            className="w-10 h-10 rounded-lg bg-red-100 hover:bg-red-200 border border-red-300 flex items-center justify-center transition-colors disabled:opacity-50"
-                          >
-                            <AlertTriangle className="w-5 h-5 text-red-700" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="shrink-0">
-                          {result.status === "ok" && <CheckCircle2 className="w-6 h-6 text-green-600" />}
-                          {result.status === "fixed" && <Wrench className="w-6 h-6 text-blue-600" />}
-                          {result.status === "issue" && <AlertTriangle className="w-6 h-6 text-red-600" />}
-                        </div>
-                      )}
-                    </div>
+          <div className="bg-card border-2 border-primary/20 rounded-2xl p-5 space-y-4 text-center">
+            {currentItem.isRequired && (
+              <Badge variant="destructive" className="text-[10px]">{t.pmExecution.required}</Badge>
+            )}
+            <h3 className="text-xl font-bold">{currentItem.text}</h3>
+
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <button
+                onClick={() => handleOk(currentItem.id)}
+                disabled={submitItemMutation.isPending}
+                className="flex flex-col items-center gap-1.5 rounded-xl border-2 border-green-300 bg-green-50 hover:bg-green-100 py-4 transition-colors disabled:opacity-50"
+              >
+                <CheckCircle2 className="w-6 h-6 text-green-600" />
+                <span className="text-xs font-medium text-green-700">{t.pmExecution.ok}</span>
+              </button>
+              <button
+                onClick={() => openFixedDialog(currentItem.id)}
+                disabled={submitItemMutation.isPending}
+                className="flex flex-col items-center gap-1.5 rounded-xl border-2 border-blue-300 bg-blue-50 hover:bg-blue-100 py-4 transition-colors disabled:opacity-50"
+              >
+                <Wrench className="w-6 h-6 text-blue-600" />
+                <span className="text-xs font-medium text-blue-700">{t.pmExecution.fixed}</span>
+              </button>
+              <button
+                onClick={() => openIssueDialog(currentItem.id)}
+                disabled={submitItemMutation.isPending}
+                className="flex flex-col items-center gap-1.5 rounded-xl border-2 border-red-300 bg-red-50 hover:bg-red-100 py-4 transition-colors disabled:opacity-50"
+              >
+                <AlertTriangle className="w-6 h-6 text-red-600" />
+                <span className="text-xs font-medium text-red-700">{t.pmExecution.defective}</span>
+              </button>
+            </div>
+          </div>
+
+          {completedItemsList.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-sm font-semibold text-muted-foreground">{t.pmExecution.completedItems}</h4>
+              <div className="flex flex-wrap gap-2">
+                {completedItemsList.map((item: any) => {
+                  const result = getItemResult(item.id);
+                  const styles =
+                    result.status === "ok" ? "bg-green-50 border-green-200 text-green-700" :
+                    result.status === "fixed" ? "bg-blue-50 border-blue-200 text-blue-700" :
+                    "bg-red-50 border-red-200 text-red-700";
+                  const StatusIcon =
+                    result.status === "ok" ? CheckCircle2 :
+                    result.status === "fixed" ? Wrench : AlertTriangle;
+                  return (
+                    <span
+                      key={item.id}
+                      className={`inline-flex items-center gap-1.5 border rounded-lg px-2.5 py-1 text-xs ${styles}`}
+                    >
+                      {item.text}
+                      <StatusIcon className="w-3.5 h-3.5" />
+                    </span>
                   );
                 })}
               </div>
             </div>
-          ))}
+          )}
         </div>
       )}
 

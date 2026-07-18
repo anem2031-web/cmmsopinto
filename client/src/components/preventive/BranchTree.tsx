@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import {
-  ChevronLeft, ChevronDown, Plus, Edit, Trash2, FolderTree, Loader2, X, ListChecks,
+  ChevronLeft, ChevronDown, Plus, Edit, Trash2, FolderTree, Loader2, X, ListChecks, Wand2,
 } from "lucide-react";
 import { nanoid } from "nanoid";
 
@@ -37,6 +37,8 @@ interface BranchNode {
   frequency: Frequency | null;
   frequencyValue: number | null;
   assignedToId: number | null;
+  siteId: number | null;
+  sectionId: number | null;
   isActive: boolean;
   children: BranchNode[];
 }
@@ -56,6 +58,8 @@ interface BranchFormState {
   frequency: Frequency | "";
   frequencyValue: number;
   assignedToId: string;
+  siteId: string;
+  sectionId: string;
   checklist: ChecklistFormItem[];
 }
 
@@ -66,6 +70,8 @@ const EMPTY_FORM: BranchFormState = {
   frequency: "",
   frequencyValue: 1,
   assignedToId: "",
+  siteId: "",
+  sectionId: "",
   checklist: [],
 };
 
@@ -73,6 +79,7 @@ export default function BranchTree() {
   const utils = trpc.useUtils();
   const { data: tree = [], isLoading } = trpc.preventive.listTree.useQuery();
   const { data: pmTechnicians = [] } = trpc.users.listTechnicians.useQuery();
+  const { data: sites = [] } = trpc.sites.list.useQuery();
 
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -82,6 +89,13 @@ export default function BranchTree() {
   const [form, setForm] = useState<BranchFormState>(EMPTY_FORM);
   const [deleteTarget, setDeleteTarget] = useState<BranchNode | null>(null);
   const [deleteBlockers, setDeleteBlockers] = useState<{ childrenCount: number; workOrdersCount: number } | null>(null);
+
+  // الأقسام التنظيمية الحقيقية (جدول sections) التابعة للموقع المختار حالياً
+  // بفورم إنشاء فرع رئيسي جديد — تُجلب فقط لما يُختار موقع فعلاً.
+  const { data: siteSections = [], isLoading: siteSectionsLoading } = trpc.sections.list.useQuery(
+    { siteId: form.siteId ? Number(form.siteId) : 0 },
+    { enabled: !!form.siteId }
+  );
 
   const createMut = trpc.preventive.createBranch.useMutation({
     onSuccess: () => {
@@ -107,6 +121,44 @@ export default function BranchTree() {
     },
     onError: (e) => toast.error(e.message || "تعذّر حذف الفرع"),
   });
+
+  const applyTemplateMut = trpc.preventive.applyDefaultSections.useMutation({
+    onSuccess: (data) => {
+      toast.success(`تم إنشاء ${data.createdCount} قسم، وتخطي ${data.skippedCount} قسم موجود مسبقاً`);
+      utils.preventive.listTree.invalidate();
+    },
+    onError: (e) => toast.error(e.message || "تعذّر إنشاء الأقسام الأساسية"),
+  });
+
+  // قائمة الفحص المقترحة بانتظار تأكيد المستخدم (لأن الفورم فيه بنود موجودة أصلاً)
+  const [pendingSuggestion, setPendingSuggestion] = useState<string[] | null>(null);
+
+  // يُستدعى عند تغيير حقل "التكرار" بالفورم — يقترح قائمة فحص جاهزة لو عنوان
+  // الفرع يطابق أحد الأقسام القياسية (معدات التشغيل، الكهرباء، السباكة...).
+  // لو الفورم فاضي من البنود يطبّق مباشرة، ولو فيه بنود موجودة يسأل تأكيد أول.
+  const handleFrequencyChange = async (v: string) => {
+    const newFreq = v as Frequency;
+    setForm(f => ({ ...f, frequency: newFreq }));
+    if (!["daily", "weekly", "monthly"].includes(newFreq) || !form.title.trim()) return;
+    try {
+      const result = await utils.client.preventive.getSuggestedChecklist.query({
+        title: form.title.trim(),
+        frequency: newFreq as "daily" | "weekly" | "monthly",
+      });
+      if (result.items.length === 0) return;
+      if (form.checklist.length === 0) {
+        setForm(f => ({
+          ...f,
+          checklist: result.items.map(text => ({ clientKey: nanoid(), text, isRequired: true })),
+        }));
+        toast.success(`تم اقتراح ${result.items.length} بند فحص تلقائياً لـ"${form.title}"`);
+      } else {
+        setPendingSuggestion(result.items);
+      }
+    } catch {
+      // فشل الاقتراح مو حرج — نتجاهله بصمت ونسيب الفني يكمل يدوياً
+    }
+  };
 
   const addChecklistItemMut = trpc.preventive.addChecklistItem.useMutation();
   const updateChecklistItemMut = trpc.preventive.updateChecklistItem.useMutation();
@@ -150,6 +202,8 @@ export default function BranchTree() {
       frequency: node.frequency ?? "",
       frequencyValue: node.frequencyValue ?? 1,
       assignedToId: node.assignedToId ? String(node.assignedToId) : "",
+      siteId: node.siteId ? String(node.siteId) : "",
+      sectionId: node.sectionId ? String(node.sectionId) : "",
       checklist: [],
     });
     setDialogOpen(true);
@@ -229,6 +283,8 @@ export default function BranchTree() {
       frequency: form.isGroupOnly ? undefined : (form.frequency as Frequency),
       frequencyValue: form.frequencyValue,
       assignedToId: form.assignedToId ? Number(form.assignedToId) : undefined,
+      siteId: form.siteId ? Number(form.siteId) : undefined,
+      sectionId: form.sectionId ? Number(form.sectionId) : undefined,
     };
     if (dialogMode === "create") {
       createMut.mutate({
@@ -291,6 +347,18 @@ export default function BranchTree() {
           <div className="flex-1" />
 
           <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 shrink-0">
+            {node.parentId === null && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 text-primary"
+                title="إنشاء الأقسام الأساسية (معدات التشغيل، الكهرباء، السباكة...)"
+                disabled={applyTemplateMut.isPending}
+                onClick={() => applyTemplateMut.mutate({ rootId: node.id })}
+              >
+                {applyTemplateMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+              </Button>
+            )}
             <Button size="icon" variant="ghost" className="h-7 w-7" title="إضافة فرع فرعي" onClick={() => openCreate(node.id)}>
               <Plus className="h-3.5 w-3.5" />
             </Button>
@@ -352,11 +420,73 @@ export default function BranchTree() {
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
               <Label>عنوان الفرع *</Label>
-              <Input
-                value={form.title}
-                onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))}
-                placeholder="مثال: الكهرباء، اللوحات الكهربائية، لوحة المطبخ..."
-              />
+              {dialogMode === "create" && activeParentId === null && form.isGroupOnly ? (
+                <>
+                  <Select
+                    value={form.siteId}
+                    onValueChange={(v) => {
+                      // تغيير الموقع يصفّر القسم والعنوان المختارين سابقاً — العنوان
+                      // النهائي يتحدد من القسم لا من الموقع نفسه.
+                      setForm(f => ({ ...f, siteId: v, sectionId: "", title: "" }));
+                    }}
+                  >
+                    <SelectTrigger><SelectValue placeholder="الخطوة ١ — اختر الموقع من القائمة" /></SelectTrigger>
+                    <SelectContent>
+                      {sites.map((s: any) => (
+                        <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    تُستورد القائمة من المواقع المسجّلة بالنظام. لو الموقع اللي تبيه مو موجود بالقائمة، أضِفه أولاً من إدارة المواقع.
+                  </p>
+
+                  {form.siteId && (
+                    <div className="border rounded-md p-2.5 bg-muted/40 space-y-1.5">
+                      <p className="text-xs font-medium text-foreground">
+                        الخطوة ٢ — اختر القسم — هو اللي يصير عنوان الفرع الرئيسي بالشجرة:
+                      </p>
+                      {siteSectionsLoading ? (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+                          <Loader2 className="h-3 w-3 animate-spin" /> جاري التحميل...
+                        </div>
+                      ) : siteSections.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {siteSections.map((s: any) => {
+                            const isSelected = form.sectionId === String(s.id);
+                            return (
+                              <button
+                                key={s.id}
+                                type="button"
+                                onClick={() => setForm(f => ({ ...f, sectionId: String(s.id), title: s.name }))}
+                                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                                  isSelected
+                                    ? "bg-primary text-primary-foreground border-primary"
+                                    : "bg-background border-border hover:bg-muted"
+                                }`}
+                              >
+                                {isSelected && "✓ "}{s.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">لا يوجد أقسام مسجّلة لهذا الموقع بعد — أضفها أولاً من إدارة الأقسام.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {form.title && (
+                    <p className="text-xs text-emerald-600">✓ سيُنشأ فرع رئيسي بعنوان: "{form.title}"</p>
+                  )}
+                </>
+              ) : (
+                <Input
+                  value={form.title}
+                  onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))}
+                  placeholder="مثال: الكهرباء، اللوحات الكهربائية، لوحة المطبخ..."
+                />
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -386,7 +516,7 @@ export default function BranchTree() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>التكرار *</Label>
-                    <Select value={form.frequency} onValueChange={(v) => setForm(f => ({ ...f, frequency: v as Frequency }))}>
+                    <Select value={form.frequency} onValueChange={handleFrequencyChange}>
                       <SelectTrigger><SelectValue placeholder="اختر التكرار" /></SelectTrigger>
                       <SelectContent>
                         {(Object.keys(FREQUENCY_LABELS) as Frequency[]).map(freq => (
@@ -503,6 +633,36 @@ export default function BranchTree() {
             >
               {deleteMut.isPending && <Loader2 className="h-4 w-4 animate-spin me-1" />}
               حذف
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── تأكيد استبدال قائمة الفحص بالمقترحة تلقائياً ── */}
+      <Dialog open={!!pendingSuggestion} onOpenChange={(open) => !open && setPendingSuggestion(null)}>
+        <DialogContent dir="rtl" className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>استبدال قائمة الفحص؟</DialogTitle>
+          </DialogHeader>
+          <div className="py-2 text-sm text-muted-foreground space-y-1">
+            <p>
+              فيه قائمة فحص جاهزة لـ"{form.title}" بتكرار {form.frequency ? FREQUENCY_LABELS[form.frequency as Frequency] : ""}
+              {" "}({pendingSuggestion?.length ?? 0} بند).
+            </p>
+            <p>تطبيقها بيستبدل كل البنود الحالية بالفورم ({form.checklist.length} بند حالياً). تبي تكمل؟</p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setPendingSuggestion(null)}>إلغاء، احتفظ بقائمتي</Button>
+            <Button
+              onClick={() => {
+                setForm(f => ({
+                  ...f,
+                  checklist: (pendingSuggestion ?? []).map(text => ({ clientKey: nanoid(), text, isRequired: true })),
+                }));
+                setPendingSuggestion(null);
+              }}
+            >
+              استبدال بالقائمة المقترحة
             </Button>
           </DialogFooter>
         </DialogContent>
