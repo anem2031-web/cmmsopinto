@@ -46,6 +46,7 @@ import ScanAsset from "@/pages/assets/ScanAsset";
 import CostReport from "@/pages/reports/CostReport";
 import Dashboard from "@/pages/dashboard/Dashboard";
 import AssetDetail from "@/pages/assets/AssetDetail";
+import NfcRedirect from "@/pages/assets/NfcRedirect";
 import AssetCategories from "@/pages/assets/AssetCategories";
 import WarehouseReceive from "@/pages/inventory/WarehouseReceive";
 import WarehouseReceiveV2 from "@/pages/inventory/WarehouseReceiveV2";
@@ -107,6 +108,7 @@ function Router() {
             <Route path="/scan-asset" component={ScanAsset} />
             <Route path="/reports/cost" component={CostReport} />
             <Route path="/asset/:id" component={AssetDetail} />
+            <Route path="/tag/:rfidTag" component={NfcRedirect} />
             <Route path="/asset-categories" component={AssetCategories} />
             {/* ⛔ مُعطّلة مؤقتاً (قيد الاختبار قبل الحذف النهائي) — استُبدلت بـ WarehouseReceiveV2 */}
             <Route path="/warehouse/receive" component={NotFound} />

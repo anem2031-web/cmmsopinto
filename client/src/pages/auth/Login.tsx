@@ -9,6 +9,7 @@ import { Wrench, Loader2, Eye, EyeOff, AlertTriangle, Clock } from "lucide-react
 import { toast } from "sonner";
 import { useTranslation } from "@/contexts/LanguageContext";
 import LanguageSwitcher from "@/components/common/LanguageSwitcher";
+import { getSafeReturnUrl } from "@/const";
 
 
 export default function Login() {
@@ -34,9 +35,19 @@ export default function Login() {
         );
       }
       
+      // ── العودة للوجهة الأصلية بعد تسجيل الدخول ──
+      // الحالة 1 (مسح NFC): المستخدم فتح مباشرة رابط أصل مثل /asset/1258 وهو غير مسجل دخول،
+      //   فيظهر له نموذج الدخول في نفس الصفحة دون تغيير الرابط في المتصفح،
+      //   لذلك window.location.pathname هو أصلاً الوجهة الصحيحة.
+      // الحالة 2: المستخدم انتقل صراحة لصفحة /login (مثلاً بعد انتهاء الجلسة)،
+      //   وفيها معامل ?returnUrl=... يحدد الوجهة الأصلية.
+      const destination = getSafeReturnUrl(
+        window.location.pathname !== "/login" ? window.location.pathname + window.location.search : "/"
+      );
+
       // Redirect after 2 seconds to show warning
       setTimeout(() => {
-        window.location.href = "/";
+        window.location.href = destination;
       }, 2000);
     },
     onError: (err) => {
