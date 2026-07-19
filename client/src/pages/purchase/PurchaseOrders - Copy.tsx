@@ -268,37 +268,20 @@ export default function PurchaseOrders() {
                         {new Date(po.createdAt).toLocaleDateString(locale)}
                         {(() => {
                           const breakdown = ((po as any).delegateBreakdown ?? []) as { delegateId: number; total: number; purchased: number }[];
-                          if (breakdown.length === 0) return null;
-
-                          const renderStats = (total: number, purchased: number) => {
-                            const remaining = total - purchased;
-                            const pct = total > 0 ? Math.round((purchased / total) * 100) : 0;
-                            const stateEmoji = purchased === 0 ? "🔴" : remaining === 0 ? "🟢" : "🟡";
-                            const stateText = purchased === 0 ? "لم يبدأ" : remaining === 0 ? "مكتمل" : "جاري";
-                            return `المطلوب شراؤه: ${total}   تم الشراء: ${purchased}   المتبقي: ${remaining}   الحالة: ${stateEmoji} ${stateText} (${pct}%)`;
-                          };
-
-                          // الأدمن/مدير الصيانة/الإدارة العليا: يشوفون تفصيل كل مندوب على حدة (سطر منفصل لكل واحد)
-                          const canSeeAllDelegates = ["admin", "owner", "maintenance_manager", "senior_management"].includes(user?.role || "");
-                          if (canSeeAllDelegates && breakdown.length > 1) {
-                            return (
-                              <span className="block w-full text-amber-700 mt-1 space-y-0.5">
-                                {breakdown.map(d => {
-                                  const delegateUser = allUsers.find((u: any) => u.id === d.delegateId);
-                                  return (
-                                    <span key={d.delegateId} className="block">
-                                      👤 {delegateUser?.name || `مندوب #${d.delegateId}`}: {renderStats(d.total, d.purchased)}
-                                    </span>
-                                  );
-                                })}
-                              </span>
-                            );
-                          }
-
-                          // بقية الأدوار (بما فيهم المندوب نفسه): يشوفون فقط ما يخصهم هم
+                          // نعرض فقط ما يخص المندوب الحالي (المسجّل دخوله)، وليس إجمالي كل المناديب
                           const myEntry = user ? breakdown.find(d => d.delegateId === user.id) : undefined;
                           if (!myEntry) return null;
-                          return <span className="text-amber-700"> - {renderStats(myEntry.total, myEntry.purchased)}</span>;
+
+                          const { total, purchased } = myEntry;
+                          const remaining = total - purchased;
+                          const pct = total > 0 ? Math.round((purchased / total) * 100) : 0;
+                          const stateEmoji = purchased === 0 ? "🔴" : remaining === 0 ? "🟢" : "🟡";
+                          const stateText = purchased === 0 ? "لم يبدأ" : remaining === 0 ? "مكتمل" : "جاري";
+                          return (
+                            <span className="text-amber-700">
+                              {" "}- المطلوب شراؤه: {total} &nbsp; تم الشراء: {purchased} &nbsp; المتبقي: {remaining} &nbsp; الحالة: {stateEmoji} {stateText} ({pct}%)
+                            </span>
+                          );
                         })()}
                       </span>
                     </div>

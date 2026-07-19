@@ -185,37 +185,20 @@ export async function getPurchaseOrders(filters?: {
     .where(inArray(purchaseOrderItems.purchaseOrderId, poIds))
     .groupBy(purchaseOrderItems.purchaseOrderId);
 
-  // توزيع الأصناف على المناديب لكل طلب — لعرض ملخص مختصر (المطلوب/تم الشراء/المتبقي)
-  // مباشرة على بطاقة القائمة بدون فتح الطلب
+  // عدد المناديب المختلفين المسندة لهم أصناف بكل طلب — لتمييز الطلبات الموزَّعة على أكثر من مندوب
   const delegateRows = await db
     .select({
       purchaseOrderId: purchaseOrderItems.purchaseOrderId,
       delegateId: purchaseOrderItems.delegateId,
-      status: purchaseOrderItems.status,
     })
     .from(purchaseOrderItems)
     .where(inArray(purchaseOrderItems.purchaseOrderId, poIds));
-
-  const purchasedOrBeyondStatuses = new Set(["purchased", "delivered_to_warehouse", "delivered_to_requester"]);
-  const excludedStatuses = new Set(["rejected", "cancelled"]);
-
   const delegateSetByPO = new Map<number, Set<number>>();
-  // purchaseOrderId -> delegateId -> { total, purchased }
-  const delegateBreakdownByPO = new Map<number, Map<number, { total: number; purchased: number }>>();
-
   for (const row of delegateRows) {
     if (row.delegateId == null) continue;
     const set = delegateSetByPO.get(row.purchaseOrderId) ?? new Set<number>();
     set.add(row.delegateId);
     delegateSetByPO.set(row.purchaseOrderId, set);
-
-    if (excludedStatuses.has(row.status)) continue; // لا تُحتسب ضمن الملخص المختصر
-    const poMap = delegateBreakdownByPO.get(row.purchaseOrderId) ?? new Map();
-    const entry = poMap.get(row.delegateId) ?? { total: 0, purchased: 0 };
-    entry.total += 1;
-    if (purchasedOrBeyondStatuses.has(row.status)) entry.purchased += 1;
-    poMap.set(row.delegateId, entry);
-    delegateBreakdownByPO.set(row.purchaseOrderId, poMap);
   }
 
   // استعلام 3: جلب أسماء الأصناف لكل طلب دفعة واحدة (للبحث الديناميكي)
@@ -250,10 +233,6 @@ export async function getPurchaseOrders(filters?: {
     ...po,
     itemCount: countMap.get(po.id) ?? 0,
     delegateCount: delegateSetByPO.get(po.id)?.size ?? 0,
-    // ملخص مختصر للتوزيع على كل مندوب — يُستخدم لعرضه مباشرة على بطاقة القائمة
-    delegateBreakdown: Array.from((delegateBreakdownByPO.get(po.id) ?? new Map()).entries()).map(
-      ([delegateId, v]) => ({ delegateId, total: v.total, purchased: v.purchased, remaining: v.total - v.purchased })
-    ),
     itemNames: namesMap.get(po.id) ?? [],
     itemNames_en: namesMapEn.get(po.id) ?? [],
     itemNames_ar: namesMapAr.get(po.id) ?? [],
