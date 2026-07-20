@@ -194,7 +194,11 @@ export const poItemStatuses = ["pending", "estimated", "approved", "rejected", "
 
 export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   id: int("id").autoincrement().primaryKey(),
-  purchaseOrderId: int("purchaseOrderId").notNull(),
+  // ✅ إصلاح حرج #7 (على مستوى الكود/الـORM فقط): مفتاح خارجي حقيقي يمنع تقنياً
+  // وجود صنف بلا طلب شراء أب حقيقي. ⚠️ لا يجوز تطبيق الـmigration الناتجة عن هذا
+  // التعديل مباشرة على قاعدة الإنتاج قبل تنفيذ خطوات الاحتواء 1-4 (استخراج/تجميد/
+  // تصحيح أو NULL/التحقق من عدم وجود orphans) الموثقة في التقرير — راجع القسم 12.5.
+  purchaseOrderId: int("purchaseOrderId").notNull().references(() => purchaseOrders.id, { onDelete: "restrict" }),
   itemName: varchar("itemName", { length: 300 }).notNull(),
   description: text("description"),
   quantity: int("quantity").default(1).notNull(),
@@ -350,7 +354,8 @@ export const inventoryTransactions = mysqlTable("inventory_transactions", {
   quantity: int("quantity").notNull(),
   reason: text("reason"),
   ticketId: int("ticketId"),
-  purchaseOrderItemId: int("purchaseOrderItemId"),
+  // ✅ إصلاح حرج #7 — راجع نفس التحذير أعلى purchase_order_items.purchaseOrderId
+  purchaseOrderItemId: int("purchaseOrderItemId").references(() => purchaseOrderItems.id, { onDelete: "set null" }),
   performedById: int("performedById").notNull(),
   transactionType: mysqlEnum("transactionType", ["purchase", "return", "delivery", "adjustment", "disposal"]).default("adjustment"),
   receiptId: int("receiptId"),
@@ -1671,7 +1676,8 @@ export const warehouseReceiptItems = mysqlTable("warehouse_receipt_items", {
   id:                   int("id").autoincrement().primaryKey(),
   receiptId:            int("receiptId").notNull(),
   inventoryId:          int("inventoryId"),
-  purchaseOrderItemId:  int("purchaseOrderItemId"),
+  // ✅ إصلاح حرج #7 — راجع نفس التحذير أعلى purchase_order_items.purchaseOrderId
+  purchaseOrderItemId:  int("purchaseOrderItemId").references(() => purchaseOrderItems.id, { onDelete: "set null" }),
   itemName:             varchar("itemName", { length: 300 }).notNull(),
   itemName_ar:          text("itemName_ar"),
   itemName_en:          text("itemName_en"),

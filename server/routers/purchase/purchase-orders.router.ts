@@ -451,16 +451,19 @@ export const purchaseOrdersRouter = router({
     if (input.items.length > 20) throw new TRPCError({ code: "BAD_REQUEST", message: `الحد الأقصى 20 صنف لكل طلب شراء` });
 
     const poNumber = await db.getNextPONumber();
-    const poId = await db.createPurchaseOrder({
-      poNumber,
-      ticketId: input.ticketId,
-      requestedById: ctx.user.id,
-      status: "draft",
-      notes: input.notes,
+    // ✅ إصلاح حرج #5: نفس مبدأ create() — إنشاء الرأس والبنود معاً ضمن معاملة واحدة
+    const poId = await db.withTransaction(async (tx: any) => {
+      const newPoId = await db.createPurchaseOrder({
+        poNumber,
+        ticketId: input.ticketId,
+        requestedById: ctx.user.id,
+        status: "draft",
+        notes: input.notes,
+      }, tx);
+      const itemsData = input.items.map(item => ({ ...item, purchaseOrderId: newPoId!, status: "pending" }));
+      await db.createPOItems(itemsData, tx);
+      return newPoId;
     });
-
-    const itemsData = input.items.map(item => ({ ...item, purchaseOrderId: poId!, status: "pending" }));
-    await db.createPOItems(itemsData);
 
     // ترجمة الأصناف في الخلفية
     const poItemsCreated = await db.getPOItems(poId!);
@@ -620,16 +623,23 @@ export const purchaseOrdersRouter = router({
       throw new TRPCError({ code: "BAD_REQUEST", message: `الحد الأقصى 20 صنف لكل طلب شراء. لديك ${input.items.length} صنف` });
     }
     const poNumber = await db.getNextPONumber();
-    const poId = await db.createPurchaseOrder({
-      poNumber,
-      ticketId: input.ticketId,
-      requestedById: ctx.user.id,
-      status: "pending_review",
-      notes: input.notes,
+    // ✅ إصلاح حرج #5: إنشاء رأس الطلب وبنوده معاً ضمن معاملة ذرية واحدة —
+    // إما ينجحان كلاهما أو يُلغى كل شيء تلقائياً (rollback) عند أي فشل جزئي.
+    // سابقاً كانا استدعاءين منفصلين تحت autocommit، فكان يمكن أن ينجح إنشاء
+    // الرأس ويفشل إدراج البنود، تاركاً طلباً "رأساً بلا أصناف" للأبد.
+    const poId = await db.withTransaction(async (tx: any) => {
+      const newPoId = await db.createPurchaseOrder({
+        poNumber,
+        ticketId: input.ticketId,
+        requestedById: ctx.user.id,
+        status: "pending_review",
+        notes: input.notes,
+      }, tx);
+      // delegateId is optional at creation — assigned during reviewItems step
+      const itemsData = input.items.map(item => ({ ...item, purchaseOrderId: newPoId!, status: "pending" }));
+      await db.createPOItems(itemsData, tx);
+      return newPoId;
     });
-    // delegateId is optional at creation — assigned during reviewItems step
-    const itemsData = input.items.map(item => ({ ...item, purchaseOrderId: poId!, status: "pending" }));
-    await db.createPOItems(itemsData);
 
     // ترجمة حقول الطلب والأصناف في الخلفية
     const poItemsCreated = await db.getPOItems(poId!);
@@ -668,8 +678,17 @@ export const purchaseOrdersRouter = router({
     if (!["owner", "admin"].includes(ctx.user.role)) {
       throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لحذف طلبات الشراء" });
     }
-    if (["funded", "partially_purchased", "completed"].includes(po.status)) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن حذف طلب شراء مموّل أو مكتمل" });
+    // ✅ إصلاح حرج #3: القيم السابقة (funded, partially_purchased, completed) لم تكن
+    // موجودة إطلاقًا في enum الحالات الحقيقي للنظام، فكان الشرط كوداً ميتاً لا يتحقق
+    // أبداً — يسمح بحذف أي طلب مهما كانت حالته. القائمة الصحيحة أدناه تطابق poStatuses
+    // الفعلي في drizzle/schema.ts، وتمنع الحذف بعد اعتماد الإدارة العليا تحديداً
+    // (وكذلك أي مرحلة مالية سابقة له كالاعتماد المحاسبي، لارتباط مبلغ العهدة بها).
+    const nonDeletableStatuses = [
+      "pending_accounting", "pending_management", "approved",
+      "partial_purchase", "purchased", "received", "closed",
+    ];
+    if (nonDeletableStatuses.includes(po.status)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن حذف طلب شراء تجاوز مرحلة المراجعة (اعتماد محاسبي/إداري أو أبعد)" });
     }
     // نحذف الطلب أولاً — الحذف هو العملية الأساسية ويجب أن ينجح دائماً
     await db.deletePurchaseOrder(input.id);
@@ -697,6 +716,13 @@ export const purchaseOrdersRouter = router({
 
     const item = await db.getPOItemById(input.id);
     if (!item) throw new TRPCError({ code: "NOT_FOUND" });
+
+    // ✅ إصلاح حرج #1 (IDOR): يجب التأكد أن الصنف ينتمي فعلاً لطلب الشراء المُرسل
+    // قبل الاعتماد على حالة/صلاحية ذلك الطلب لاتخاذ قرار الحذف. بدون هذا التحقق
+    // يمكن حذف صنف من طلب "ب" مكتمل بتمرير رقم طلب "أ" آخر لا يزال قابلاً للتعديل.
+    if (item.purchaseOrderId !== input.purchaseOrderId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "هذا الصنف لا ينتمي لطلب الشراء المحدد" });
+    }
 
     const isCreator = po.requestedById === ctx.user.id;
     // الأدوار المسموح لها بحذف صنف من طلب الشراء بشكل عام (تطابق صلاحية editItem)
@@ -729,10 +755,29 @@ export const purchaseOrdersRouter = router({
       });
     }
 
+    // ✅ إصلاح حرج #2: منع حذف آخر صنف متبقٍ في الطلب — يمنع تفريغ الطلب بالكامل
+    // من أصنافه وبقائه "رأسًا" بلا بنود. إن رغب المستخدم بإلغاء الطلب كليًا
+    // فعليه استخدام حذف/إلغاء الطلب نفسه، لا حذف آخر صنف فيه.
+    const allItemsInPO = await db.getPOItems(input.purchaseOrderId);
+    if (allItemsInPO.length <= 1) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "لا يمكن حذف آخر صنف متبقٍ في طلب الشراء. لإلغاء الطلب بالكامل استخدم خيار حذف/إلغاء الطلب نفسه.",
+      });
+    }
+
     await db.deletePOItem(input.id);
-    await db.createAuditLog({ userId: ctx.user.id, action: "delete_po_item", entityType: "purchase_order_item", entityId: input.id, oldValues: { itemName: item.itemName, quantity: item.quantity } });
+    await db.createAuditLog({
+      userId: ctx.user.id,
+      action: "delete_po_item",
+      entityType: "purchase_order_item",
+      entityId: input.id,
+      oldValues: { purchaseOrderId: item.purchaseOrderId, poNumber: po.poNumber, ...item },
+    });
     return { success: true };
   }),
+
+
 
   editItem: protectedProcedure.input(z.object({
     id: z.number(),
@@ -752,6 +797,12 @@ export const purchaseOrdersRouter = router({
     const oldItem = await db.getPOItemById(input.id);
     if (!oldItem) {
       throw new TRPCError({ code: "NOT_FOUND" });
+    }
+
+    // ✅ إصلاح حرج #1 (IDOR): نفس إصلاح deleteItem — التأكد أن الصنف ينتمي
+    // فعلاً لطلب الشراء المُرسل قبل الاعتماد على حالته/صلاحيته لاتخاذ قرار التعديل.
+    if (oldItem.purchaseOrderId !== input.purchaseOrderId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "هذا الصنف لا ينتمي لطلب الشراء المحدد" });
     }
 
     const isCreator = po.requestedById === ctx.user.id;

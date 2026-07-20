@@ -240,29 +240,10 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
       setReviewDecisions(newReviewDecisions);
     }
   };
-  const [exportingPdf, setExportingPdf] = useState(false);
-
-  const handleExportPdf = async () => {
-    if (!po?.id) return;
-    setExportingPdf(true);
-    try {
-      const res = await fetch(`/api/export/po/${po.id}/pdf`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error(t.purchaseOrders.fileLoadFailed);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${po.poNumber || `po-${po.id}`}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      toast.error(t.purchaseOrders.exportPdfFailed);
-    } finally {
-      setExportingPdf(false);
-    }
-  };
+  // ✅ إصلاح: أُزيل الزر العام لتصدير PDF لكل الطلب (بلا batchId) — كان يُصدِّر أصناف كل
+  // الدفعات مجتمعة، بما يخالف طبيعة مستند "طلب عهدة مالية" الذي يجب أن يعكس دفعة واحدة
+  // فقط. المستند الرسمي المعتمد الوحيد الآن هو زر "تصدير PDF لهذه الدفعة" لكل دفعة تسعير
+  // (راجع docs/CHANGELOG_TECHNICAL.md وdocs/PENDING_TASKS.md).
 
   const [exportingBatchId, setExportingBatchId] = useState<number | null>(null);
   const handleExportBatchPdf = async (batchId: number, batchNumber: number) => {
@@ -445,18 +426,6 @@ const visibleItems = useMemo(() => {
           <h1 className="text-xl font-bold mt-1">{t.purchaseOrders.title}</h1>
         </div>
         <div className="flex gap-2">
-          {(isDelegate || isAdminOrOwner) && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              onClick={handleExportPdf}
-              disabled={exportingPdf}
-            >
-              {exportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-              {t.purchaseOrders.exportPdf}
-            </Button>
-          )}
           {isDelegate && po.status === "pending_estimate" && (
             <Button variant="outline" className="border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => setIsRevisionDialogOpen(true)}>
               <AlertCircle className="w-4 h-4 mr-1.5" /> {t.purchaseOrders.returnForRevision}
@@ -1215,7 +1184,7 @@ const visibleItems = useMemo(() => {
       <Card className="border-primary/20 bg-primary/5">
         <CardContent className="p-5 space-y-3">
           <h3 className="text-sm font-semibold flex items-center gap-2">
-            <DollarSign className="w-4 h-4" /> {t.purchaseOrders.totalEstimated}
+            {t.purchaseOrders.totalEstimated}
           </h3>
           {totalEstimated > 0 && (
             <div className="space-y-1">
@@ -1420,8 +1389,7 @@ const visibleItems = useMemo(() => {
                     size="sm"
                     variant="outline"
                     className="self-start gap-1.5"
-                    disabled={exportingBatchId === batch.id || !batch.custodyAmount}
-                    title={!batch.custodyAmount ? "لازم اعتماد الحسابات وإدخال مبلغ العهدة أولاً" : undefined}
+                    disabled={exportingBatchId === batch.id}
                     onClick={() => handleExportBatchPdf(batch.id, batch.batchNumber)}
                   >
                     {exportingBatchId === batch.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}

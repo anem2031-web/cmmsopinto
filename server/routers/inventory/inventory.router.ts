@@ -144,7 +144,9 @@ export const inventoryRouter = router({
       // تحقق إذا كل الأصناف سُلِّمت
       const allItems = await db.getPOItems(input.purchaseOrderId);
       const activeItems = allItems.filter((i: any) => i.status !== "rejected" && i.status !== "cancelled");
-      const allDelivered = activeItems.every((i: any) => i.status === "delivered_to_requester");
+      // ✅ إصلاح حرج #6: [].every(...) تُعيد true دائماً على مصفوفة فارغة (صدق فارغ)
+      // — أضيف تحقق length > 0 صراحة لمنع تصنيف طلب بلا أصناف نشطة كـ"مكتمل التسليم"
+      const allDelivered = activeItems.length > 0 && activeItems.every((i: any) => i.status === "delivered_to_requester");
 
       if (allDelivered) {
         await db.updatePurchaseOrder(input.purchaseOrderId, { status: "received" });

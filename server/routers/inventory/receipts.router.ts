@@ -42,7 +42,13 @@ export const receiptsRouter = router({
       return db.getInventoryBySearch(input.search);
     }),
 
-  // استلام من المشتريات وإضافة للمخزون
+  // ✅ إصلاح حرج #4: هذا الإجراء (v1) كان لا يزال قابلاً للاستدعاء المباشر عبر API
+  // رغم أن صفحته الأمامية (WarehouseReceive.tsx) أُعيد توجيهها لـ NotFound منذ
+  // استبداله بـ receiveFromPurchaseV2. لا يحتوي على أي تحقق من ملكية الصنف لطلب
+  // الشراء ولا معاملة ذرية (خلافاً لـ v2) — وهو ما تسبب سابقاً في انفصال ربط
+  // سندات الاستلام عن بنود الطلب الحقيقية. عُطِّل هنا مباشرة بدل حذف الراوتر
+  // بالكامل، لأن باقي إجراءات هذا الملف (scanBarcode وغيرها) لا تزال مستخدَمة
+  // فعلياً من صفحات نشطة أخرى (WarehouseReturn.tsx).
   receiveFromPurchase: warehouseProcedure
     .input(z.object({
       purchaseOrderId: z.number(),
@@ -60,105 +66,12 @@ export const receiptsRouter = router({
         warehousePhotoUrl: z.string().min(1),
       })),
     }))
-    .mutation(async ({ input, ctx }) => {
-      const po = await db.getPurchaseOrderById(input.purchaseOrderId);
-      if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
-
-      // توليد رقم الفاتورة
-      const receiptNumber = await db.getNextReceiptNumber();
-
-      // إنشاء فاتورة الاستلام
-      const receiptId = await db.createWarehouseReceipt({
-        receiptNumber,
-        purchaseOrderId: input.purchaseOrderId,
-        receivedById: ctx.user.id,
-        notes: input.notes,
-        totalItems: input.items.length,
-        status: "confirmed",
+    .mutation(async () => {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "تم إيقاف هذا المسار نهائياً لعدم أمانه. الرجاء استخدام استلام الفاتورة (v2) بدلاً منه.",
       });
-
-      const inventoryIds: number[] = [];
-
-      for (const item of input.items) {
-        let inventoryId = item.inventoryId;
-
-        if (inventoryId) {
-          // إضافة للصنف الموجود
-          await db.updateInventoryItem(inventoryId, {
-            quantity: undefined, // يُحدَّث عبر transaction
-            lastRestockedAt: new Date(),
-          });
-        } else {
-          // إنشاء صنف جديد في المخزون
-          const internalCode = await db.getNextInventoryCode();
-          inventoryId = await db.createInventoryItem({
-            itemName: item.itemName,
-            quantity: 0, // يُحدَّث عبر transaction
-            unit: item.unit,
-            internalCode,
-            manufacturerBarcode: item.manufacturerBarcode || null,
-            receiptId: receiptId!,
-          }) as number;
-        }
-
-        inventoryIds.push(inventoryId!);
-
-        // تسجيل حركة دخول في inventory_transactions
-        await db.addInventoryTransaction({
-          inventoryId: inventoryId!,
-          type: "in",
-          quantity: item.receivedQuantity,
-          reason: `استلام من طلب شراء ${po.poNumber} - فاتورة ${receiptNumber}`,
-          purchaseOrderItemId: item.purchaseOrderItemId,
-          performedById: ctx.user.id,
-          transactionType: "purchase",
-          receiptId: receiptId!,
-        });
-
-        // تحديث بيانات الصنف في طلب الشراء
-        await db.updatePOItem(item.purchaseOrderItemId, {
-          status: "delivered_to_warehouse",
-          receivedAt: new Date(),
-          receivedById: ctx.user.id,
-          receivedQuantity: item.receivedQuantity,
-          supplierName: item.supplierName,
-          actualUnitCost: item.actualUnitCost,
-          actualTotalCost: String(parseFloat(item.actualUnitCost) * item.receivedQuantity),
-          warehousePhotoUrl: item.warehousePhotoUrl,
-        });
-      }
-
-      // تحديث حالة طلب الشراء
-      const allItems = await db.getPOItems(input.purchaseOrderId);
-      const activeItems = allItems.filter((i: any) => i.status !== "rejected" && i.status !== "cancelled");
-      const allInWarehouse = activeItems.every((i: any) =>
-        ["delivered_to_warehouse", "delivered_to_requester"].includes(i.status)
-      );
-
-      if (allInWarehouse) {
-        await db.updatePurchaseOrder(input.purchaseOrderId, { status: "received" });
-      }
-
-      // إشعارات
-      const managers = await db.getManagerUsers();
-      for (const mgr of managers) {
-        await db.createNotification({
-          userId: mgr.id,
-          title: `📦 فاتورة استلام جديدة ${receiptNumber}`,
-          message: `تم استلام ${input.items.length} صنف من طلب الشراء ${po.poNumber} وإضافتها للمخزون`,
-          type: "info",
-          relatedPOId: input.purchaseOrderId,
-        });
-      }
-
-      await db.createAuditLog({
-        userId: ctx.user.id,
-        action: "warehouse_receive",
-        entityType: "purchase_order",
-        entityId: input.purchaseOrderId,
-        newValues: { receiptNumber, totalItems: input.items.length },
-      });
-
-      return { receiptId, receiptNumber, inventoryIds };
     }),
+
 });
+

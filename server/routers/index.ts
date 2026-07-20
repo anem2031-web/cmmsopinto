@@ -17,6 +17,10 @@ import { approvalsRouter } from "./purchase/approvals.router";
 import { vendorsRouter } from "./purchase/vendors.router";
 
 import { inventoryRouter } from "./inventory/inventory.router";
+// ⚠️ receiptsRouter (v1) لا يزال مسجَّلاً لأن الإجراء scanBarcode بداخله لا يزال
+// مستخدَمًا فعليًا من صفحة نشطة (WarehouseReturn.tsx). الإجراء الخطير تحديدًا
+// (receiveFromPurchase) عُطِّل من داخل الملف نفسه، لا بحذف الراوتر بالكامل —
+// انظر التعليق داخل server/routers/inventory/receipts.router.ts
 import { receiptsRouter } from "./inventory/receipts.router";
 import { receiptsV2Router } from "./inventory/receipts.v2.router";
 import { inventoryCountRouter } from "./inventory/inventoryCount.router";

@@ -664,9 +664,24 @@ export async function generatePurchaseRequestPDF(
   const reviewerName = reviewer?.name || "-";
   const accountingApproverName = accountingApprover?.name || "";
 
+  // ── استبعاد الأصناف الملغاة/المرفوضة، وكذلك التي لم يُسعِّرها المندوب بعد ──
+  // (1) صنف مُلغى: لن يُشترى أصلاً، فلا يجوز احتسابه ضمن مبلغ العهدة المطلوب صرفه.
+  // (2) صنف بلا تسعير: لا معنى لإدراجه في مستند "طلب عهدة مالية" أصلاً — المبلغ
+  //     المطلوب صرفه لا يمكن أن يشمل شيئاً لم تُحدَّد تكلفته بعد. كان يظهر سابقاً
+  //     بسطر فارغ (تكلفة "—") بدل عدم ظهوره إطلاقاً.
+  const CANCELLED_ITEM_STATUSES = new Set(["rejected", "cancelled", "purchase_cancelled"]);
+  const visibleItems = (allItems as any[]).filter((item: any) => {
+    const isCancelled = CANCELLED_ITEM_STATUSES.has(item.status);
+    const isPriced = !!(item.estimatedUnitCost || item.actualUnitCost);
+    return !isCancelled && isPriced;
+  });
+  if (visibleItems.length === 0) {
+    throw new Error("لا توجد أصناف مُسعَّرة وغير ملغاة لعرضها في هذا المستند");
+  }
+
   // Calculate totals + بناء صفوف الجدول
   let grandTotal = 0;
-  const rows = (allItems as any[]).map((item: any, idx: number) => {
+  const rows = (visibleItems as any[]).map((item: any, idx: number) => {
     const unitCost = parseFloat(item.estimatedUnitCost || item.actualUnitCost || "0");
     const qty = item.quantity || 1;
     const rowTotal = unitCost * qty;
@@ -685,6 +700,15 @@ export async function generatePurchaseRequestPDF(
   // مبلغ العهدة اللي الحسابات كتبته فعلياً وقت الاعتماد — بدون أي قيمة افتراضية بديلة
   // (يبقى null لو الدفعة لسه ما اعتمدتهاش الحسابات، فيفضل الحقل فاضياً للتعبئة اليدوية)
   const accountingCustodyAmount = batch?.custodyAmount ? parseFloat(batch.custodyAmount) : null;
+
+  // كتابة مبلغ العهدة بالحروف (تفقيط) + حجم خط ديناميكي لضمان بقاء السطر كاملاً بلا نزول
+  // لسطر ثانٍ، بغض النظر عن طول المبلغ كتابةً (مبالغ كبيرة = كتابة أطول = خط أصغر تلقائياً)
+  const custodyWordsText = accountingCustodyAmount !== null ? amountToArabicCurrencyPhrase(accountingCustodyAmount) : "";
+  const baseCustodyFS = FS(8.55);
+  const custodyCharCount = custodyWordsText.length + 40; // 40 ≈ طول النص الثابت المحيط بالرقم في نفس السطر
+  const custodyFS = custodyWordsText
+    ? +(Math.max(5.5, Math.min(baseCustodyFS, baseCustodyFS * (100 / Math.max(custodyCharCount, 100))))).toFixed(2)
+    : baseCustodyFS;
 
   const docDate = batch?.submittedAt ? new Date(batch.submittedAt) : new Date();
   const dateStr = `${docDate.getFullYear()}-${String(docDate.getMonth() + 1).padStart(2, "0")}-${String(docDate.getDate()).padStart(2, "0")} م`;
@@ -854,8 +878,8 @@ export async function generatePurchaseRequestPDF(
     ${isDelegateViewer ? "" : `
     <div class="section-title">الشؤون المالية والإجراءات المحاسبية</div>
     <div class="finance-section">
-        <div class="line-input">
-            المذكور عليه عهدة بمبلغ ${accountingCustodyAmount !== null ? `<strong>${fmtSAR(accountingCustodyAmount)}</strong>` : `<span class="dotted-line"></span>`} ريال.
+        <div class="line-input" style="white-space: nowrap; overflow: hidden; font-size: ${custodyFS}pt;">
+            المذكور عليه عهدة بمبلغ ${accountingCustodyAmount !== null ? `<strong>${fmtSAR(accountingCustodyAmount)}</strong>` : `<span class="dotted-line"></span>`} ريال${custodyWordsText ? ` <strong>${escapeHtml(custodyWordsText)}</strong>` : ""}.
         </div>
         <div class="line-input">
             ملاحظات مراجع الحسابات: <span class="dotted-line" style="min-width: 320px;"></span>

@@ -226,8 +226,13 @@ export const receiptsV2Router = router({
         const processedItems: any[] = [];
 
         for (const item of input.items) {
+          // ✅ إصلاح حرج #8: هذا استلام مستقل بلا طلب شراء عمداً. أي قيمة
+          // purchaseOrderItemId قد تصل من الواجهة هنا (مثل ترقيم صف محلي في
+          // القائمة) لا معنى لها إطلاقاً ولا يجوز كتابتها في inventory_transactions
+          // كما كان يحدث سابقاً عبر processReceiptItem المشتركة — نتجاهلها صراحة.
+          const itemForProcessing = { ...item, purchaseOrderItemId: undefined };
           const processed = await processReceiptItem({
-            item,
+            item: itemForProcessing,
             receiptId: receiptId!,
             receiptNumber,
             performedById: ctx.user.id,
@@ -449,7 +454,8 @@ export const receiptsV2Router = router({
 
         const allItems = await db.getPOItems(input.purchaseOrderId, tx);
         const activeItems = allItems.filter((i: any) => !["rejected", "cancelled"].includes(i.status));
-        const allInWarehouse = activeItems.every((i: any) =>
+        // ✅ إصلاح حرج #6: نفس تحقق length > 0 قبل every() لمنع الصدق الفارغ
+        const allInWarehouse = activeItems.length > 0 && activeItems.every((i: any) =>
           ["delivered_to_warehouse", "delivered_to_requester"].includes(i.status)
         );
         if (allInWarehouse) {

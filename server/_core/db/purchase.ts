@@ -119,8 +119,8 @@ export async function getNextPONumber() {
   return `${prefix}${String(lastNum + 1).padStart(4, "0")}`;
 }
 
-export async function createPurchaseOrder(data: any) {
-  const db = await getDb();
+export async function createPurchaseOrder(data: any, tx?: any) {
+  const db = tx || await getDb();
   if (!db) return null;
   const result = await db.insert(purchaseOrders).values(data);
   return result[0].insertId;
@@ -278,10 +278,16 @@ export async function updatePurchaseOrder(id: number, data: any, tx?: any) {
 // ============================================================
 // PURCHASE ORDER ITEMS
 // ============================================================
-export async function createPOItems(items: any[]) {
-  const db = await getDb();
+export async function createPOItems(items: any[], tx?: any) {
+  const db = tx || await getDb();
   if (!db) return;
-  if (items.length > 0) await db.insert(purchaseOrderItems).values(items);
+  // ✅ جزء من إصلاح حرج #5: لا يجوز السماح بإنشاء طلب شراء بلا بند واحد على
+  // الأقل من اللحظة الأولى. سابقاً كانت مصفوفة فارغة تمر بصمت بدون أي كتابة
+  // وبدون أي خطأ، مما يسمح بنجاح إنشاء رأس الطلب فقط دون أصنافه.
+  if (!items || items.length === 0) {
+    throw new Error("Purchase order must have at least one item — refusing to create header without items");
+  }
+  await db.insert(purchaseOrderItems).values(items);
 }
 
 export async function getPOItems(purchaseOrderId: number, tx?: any) {
