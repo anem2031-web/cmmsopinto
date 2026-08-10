@@ -63,12 +63,12 @@ export function canSubmitPathARepair(
   return isExecutor && isPathARepairCompletionStage(status, maintenancePath);
 }
 
-/** Both Path A and Path B require written repair notes and an after-repair photo. */
+/** Repair completion requires written notes; the after-repair photo is optional. */
 export function isRepairEvidenceComplete(
   repairNotes?: string | null,
-  afterPhotoUrl?: string | null,
+  _afterPhotoUrl?: string | null,
 ): boolean {
-  return Boolean(repairNotes?.trim() && afterPhotoUrl?.trim());
+  return Boolean(repairNotes?.trim());
 }
 
 export const isPathARepairEvidenceComplete = isRepairEvidenceComplete;
