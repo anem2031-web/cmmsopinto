@@ -346,6 +346,8 @@ const en: TranslationKeys = {
     category: "Category",
     description: "Problem Description",
     repairNotes: "Repair Notes",
+    repairNotesRequired: "Repair Notes (Required)",
+    afterRepairPhotoOptional: "Upload After-Repair Photo (Optional)",
     materialsUsed: "Materials Used",
     estimatedCost: "Estimated Cost",
     actualCost: "Actual Cost",
