@@ -353,6 +353,8 @@ const ar = {
     category: "التصنيف",
     description: "وصف المشكلة",
     repairNotes: "ملاحظات الإصلاح",
+    repairNotesRequired: "ملاحظات الإصلاح (مطلوب)",
+    afterRepairPhotoOptional: "رفع صورة بعد الإصلاح (اختياري)",
     materialsUsed: "المواد المستخدمة",
     estimatedCost: "التكلفة التقديرية",
     actualCost: "التكلفة الفعلية",
