@@ -67,13 +67,16 @@ describe("ticket UI integration contract", () => {
     expect(approvals).toContain("canSubmitStandardRepair(true, ticket.status, ticket.maintenancePath)");
   });
 
-  it("keeps path A completion disabled until notes and the after-repair photo are present", () => {
+  it("keeps path A completion disabled until repair notes are present while the photo is optional", () => {
     const detail = read("client/src/pages/tickets/TicketDetail.tsx");
     const closure = read("server/routers/tickets/tickets.closure.ts");
     expect(detail).toContain("isPathARepairEvidenceComplete(repairNotes, afterPhotoUrl)");
     expect(detail).toContain("disabled={markReadyMut.isPending || !isPathARepairEvidenceReady}");
+    expect(detail).toContain("afterRepairPhotoOptional");
+    expect(closure).toContain('afterPhotoUrl: z.string().optional()');
+    expect(closure).toContain('repairNotes: z.string().trim().min(1, "ملاحظات الإصلاح مطلوبة")');
     expect(closure).toContain("isPathARepairEvidenceComplete(input.repairNotes, input.afterPhotoUrl)");
-    expect(closure).toContain("يجب كتابة ملاحظات الإصلاح وإرفاق صورة بعد الإصلاح");
+    expect(closure).toContain("يجب كتابة ملاحظات الإصلاح قبل إرسال البلاغ للإغلاق");
   });
 
   it("enforces the Path B purchase and repair cycle in UI and server", () => {
@@ -108,7 +111,7 @@ describe("ticket UI integration contract", () => {
     const workflow = read("server/routers/tickets/tickets.workflow.ts");
     expect(closure).toContain('ticket.status === "ready_for_closure"');
     expect(closure).toContain('ticket.maintenancePath === "B" || ticket.maintenancePath === "C"');
-    expect(closure).toContain("لا يمكن إغلاق البلاغ دون ملاحظات الإصلاح وصورة ما بعد الإصلاح");
+    expect(closure).toContain("لا يمكن إغلاق البلاغ دون ملاحظات الإصلاح");
     expect(closure).toContain("الإغلاق النهائي القديم غير متاح لمسارات الصيانة A/B/C");
     expect(workflow).toContain("هذا الإجراء القديم غير متاح لمسارات الصيانة A/B/C");
   });
