@@ -174,8 +174,8 @@ export const ticketsApprovalsRouter = router({
 
   completeRepair: protectedProcedure.input(z.object({
     id: z.number(),
-    afterPhotoUrl: z.string().min(1, "صورة بعد الإصلاح مطلوبة"),
-    repairNotes: z.string().optional(),
+    afterPhotoUrl: z.string().optional(),
+    repairNotes: z.string().trim().min(1, "ملاحظات الإصلاح مطلوبة"),
     materialsUsed: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
     const ticket = await db.getTicketById(input.id);
