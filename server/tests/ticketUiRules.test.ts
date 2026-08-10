@@ -119,10 +119,11 @@ describe("path A repair start gate", () => {
 
 
 describe("path A repair evidence requirements", () => {
-  it("requires both written repair notes and an after-repair photo", () => {
+  it("requires written repair notes while the after-repair photo is optional", () => {
     expect(isPathARepairEvidenceComplete("تم استبدال القطعة التالفة", "/uploads/after.jpg")).toBe(true);
     expect(isPathARepairEvidenceComplete("   ", "/uploads/after.jpg")).toBe(false);
-    expect(isPathARepairEvidenceComplete("تم الإصلاح", "   ")).toBe(false);
+    expect(isPathARepairEvidenceComplete("تم الإصلاح", "   ")).toBe(true);
+    expect(isPathARepairEvidenceComplete("تم الإصلاح", undefined)).toBe(true);
     expect(isPathARepairEvidenceComplete(undefined, undefined)).toBe(false);
   });
 });
@@ -141,10 +142,11 @@ describe("path B purchase and repair gates", () => {
     expect(canSubmitPathBRepair(true, "in_progress", "A")).toBe(false);
   });
 
-  it("requires notes and an after-repair photo for path B", () => {
+  it("requires notes while the after-repair photo is optional for path B", () => {
     expect(isPathBRepairEvidenceComplete("تم تركيب القطعة واختبارها", "/uploads/path-b-after.jpg")).toBe(true);
     expect(isPathBRepairEvidenceComplete("", "/uploads/path-b-after.jpg")).toBe(false);
-    expect(isPathBRepairEvidenceComplete("تم الإصلاح", "")).toBe(false);
+    expect(isPathBRepairEvidenceComplete("تم الإصلاح", "")).toBe(true);
+    expect(isPathBRepairEvidenceComplete("تم الإصلاح", undefined)).toBe(true);
   });
 });
 
