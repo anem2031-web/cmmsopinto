@@ -346,6 +346,8 @@ const ur: TranslationKeys = {
     category: "زمرہ",
     description: "مسئلے کی تفصیل",
     repairNotes: "مرمت نوٹس",
+    repairNotesRequired: "مرمت نوٹس (لازمی)",
+    afterRepairPhotoOptional: "مرمت کے بعد تصویر اپلوڈ کریں (اختیاری)",
     materialsUsed: "استعمال شدہ مواد",
     estimatedCost: "تخمینی لاگت",
     actualCost: "اصل لاگت",
