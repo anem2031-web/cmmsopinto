@@ -422,6 +422,7 @@ export default function InventoryOperations() {
   const { user } = useAuth();
   const { t, language } = useTranslation();
   const isWarehouse = ["warehouse", "admin", "owner"].includes(user?.role || "");
+  const canApplySettlement = ["admin", "owner"].includes(user?.role || "");
 
   // ── بيانات القائمة ──
   const { data: operations, isLoading, refetch } = trpc.disposal.list.useQuery();
@@ -1253,7 +1254,7 @@ export default function InventoryOperations() {
                       )}
                     </>
                   )}
-                  {countDetail.operation.status === "completed" && (
+                  {countDetail.operation.status === "completed" && canApplySettlement && (
                     <Button
                       size="sm"
                       onClick={() => {
@@ -1656,7 +1657,7 @@ export default function InventoryOperations() {
         <TabsContent value="settlements" className="mt-6 space-y-4">
           <div className="flex justify-between items-center">
             <p className="text-sm text-muted-foreground">كل تسويات المخزون — من عمليات جرد أو مستقلة — برقمها المرجعي الفريد</p>
-            <Button
+            {canApplySettlement && <Button
               className="gap-1.5"
               onClick={() => { setSettlementSourceCountId(null); setSettlementItems([]); setSettlementReference(""); setShowSettlement(true); }}
               disabled={lotsEnabled}
@@ -1664,7 +1665,7 @@ export default function InventoryOperations() {
             >
               <Plus className="w-4 h-4" />
               تسوية مستقلة (بدون جرد)
-            </Button>
+            </Button>}
           </div>
 
           <div className="space-y-2">
@@ -2154,7 +2155,7 @@ export default function InventoryOperations() {
       </Dialog>
 
       {/* ══ نافذة تسوية المخزون ══ */}
-      <Dialog open={showSettlement} onOpenChange={setShowSettlement}>
+      <Dialog open={canApplySettlement && showSettlement} onOpenChange={setShowSettlement}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>

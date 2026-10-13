@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { warehouseProcedure, inventoryReadProcedure, router } from "../_shared/procedures";
+import { warehouseProcedure, adminOwnerProcedure, inventoryReadProcedure, router } from "../_shared/procedures";
 import * as db from "../../_core/db";
 import { isInventoryLotsEnabled } from "../../_core/inventory-lots";
 import { findKnownInactiveCatalogUnitNames } from "../../_core/catalog-unit-governance";
@@ -295,7 +295,7 @@ export const inventoryCountRouter = router({
     }),
 
   // ── تطبيق تسوية المخزون (من جرد أو مستقلة) — فوري، بسبب إلزامي ──
-  applySettlement: warehouseProcedure
+  applySettlement: adminOwnerProcedure
     .input(z.object({
       sourceType: z.enum(["from_count", "manual"]),
       sourceCountOperationId: z.number().optional(),
