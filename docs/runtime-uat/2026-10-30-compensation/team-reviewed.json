@@ -1,0 +1,66 @@
+{
+  "assignment": {
+    "id": 30001,
+    "ticketId": 2070004,
+    "ticketItemId": 270004,
+    "ticketNumber": "MT-2026-00644-01",
+    "title": "احتياج تجريبي لتعويض المرتجع",
+    "teamId": 2,
+    "warehouseId": 30002,
+    "responsibleManagerId": 19080005,
+    "location": {
+      "siteId": 390001,
+      "sectionId": 150011
+    },
+    "stage": "closed",
+    "outcome": "fixed",
+    "revision": 9,
+    "materialRound": 1,
+    "assignedById": 60723
+  },
+  "needs": [
+    {
+      "id": 30001,
+      "assignmentId": 30001,
+      "catalogItemId": 180213,
+      "name": "سكين معجون بيد بلاستيك 10 انش",
+      "originalName": "سكين معجون بيد بلاستيك 10 انش",
+      "unit": "قطعة",
+      "requested": 4,
+      "used": null,
+      "requestedById": 60723,
+      "warehouseId": 30002,
+      "round": 1
+    }
+  ],
+  "deliveries": [
+    {
+      "id": 1,
+      "needId": 30001,
+      "deliveryId": 390005,
+      "deliveryNumber": "DLV-2026-480005",
+      "lotId": 150007,
+      "inventoryTransactionId": 660022,
+      "quantity": 6,
+      "receivedById": 60723,
+      "used": 5,
+      "returned": 1,
+      "originalEquivalent": 4,
+      "replacementPlanId": 5,
+      "replacementName": "فرشاة دهان يد خشب",
+      "physicalUnit": "قطعة",
+      "physicalCatalogItemId": 180228
+    }
+  ],
+  "returns": [
+    {
+      "id": 1,
+      "deliveryLinkId": 1,
+      "sourceDeliveryId": 390005,
+      "returnId": 240008,
+      "returnNumber": "RTN-2026-240008",
+      "quantity": 1,
+      "actorId": 60723
+    }
+  ]
+}

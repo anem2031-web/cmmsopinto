@@ -160,7 +160,7 @@ export const pmv2TechnicianRouter = router({
       catalogItemId: z.number().int().positive().nullable(),
       unlistedItemName: z.string().trim().max(300).optional(),
       quantity: z.number().positive(),
-      unit: z.string().trim().min(1).max(50),
+      unit: z.string().trim().max(50).optional(),
     }).superRefine((value, ctx) => {
       if (value.catalogItemId == null && !value.unlistedItemName?.trim()) {
         ctx.addIssue({
@@ -290,6 +290,7 @@ export const pmv2TechnicianRouter = router({
       materialUsages: z.array(z.object({
         catalogItemId: z.number().int().positive(),
         usedQuantity: z.number().min(0),
+        physicalUsages: z.array(z.object({ deliveryDocumentId:z.number().int().positive(),usedQuantity:z.number().min(0) })).max(500).optional(),
       })).max(30).optional(),
     }))
     .mutation(async ({ ctx, input }) => {

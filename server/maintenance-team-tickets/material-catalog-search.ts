@@ -50,8 +50,8 @@ export function rankTicketMaterialCandidates(items: CatalogItemCandidateInput[],
 }
 
 /** One metadata read; shortlist before the two batched stock reads. No global snapshot/cache. */
-export async function searchTicketMaterialCatalog(search: string, limit: number): Promise<Candidate[]> {
-  const [{ getDb }, { catalogItems }, { asc, eq }] = await Promise.all([
+export async function searchTicketMaterialCatalog(search: string, limit: number, catalogItemId?: number): Promise<Candidate[]> {
+  const [{ getDb }, { catalogItems }, { asc, eq, and }] = await Promise.all([
     import("../_core/db/client"), import("../../drizzle/schema"), import("drizzle-orm"),
   ]);
   const db = await getDb();
@@ -59,7 +59,8 @@ export async function searchTicketMaterialCatalog(search: string, limit: number)
   const query = db.select({ id: catalogItems.id, code: catalogItems.code,
     nameAr: catalogItems.nameAr, nameEn: catalogItems.nameEn, unit: catalogItems.unit,
     manufacturer: catalogItems.manufacturer,
-  }).from(catalogItems).where(eq(catalogItems.isActive, 1)).orderBy(asc(catalogItems.nameAr), asc(catalogItems.id));
+  }).from(catalogItems).where(and(eq(catalogItems.isActive, 1), catalogItemId == null ? undefined : eq(catalogItems.id, catalogItemId))).orderBy(asc(catalogItems.nameAr), asc(catalogItems.id));
+  if (catalogItemId != null) return query.limit(1);
   const size = Math.min(30, Math.max(1, Math.trunc(limit) || 30));
   if (!search.trim()) return query.limit(size);
   return rankTicketMaterialCandidates(await query, search, size);

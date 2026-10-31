@@ -21,12 +21,18 @@ export interface PhysicalDelivery {
   quantity: number;
   unit: string;
   receivedById: number;
+  originalEquivalent?: number;
+  replacementName?: string;
+  replacementPlanId?: number;
 }
 export interface SupplyResult {
   sourceId: number;
   sourceNumber: string;
   quantity: number;
   status: "pending" | "received";
+  originalEquivalent?: number;
+  physicalUnit?: string;
+  replacementName?: string;
 }
 /**
  * Production uses existing inventory writers inside the aggregate transaction.
@@ -34,6 +40,9 @@ export interface SupplyResult {
  * do not establish live database atomicity.
  */
 export interface MaterialGateway {
+  replacementContext?(needId: number): Promise<boolean>;
+  issueNeed?(needId: number, input: Parameters<MaterialGateway["issue"]>[0]): Promise<PhysicalDelivery[]>;
+  transferNeed?(needId: number, input: Parameters<MaterialGateway["transfer"]>[0]): Promise<SupplyResult[]>;
   sourceInventoryId?(
     warehouseId: number,
     catalogItemId: number
@@ -83,6 +92,7 @@ export interface MaterialGateway {
     unit: string;
     receiverId: number;
     location: LocationRef;
+    lotIds?: number[];
   }): Promise<PhysicalDelivery[]>;
   transfer(input: {
     operationKey: string;
@@ -90,6 +100,7 @@ export interface MaterialGateway {
     catalogItemId: number;
     quantity: number;
     unit: string;
+    lotIds?: number[];
   }): Promise<SupplyResult | SupplyResult[]>;
   purchase(input: {
     operationKey: string;

@@ -9,7 +9,7 @@ import ur from "@/i18n/ur";
 import type { MaterialIdentityCandidate } from "@shared/catalog-material-identity";
 
 /** Extracted PMV2 identity dialog, shared without task/ticket API coupling. */
-export function MaterialIdentityDialog({ open, onClose, language, originalName, requestedQuantity, unit, referenceNumber, itemTitle, referenceLabel, search, onSearch, items, selectedId, onSelect, onConfirm, loading, error, busy, allowDifferentUnits = false, onOpenCatalog = () => window.open("/catalog", "_blank", "noopener,noreferrer") }: {
+export function MaterialIdentityDialog({ open, onClose, language, originalName, requestedQuantity, unit, referenceNumber, itemTitle, referenceLabel, search, onSearch, items, selectedId, onSelect, onConfirm, loading, error, busy, allowDifferentUnits = false, quantityApproval, lockCatalogSelection = false, onOpenCatalog = () => window.open("/catalog", "_blank", "noopener,noreferrer") }: {
   open: boolean; onClose: () => void; language: string;
   originalName: string; requestedQuantity: number | null | undefined; unit: string | null | undefined;
   referenceNumber: string; itemTitle: string; referenceLabel?: string;
@@ -17,6 +17,8 @@ export function MaterialIdentityDialog({ open, onClose, language, originalName, 
   selectedId: number | null; onSelect: (id: number) => void; onConfirm: () => void;
   loading: boolean; error?: { message: string } | null; busy: boolean; onOpenCatalog?: () => void;
   allowDifferentUnits?: boolean;
+  quantityApproval?: { value: string; onChange: (value: string) => void; step?: number; validate?: (quantity: number) => string | null };
+  lockCatalogSelection?: boolean;
 }) {
   const t = language === "ar" ? ar : language === "ur" ? ur : en;
   const dir = language === "en" ? "ltr" : "rtl";
@@ -26,13 +28,21 @@ export function MaterialIdentityDialog({ open, onClose, language, originalName, 
   const localizedName = (value: MaterialIdentityCandidate) => language === "ar" ? value.nameAr || value.nameEn || "—" : value.nameEn || value.nameAr || "—";
   const selectedItem = items.find(item => item.id === selectedId) ?? null;
   const l = (ar: string, en: string, ur: string) => language === "ar" ? ar : language === "ur" ? ur : en;
+  const approvedQuantity = quantityApproval ? Number(quantityApproval.value) : null;
+  const quantityError = quantityApproval
+    ? quantityApproval.validate
+      ? quantityApproval.validate(Number(approvedQuantity))
+      : !Number.isSafeInteger(approvedQuantity) || Number(approvedQuantity) <= 0
+        ? l("أدخل كمية صحيحة أكبر من صفر", "Enter a positive whole quantity", "صفر سے بڑی صحیح مقدار درج کریں") : null
+    : null;
+  const validApproval = !quantityApproval || (!!selectedItem?.unit?.trim() && quantityApproval.value.trim() !== "" && Number.isFinite(approvedQuantity) && Number(approvedQuantity) > 0 && !quantityError && !loading && !error);
   return (
 <Dialog open={open} onOpenChange={next => { if (!next && !busy) onClose(); }}>
         <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto" dir={dir}>
           <DialogHeader className="text-start sm:text-start">
             <DialogTitle>{t.workflow.pmv2.identifyFromCatalog}</DialogTitle>
             <DialogDescription>
-              {t.workflow.pmv2.identityDialogHelp}
+              {quantityApproval ? l("اختر الصنف وراجع الكمية بوحدته المعتمدة في الكتالوج قبل التأكيد.", "Select the item and review the quantity in its catalog unit before confirming.", "تصدیق سے پہلے صنف منتخب کرکے کیٹلاگ کی اکائی میں مقدار کا جائزہ لیں۔") : t.workflow.pmv2.identityDialogHelp}
             </DialogDescription>
           </DialogHeader>
 
@@ -43,7 +53,7 @@ export function MaterialIdentityDialog({ open, onClose, language, originalName, 
               <p className="mt-1"><span className="text-muted-foreground">{referenceLabel ?? t.workflow.pmv2.taskLabelWh}:</span> {referenceNumber || "—"} · {itemTitle || "—"}</p>
             </div>
 
-            <div className="space-y-2">
+            {!lockCatalogSelection && <div className="space-y-2">
               <div className="flex flex-col gap-2 sm:flex-row">
                 <div className="relative flex-1">
                   <Search className={`absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ${dir === "rtl" ? "right-3" : "left-3"}`} />
@@ -65,7 +75,7 @@ export function MaterialIdentityDialog({ open, onClose, language, originalName, 
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">{t.workflow.pmv2.identitySearchIndependent}</p>
-            </div>
+            </div>}
 
             {loading ? (
               <div className="flex items-center justify-center gap-2 rounded-md border py-8 text-sm text-muted-foreground">
@@ -92,6 +102,7 @@ export function MaterialIdentityDialog({ open, onClose, language, originalName, 
                       type="button"
                       className={`w-full rounded-md border p-3 text-start transition ${selected ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}
                       onClick={() => onSelect(Number(candidate.id))}
+                      disabled={busy || (lockCatalogSelection && !selected)}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
@@ -128,7 +139,20 @@ export function MaterialIdentityDialog({ open, onClose, language, originalName, 
                   original: originalName || "—",
                   item: `${localizedName(selectedItem)}${selectedItem.code ? ` — ${selectedItem.code}` : ""}`,
                 })}
-                {allowDifferentUnits && unit && selectedItem.unit && unit !== selectedItem.unit && <p className="mt-2">
+                {quantityApproval && <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1">
+                    <span>{l("وحدة الكتالوج المعتمدة", "Catalog unit", "کیٹلاگ کی منظور شدہ اکائی")}</span>
+                    <Input aria-label={l("وحدة الكتالوج المعتمدة", "Catalog unit", "کیٹلاگ کی منظور شدہ اکائی")} value={selectedItem.unit || ""} readOnly />
+                  </label>
+                  <label className="space-y-1">
+                    <span>{l("الكمية المعتمدة بوحدة الكتالوج", "Approved quantity in catalog units", "کیٹلاگ کی اکائی میں منظور شدہ مقدار")}</span>
+                    <Input aria-label={l("الكمية المعتمدة بوحدة الكتالوج", "Approved quantity in catalog units", "کیٹلاگ کی اکائی میں منظور شدہ مقدار")} type="number" min={quantityApproval.step ?? 1} step={quantityApproval.step ?? 1} value={quantityApproval.value} disabled={busy} onChange={event => quantityApproval.onChange(event.target.value)} aria-invalid={!validApproval} />
+                  </label>
+                  <p className="text-xs sm:col-span-2">{l("يعتمد المستودع الكمية بهذه الوحدة؛ لا يُطبّق تحويل تلقائي على كمية الفني.", "The warehouse approves this quantity in the displayed unit; the technician quantity is not converted automatically.", "گودام دکھائی گئی اکائی میں مقدار منظور کرتا ہے؛ فنی کی مقدار خودکار طور پر تبدیل نہیں ہوتی۔")}</p>
+                  {!selectedItem.unit?.trim() && <p role="alert" className="text-destructive sm:col-span-2">{l("وحدة الصنف غير محددة في الكتالوج؛ أكمل تعريف الوحدة من دليل المواد ثم أعد المحاولة.", "The catalog item has no unit. Define its unit in the materials catalog, then try again.", "کیٹلاگ میں صنف کی اکائی متعین نہیں۔ مواد کے کیٹلاگ میں اکائی درج کرکے دوبارہ کوشش کریں۔")}</p>}
+                  {quantityApproval.value.trim() !== "" && quantityError && <p role="alert" className="text-destructive sm:col-span-2">{quantityError}</p>}
+                </div>}
+                {!quantityApproval && allowDifferentUnits && unit && selectedItem.unit && unit !== selectedItem.unit && <p className="mt-2">
                   {l(`وحدة الاحتياج: ${unit}؛ وحدة الكتالوج: ${selectedItem.unit}. يمكن تأكيد الربط، وتبقى الكمية ووحدة الاحتياج كما أدخلها الفني دون تحويل تلقائي.`,
                     `Requested unit: ${unit}; catalog unit: ${selectedItem.unit}. Linking keeps the requested quantity and unit unchanged; no automatic conversion.`,
                     `درخواست کی اکائی: ${unit}؛ کیٹلاگ کی اکائی: ${selectedItem.unit}۔ ربط کے بعد مقدار اور اکائی تبدیل نہیں ہوگی۔`)}
@@ -152,11 +176,11 @@ export function MaterialIdentityDialog({ open, onClose, language, originalName, 
               </Button>
               <Button
                 type="button"
-                disabled={!selectedId || busy}
+                disabled={!selectedId || busy || !validApproval}
                 onClick={onConfirm}
               >
                 {busy ? <Loader2 className={dir === "rtl" ? "ml-2 h-4 w-4 animate-spin" : "mr-2 h-4 w-4 animate-spin"} /> : <Link2 className={dir === "rtl" ? "ml-2 h-4 w-4" : "mr-2 h-4 w-4"} />}
-                {t.workflow.pmv2.confirmIdentity}
+                {quantityApproval ? l("تأكيد الربط واعتماد الكمية", "Confirm link and approve quantity", "ربط کی تصدیق اور مقدار منظور کریں") : t.workflow.pmv2.confirmIdentity}
               </Button>
             </div>
           </DialogFooter>

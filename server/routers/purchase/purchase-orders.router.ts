@@ -26,6 +26,7 @@ import { generatePurchaseRequestPDF } from "../../services/export/exportService"
 import { storagePut } from "../../_core/storage";
 import { prepareIdeaExecution, linkCreatedExecution, validateDirectIdeaPurchaseContext, assertNotTrackedIdeaSource } from "../../services/improvement-ideas/execution";
 import { findKnownInactiveCatalogUnitNames } from "../../_core/catalog-unit-governance";
+import { assertPurchaseCatalogBaseUnits } from "../../services/purchase-catalog-units";
 import { assertCanViewPurchaseOrder, filterVisiblePurchaseOrders, assertCanPerformPOAction, assertCanPerformItemPOAction, assertPOItemAssignedToDelegate, isItemAssignedToPODelegate, assertCanPerformItemStatusPOAction, assertCanResolveReturnedPOItem, assertCanRequestDelegateChange, assertCanResolveDelegateChange } from "../../_core/authz/guard";
 import { OWN_REQUESTS_ONLY_ROLES } from "../../_core/authz/policy";
 import { computeActionablePOs, getDelegateItemActionMode } from "./actionable";
@@ -1282,6 +1283,7 @@ export const purchaseOrdersRouter = router({
     const poNumber = await db.getNextDraftNumber();
     // ✅ إصلاح حرج #5: نفس مبدأ create() — إنشاء الرأس والبنود معاً ضمن معاملة واحدة
     const poId = await db.withTransaction(async (tx: any) => {
+      await assertPurchaseCatalogBaseUnits(tx, input.items);
       const idea = input.fromIdeaId ? await prepareIdeaExecution(tx, input.fromIdeaId, ctx.user, purchaseContext) : null;
       const newPoId = await db.createPurchaseOrder({
         poNumber,
@@ -1447,6 +1449,10 @@ export const purchaseOrdersRouter = router({
       if (input.items.some(item => item.id != null && !existingIds.has(item.id))) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "أحد الأصناف لا ينتمي إلى طلب الشراء" });
       }
+      await assertPurchaseCatalogBaseUnits(tx, input.items.filter(item => {
+        const existing = currentItems.find((entry: any) => entry.id === item.id);
+        return !existing || !["cancelled", "rejected"].includes(existing.status);
+      }), currentItems);
       await validateDirectIdeaPurchaseContext(tx, input.id, purchaseContext);
       await db.updatePurchaseOrder(input.id, { notes: input.notes || null, ...purchaseContext }, tx);
       const submittedIds = new Set(input.items.filter(item => item.id).map(item => item.id!));
@@ -1546,6 +1552,7 @@ export const purchaseOrdersRouter = router({
     let ticketTeamCreated = true;
     try {
       poId = await db.withTransaction(async (tx: any) => {
+        await assertPurchaseCatalogBaseUnits(tx, input.items);
         const replacement = input.supplierReturnPlanId
           ? await (await import("../../supplier-return-followup/purchase-bridge")).prepareReplacementPurchase(tx, ctx.user, input.supplierReturnPlanId, {
               ticketId: input.ticketId, ticketItemId: input.ticketItemId, items: input.items, context: purchaseContext,

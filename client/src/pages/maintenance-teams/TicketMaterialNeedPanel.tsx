@@ -144,16 +144,13 @@ export function TicketMaterialNeedPanel({
   const [selected, setSelected] = useState<TicketCatalogCandidate | null>(null);
   const [name, setName] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [unit, setUnit] = useState("");
   const [confirmation, setConfirmation] = useState<NeedInput | null>(null);
   const catalog = trpc.ticketTeamExecution.catalog.useQuery(
     { assignmentId, search },
     { enabled: formOpen && mode === "catalog", retry: false }
   );
   const parsedQuantity = Number(quantity);
-  const units = trpc.ticketTeamExecution.units.useQuery({ assignmentId }, {
-    enabled: formOpen && mode === "unlisted", retry: false,
-  });
+  const unit = mode === "catalog" ? selected?.unit ?? "" : "";
   const validQuantity =
     quantity.trim() !== "" &&
     Number.isSafeInteger(parsedQuantity) &&
@@ -168,16 +165,14 @@ export function TicketMaterialNeedPanel({
   const input: NeedInput = {
     ...(mode === "catalog" && selected ? { catalogItemId: selected.id } : {}),
     name: mode === "catalog" ? selected?.name : name.trim(),
-    unit: unit.trim(),
+    ...(mode === "catalog" ? { unit } : {}),
     quantity: validQuantity ? parsedQuantity : 1,
   };
   const canRegister =
     validQuantity &&
-    !!unit.trim() &&
     !duplicate &&
     currentNeeds.length < 20 &&
-    (mode === "catalog" ? !!selected : !!name.trim() && !units.error &&
-      !!units.data?.some(value => value.nameAr === unit));
+    (mode === "catalog" ? !!selected && !!unit.trim() : !!name.trim());
   const preview = trpc.ticketTeamExecution.preview.useQuery(
     { assignmentId, needs: [input] },
     {
@@ -195,7 +190,6 @@ export function TicketMaterialNeedPanel({
   const reset = () => {
     setSelected(null);
     setName("");
-    setUnit("");
     setQuantity("");
     setSearch("");
     setConfirmation(null);
@@ -231,7 +225,7 @@ export function TicketMaterialNeedPanel({
         <>
           <TicketMaterialCatalogPicker
             items={catalog.data ?? []} selected={selected} search={search}
-            onSearch={setSearch} onSelect={item => { setSelected(item); setUnit(item.unit); }}
+            onSearch={setSearch} onSelect={setSelected}
             blockedIds={currentNeeds.flatMap(n => n.catalogItemId == null ? [] : [n.catalogItemId])}
             loading={catalog.isFetching} disabled={busy} language={language}
           />
@@ -272,9 +266,9 @@ export function TicketMaterialNeedPanel({
           />
           <p className="text-xs text-muted-foreground">
             {l(
-              "يُحفظ وصفك ويُرسل للمستودع للتعرف على الصنف وربطه بالدليل.",
-              "Your description is sent to the warehouse to identify and link the catalog item.",
-              "آپ کی تفصیل گودام کو کیٹلاگ سے شناخت اور ربط کے لیے بھیجی جاتی ہے۔"
+              "يُرسل الوصف والكمية للمستودع لتحديد الصنف واعتماد الكمية بوحدة الكتالوج.",
+              "The warehouse identifies the item and approves the quantity in its catalog unit.",
+              "گودام صنف کی شناخت کرکے کیٹلاگ کی اکائی میں مقدار منظور کرے گا۔"
             )}
           </p>
           <Button
@@ -301,32 +295,15 @@ export function TicketMaterialNeedPanel({
           disabled={busy}
           onChange={e => setQuantity(e.target.value)}
         />
-        {mode === "unlisted" ? <select
-          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-          aria-label={t.unitPlaceholder}
-          value={unit}
-          disabled={busy || units.isFetching || !!units.error}
-          onChange={e => setUnit(e.target.value)}
-        >
-          <option value="">{l("اختر الوحدة", "Choose unit", "اکائی منتخب کریں")}</option>
-          {(units.data ?? []).map(value => <option key={value.id} value={value.nameAr}>
-            {language === "ar" ? value.nameAr : value.nameEn || value.nameAr}
-          </option>)}
-        </select> : <Input
+        {mode === "catalog" && <Input
           aria-label={t.unitPlaceholder}
           placeholder={t.unitPlaceholder}
           value={unit}
-          disabled={busy || mode === "catalog"}
+          readOnly
+          disabled={busy}
           maxLength={50}
-          onChange={e => setUnit(e.target.value)}
         />}
       </div>
-      {mode === "unlisted" && units.error && <div role="alert" className="text-xs text-destructive">
-        {l("تعذر تحميل الوحدات", "Unable to load units", "اکائیاں لوڈ نہیں ہو سکیں")}
-        <Button type="button" variant="link" size="sm" onClick={() => void units.refetch()}>
-          {l("إعادة المحاولة", "Retry", "دوبارہ کوشش")}
-        </Button>
-      </div>}
       {duplicate && (
         <p role="alert" className="text-xs text-destructive">
           {t.alreadyRequested}

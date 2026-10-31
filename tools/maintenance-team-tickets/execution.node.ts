@@ -23,6 +23,7 @@ import { createTicketTeamExecutionRouter } from "../../server/routers/maintenanc
 import { TICKET_TEAM_EXECUTION_OVERRIDE_ROLES } from "../../shared/maintenance-team-tickets/execution-permissions";
 import { TICKET_MATERIAL_REQUEST_EVENT } from "../../shared/maintenance-team-tickets/warehouse-navigation";
 import { createTicketMaterialPurchase } from "../../server/routers/maintenance-teams/purchase-form";
+import { router as rpcRouter } from "../../server/routers/_shared/procedures";
 
 const dialect = new MySqlDialect();
 const tech = { id: 3, role: "technician", active: true };
@@ -726,6 +727,19 @@ test("new needs and delivery links use real auto IDs rather than domain temporar
   assert.equal(delivery.params[1], 77);
   assert.equal(delivery.params[3], 88);
 });
+test("existing need identity review persists approved unit and quantity without overwriting technician source", async () => {
+  const before = await snapshot(), a = before.assignments[0];
+  before.needs.push({ id: 900, assignmentId: a.id, catalogItemId: 101, name: "Linked", originalName: "وصف الفني الأصلي", unit: "حبة قديمة", requested: 3, used: null, requestedById: 3, warehouseId: 20, round: 1 });
+  const state = structuredClone(before); state.assignments[0].revision++;
+  Object.assign(state.needs[0], { name: "قاطع كهربائي", unit: "قطعة", requested: 8 });
+  const h = harness();
+  await persistExecution(h.tx, before, state, warehouse);
+  const update = h.writes.find(q => q.text.startsWith("UPDATE ticket_team_material_needs"))!;
+  assert.ok(update.text.includes("unitSnapshot=?")); assert.ok(update.text.includes("requestedQuantity=?"));
+  assert.deepEqual(update.params, [101, "قاطع كهربائي", "قطعة", 8, null, 900, a.id]);
+  assert.ok(!update.text.includes("originalItemName=")); assert.ok(!update.text.includes("requestedById="));
+  assert.equal(state.needs[0].originalName, before.needs[0].originalName);
+});
 
 function stockGateway(
   s: Snapshot,
@@ -1171,6 +1185,9 @@ test("execution router uses authenticated actor, rejects forged actor input and 
     calls++;
     return demo.service;
   });
+  // Match the production namespace so the central technician RPC guard is
+  // exercised before the injected domain service, rather than a bare subrouter.
+  const app = rpcRouter({ ticketTeamExecution: r });
   const ctx = (id: number, role: string): any => ({
     user: { id, role, isActive: 1 },
     req: { ip: "test", get: () => "test" },
@@ -1185,18 +1202,18 @@ test("execution router uses authenticated actor, rejects forged actor input and 
     usages: [],
   };
   await assert.rejects(
-    r.createCaller(ctx(3, "technician")).outcome({ ...c, actorId: 1 } as any)
+    app.createCaller(ctx(3, "technician")).ticketTeamExecution.outcome({ ...c, actorId: 1 } as any)
   );
   assert.equal(calls, 0);
   await assert.rejects(
-    r.createCaller(ctx(9, "accountant")).details({ assignmentId: a.id })
+    app.createCaller(ctx(9, "accountant")).ticketTeamExecution.details({ assignmentId: a.id })
   );
   assert.equal(calls, 0);
   await assert.rejects(
-    r.createCaller(ctx(5, "technician")).outcome(c),
+    app.createCaller(ctx(5, "technician")).ticketTeamExecution.outcome(c),
     /فريقك/
   );
-  await r.createCaller(ctx(3, "technician")).outcome(c);
+  await app.createCaller(ctx(3, "technician")).ticketTeamExecution.outcome(c);
   assert.equal((await demo.store.read()).actions.at(-1)?.actorId, 3);
 });
 test("material requests notify active warehouse users with the consolidated-tab event; other outcomes retain team routing", async () => {
@@ -1219,6 +1236,8 @@ test("material requests notify active warehouse users with the consolidated-tab 
   const tx = {
     execute: async (query: any) => {
       const q = dialect.sqlToQuery(query);
+      if (q.sql.startsWith("SELECT maintenanceResponsibleDepartment,assignedToId,reportedById FROM tickets"))
+        return [[{ maintenanceResponsibleDepartment: "maintenance_report_department_general", assignedToId: null, reportedById: null }], []];
       if (q.sql.startsWith("SELECT")) {
         assert.match(q.sql, /isActive=1 AND role='warehouse'/);
         return [[{ id: 2 }], []];
@@ -1495,6 +1514,7 @@ test("legacy purchase synchronization cannot regress team result, while named sy
         readTeamTicketExecution: async () =>
           team ? { id: 1, stage: "closed" } : undefined,
         derivePathBTicketPurchaseStatus: () => "work_approved",
+        activePathBItemsAfterReplacement: async (items: any[]) => items,
       };
       const fn = new Function(...Object.keys(deps), `${js}\nreturn ${name};`)(
         ...Object.values(deps)

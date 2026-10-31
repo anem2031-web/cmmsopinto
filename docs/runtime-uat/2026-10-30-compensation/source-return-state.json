@@ -1,0 +1,25 @@
+{
+  "environment": "copycmms2",
+  "entries": [
+    {
+      "kind": "team",
+      "originalOrderId": 3810005,
+      "alternativeId": 180228,
+      "caseId": 6,
+      "returnId": 240006,
+      "accepted": true,
+      "planId": 5,
+      "replacementOrderId": 3810008
+    },
+    {
+      "kind": "pmv2",
+      "originalOrderId": 3810007,
+      "alternativeId": 180302,
+      "caseId": 7,
+      "returnId": 240007,
+      "accepted": true,
+      "planId": 6,
+      "replacementOrderId": 3810009
+    }
+  ]
+}

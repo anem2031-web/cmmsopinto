@@ -1,0 +1,18 @@
+{
+  "originalQuantity": 4,
+  "originalCatalogItemId": 180300,
+  "physicalIssued": 6,
+  "physicalUsed": 5,
+  "physicalReturned": 1,
+  "actualCatalogItemId": 180302,
+  "actualUnit": "قطعة",
+  "deliveryDocumentIds": [
+    390006
+  ],
+  "transferNumbers": [
+    "TRF-2026-120002"
+  ],
+  "returnIds": [
+    240009
+  ]
+}

@@ -1273,6 +1273,7 @@ export async function issueDelivery(params: {
   operationalIssueItemId?: number;
   operationalOperationKey?: string;
   operationalBatchKey?: string;
+  operationalReplacementAware?: boolean;
   operationalRequestFingerprint?: string;
   ticketNumber?:        string;
   assignedTechnicianId?: number;

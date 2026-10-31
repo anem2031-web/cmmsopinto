@@ -34,6 +34,7 @@ export async function bridgeTicketExecution(
       unit: n.unit,
       used: n.used,
       requested: n.requested,
+      ...(state.deliveries.some(d => d.needId === n.id && d.replacementPlanId != null) ? { actualDeliveries: state.deliveries.filter(d => d.needId === n.id).map(d => ({ deliveryId: d.deliveryId, itemName: d.replacementName ?? n.name, quantity: d.quantity, unit: d.physicalUnit ?? n.unit, used: d.used, returned: d.returned })) } : {}),
     }));
     a.stage = "closed";
     await tx.execute(
@@ -75,6 +76,7 @@ export async function bridgeTicketExecution(
       unit: n.unit,
       used: n.used,
       requested: n.requested,
+      ...(state.deliveries.some(d => d.needId === n.id && d.replacementPlanId != null) ? { actualDeliveries: state.deliveries.filter(d => d.needId === n.id).map(d => ({ deliveryId: d.deliveryId, itemName: d.replacementName ?? n.name, quantity: d.quantity, unit: d.physicalUnit ?? n.unit, used: d.used, returned: d.returned })) } : {}),
     }));
     if (path === "C") {
       const [job] = await selectRows(

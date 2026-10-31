@@ -1,6 +1,9 @@
 import React from "react";
 // Financial reads are verified separately; retain this fixture's warehouse-only boundary.
 vi.mock("../../client/src/components/inventory/MaterialCostPanel", () => ({ MaterialCostPanel: () => null }));
+// External route review has its own permission tests; this stock-only fixture
+// must not load its authentication query or any live environment.
+vi.mock("../../client/src/pages/tickets/ExternalRouteReviewPanel", () => ({ ExternalRouteReviewPanel: () => null }));
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDemo } from "../../server/maintenance-team-tickets/testing/fixture";
@@ -16,6 +19,7 @@ const fixture = vi.hoisted(() => ({
   navigate: vi.fn(),
   prepare: vi.fn(),
   issue: vi.fn(),
+  provide: vi.fn(),
   selectors: new Map<string, any>(),
 }));
 function captureSelect(type: any, props: any) {
@@ -95,6 +99,7 @@ vi.mock("../../client/src/lib/trpc", () => ({
         ticketTeamExecution: {
           prepareSupply: { mutate: fixture.prepare },
           issue: { mutate: fixture.issue },
+          provide: { mutate: fixture.provide },
         },
       },
       ticketTeamExecution: { balances: { invalidate: vi.fn() } },
@@ -123,6 +128,7 @@ vi.mock("../../client/src/lib/trpc", () => ({
 }));
 import { WarehousePurchaseQuantities } from "../../client/src/pages/maintenance-teams/WarehousePurchaseQuantities";
 import { ExecutionPanel } from "../../client/src/pages/maintenance-teams/ExecutionPanel";
+import { TicketExecutionControls } from "../../client/src/pages/maintenance-teams/TicketExecutionControls";
 
 beforeEach(() => {
   fixture.hooks = [];
@@ -133,6 +139,7 @@ beforeEach(() => {
   fixture.navigate.mockReset();
   fixture.prepare.mockReset();
   fixture.issue.mockReset();
+  fixture.provide.mockReset();
   fixture.selectors.clear();
   fixture.balances = [{ needId: 12, branch: 0, main: 0 }];
   vi.stubGlobal("window", { location: { assign: fixture.navigate } });
@@ -226,6 +233,32 @@ function panel(
   );
 }
 describe("warehouse extra quantity with isolated UI/API boundaries", () => {
+  it("shows actual replacement delivery usage separately from the retained original need", async () => {
+    await initPanel(); fixture.state.assignments[0].stage = "ready_to_repair";
+    fixture.state.deliveries = [{ id: 1, needId: 12, deliveryId: 91, deliveryNumber: "DLV-ACTUAL", lotId: 14,
+      quantity: 6, returned: 0, used: null, originalEquivalent: 5, replacementPlanId: 9, replacementName: "صنف بديل", physicalUnit: "متر" }];
+    fixture.index = 0;
+    const html = renderToStaticMarkup(<TicketExecutionControls state={fixture.state} assignment={fixture.state.assignments[0]} actorId={3} language="ar" busy={false}
+      onStart={async () => true} onEndVisit={async () => true} onNeedsMaterial={async () => true} onOutcome={async () => true} />);
+    expect(html).toContain("حساس"); expect(html).toContain("صنف بديل"); expect(html).toContain("6 متر");
+    expect(fixture.inputs.has("physical-used-91")).toBe(true);
+    expect(fixture.inputs.has("used-12")).toBe(false);
+    expect(fixture.inputs.get("physical-used-91").max).toBe(6);
+  });
+  it("transfers approved replacement segments through the guarded aggregate action without trusting URL stock allocations", async () => {
+    await initPanel();
+    fixture.balances = [{ needId: 12, branch: 0, main: 8 }];
+    const response = await fixture.prepare();
+    fixture.prepare.mockClear(); fixture.prepare.mockResolvedValue({ ...response, replacementFulfillment: true, revision: 19 });
+    fixture.provide.mockResolvedValue({ revision: 20 });
+    panel("warehouse", "warehouse", true);
+    fixture.buttons.get("تحويل النقص إلى مخزن الفريق — ٥ حبة").onClick();
+    await vi.waitFor(() => expect(fixture.provide).toHaveBeenCalledOnce());
+    expect(fixture.provide.mock.calls[0][0]).toMatchObject({ assignmentId: fixture.state.assignments[0].id, needId: 12, kind: "transfer", expectedRevision: 19 });
+    expect(fixture.provide.mock.calls[0][0].operationKey).toMatch(/^mtt:/);
+    expect(fixture.provide.mock.calls[0][0]).not.toHaveProperty("allocations");
+    expect(fixture.navigate).not.toHaveBeenCalled();
+  });
   it("transfer uses the PMV2 primary button and keeps ticket linkage and full shortage, without the storage extra", async () => {
     await initPanel();
     fixture.balances = [{ needId: 12, branch: 0, main: 8 }];

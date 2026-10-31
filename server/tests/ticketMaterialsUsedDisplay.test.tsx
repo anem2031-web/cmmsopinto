@@ -32,6 +32,11 @@ describe("Existing materials snapshots are displayed as names and actual usage",
   it("ignores prose translations of structured data so quantities remain authoritative", () => {
     expect(formatTicketMaterialsUsed(materials, "Used 300 brushes")).toBe("فرشاة تنظيف المكيفات — 2 قطعة");
   });
+  it("shows physical replacement usage and returns without inventing original usage", () => {
+    const value=JSON.stringify([{name:"سكين",requested:4,unit:"قطعة",used:null,actualDeliveries:[{itemName:"فرشاة",quantity:6,unit:"قطعة",used:5,returned:1}]}]);
+    expect(formatTicketMaterialsUsed(value,"stale", "غير محدد")).toBe("الاحتياج الأصلي: سكين (4 قطعة)\nفرشاة — المستخدم: 5 قطعة · المرتجع: 1 قطعة");
+    expect(formatTicketMaterialsUsed(value,undefined,"Unspecified","en")).toContain("Used: 5 قطعة · Returned: 1 قطعة");
+  });
   it.each([null, undefined, "", "   ", "[]"])("does not display an empty material section for %s", value => {
     expect(formatTicketMaterialsUsed(value, "stale translated text")).toBe("");
   });
@@ -64,7 +69,7 @@ function renderField(original: string | null, language = "ar", translations?: an
   function Field() {
     const { getField } = useResolvedTranslation("TICKET", 1, ticket, ticket.originalLanguage);
     if (!declaration || !expression) throw new Error("Actual materials field block not found");
-    return vm.runInNewContext(compiled, { React, ticket, getField, formatTicketMaterialsUsed, t: language === "en" ? en : language === "ur" ? ur : ar });
+    return vm.runInNewContext(compiled, { React, ticket, getField, formatTicketMaterialsUsed, language, t: language === "en" ? en : language === "ur" ? ur : ar });
   }
   return renderToStaticMarkup(<Field />);
 }

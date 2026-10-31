@@ -97,6 +97,8 @@ export function PreparedDispatchPanel({
               {text.requested}: {line.quantity} {line.unit} · {text.issued}:{" "}
               {line.issuedQuantity} {line.unit}
             </p>
+            {stocks?.find(s => s.itemId === Number(line.id))?.fulfillment?.replacements.map(replacement =>
+              <p key={replacement.planId} className="text-sm text-primary">{t.replacement}: <a className="underline" href={`/purchase-orders/${replacement.purchaseOrderId}`}>{replacement.itemName}</a> — {replacement.quantity} {replacement.unit}</p>)}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
               <p>
                 {text.warehouse}: {context.warehouseName}
@@ -120,7 +122,7 @@ export function PreparedDispatchPanel({
               <p className="text-xs text-muted-foreground">
                 {t.current}:{" "}
                 {allocations[index]!.map(
-                  l => `${l.lotCode} (${l.quantity} ${line.unit})`
+                  l => `${l.replacementName ? `${l.replacementName} · ` : ""}${l.lotCode} (${l.quantity} ${l.unit})`
                 ).join(" · ")}
               </p>
             )}

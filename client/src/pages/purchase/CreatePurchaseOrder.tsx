@@ -1152,7 +1152,7 @@ const handleCatalogSelect = (catalogItem: any) => {
           <Select
             value={item.unit}
             onValueChange={value => updateItem(idx, "unit", value)}
-            disabled={(isMaterialBoundItem && Boolean(materialResolvedCatalogUnit)) || isReturnReplacement}
+            disabled={(item.sourceType === "catalog" && item.catalogItemId != null) || (isMaterialBoundItem && Boolean(materialResolvedCatalogUnit)) || isReturnReplacement}
           >
             <SelectTrigger
               id={`purchase-item-${idx}-unit`}
@@ -1160,7 +1160,11 @@ const handleCatalogSelect = (catalogItem: any) => {
               aria-invalid={Boolean(itemErrors.unit)}
               className={cn(itemErrors.unit && "border-destructive focus:ring-destructive")}
             >
-              <SelectValue placeholder={t.purchaseOrders.unit} />
+              <SelectValue placeholder={t.purchaseOrders.unit}>
+                {item.sourceType === "catalog" && item.catalogItemId != null && item.unit
+                  ? getLocalizedCatalogUnitName(item.unit, catalogUnits as any[] | undefined, language)
+                  : undefined}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {(catalogUnits || []).map((u: any) => (

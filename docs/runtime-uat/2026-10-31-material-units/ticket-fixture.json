@@ -1,0 +1,38 @@
+{
+  "label": "TEST-MATERIAL-UNITS-2026-10-31T12:44:23.713Z",
+  "parentTicketId": 2070005,
+  "taskId": 210002,
+  "assignmentId": 30002,
+  "ticketId": 2070006,
+  "ticketNumber": "MT-2026-00645-01",
+  "needId": 30002,
+  "catalogNeedId": 30003,
+  "catalogUnit": "قطعة",
+  "approvedNeed": {
+    "id": 30002,
+    "assignmentId": 30002,
+    "catalogItemId": 180228,
+    "name": "فرشاة دهان يد خشب",
+    "originalName": "TEST مادة كتبها الفني دون وحدة",
+    "unit": "قطعة",
+    "requested": 1,
+    "used": null,
+    "requestedById": 60723,
+    "warehouseId": 30002,
+    "round": 1
+  },
+  "revision": 3,
+  "deliveries": [],
+  "balances": [
+    {
+      "needId": 30002,
+      "branch": 1,
+      "main": 0
+    },
+    {
+      "needId": 30003,
+      "branch": 0,
+      "main": 0
+    }
+  ]
+}

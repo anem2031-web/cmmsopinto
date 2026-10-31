@@ -207,26 +207,25 @@ beforeEach(() => {
   });
 });
 describe("ticket needs-material interactions at mocked boundaries", () => {
-  it("uses assigned active-unit choices only for unlisted items, retaining canonical Arabic values in English", async () => {
+  it("unlisted input asks only name and quantity and never loads or sends a unit", async () => {
     render();
-    expect(fixture.queries.filter(q => q.endpoint === "units").every(q => !q.options.enabled)).toBe(true);
     await click(`${t().materialNotFoundPrompt} ${t().registerUnlistedMaterial}`);
-    expect(render()).toContain('<select');
-    expect(fixture.queries.filter(q => q.endpoint === "units").at(-1)).toMatchObject({ input: { assignmentId: 12 }, options: { enabled: true } });
+    expect(render()).not.toContain('<select');
+    expect(fixture.queries.filter(q => q.endpoint === "units")).toEqual([]);
+    expect(fixture.inputs.has(t().unitPlaceholder)).toBe(false);
     type("unlisted-12", "مسمار"); type(t().requiredQuantityPlaceholder, "3");
-    type(t().unitPlaceholder, "قطعه");
-    expect(fixture.buttons.get(t().registerUnlistedAction).disabled).toBe(true);
-    type(t().unitPlaceholder, "قطعة");
-    fixture.language = "en"; const html = render();
-    expect(html).toContain('value="قطعة"'); expect(html).toContain('Piece');
+    fixture.language = "en"; render();
     await click(t().registerUnlistedAction);
-    expect(fixture.submits[0].need.unit).toBe("قطعة");
+    expect(fixture.submits[0].need).toEqual({name:"مسمار",quantity:3});
   });
-  it("unit loading or errors cannot submit an unlisted material with a missing choice", async () => {
-    render(); await click(`${t().materialNotFoundPrompt} ${t().registerUnlistedMaterial}`);
-    fixture.unitsLoading = true; render(); expect(fixture.inputs.get(t().unitPlaceholder).disabled).toBe(true);
-    fixture.unitsLoading = false; fixture.unitsError = { message: "offline" };
-    expect(render()).toContain("تعذر تحميل الوحدات"); expect(fixture.buttons.get(t().registerUnlistedAction).disabled).toBe(true);
+  it("catalog choice displays its unit read-only and updates it when the chosen item changes", () => {
+    render(); choose(101);
+    expect(fixture.inputs.get(t().unitPlaceholder)).toMatchObject({value:"قطعة",readOnly:true});
+    expect(fixture.inputs.get(t().unitPlaceholder).onChange).toBeUndefined();
+    fixture.catalog[1].unit = "كرتون";
+    choose(102);
+    expect(fixture.inputs.get(t().unitPlaceholder)).toMatchObject({value:"كرتون",readOnly:true});
+    fixture.catalog[1].unit = "قطعة";
   });
   it("starts with PMV2 labels, empty quantity and catalog search; no manual list/check/submit steps", () => {
     const html = render();
@@ -291,18 +290,17 @@ describe("ticket needs-material interactions at mocked boundaries", () => {
     expect(fixture.buttons.get(t().recordNeed).disabled).toBe(true);
     expect(fixture.submits).toEqual([]);
   });
-  it("unlisted material preserves description and unit with no catalog ID or receipt confirmation", async () => {
+  it("unlisted material preserves description without choosing a unit, catalog ID or receipt confirmation", async () => {
     render();
     await click(
       `${t().materialNotFoundPrompt} ${t().registerUnlistedMaterial}`
     );
     type("unlisted-12", "وصف الفني");
     type(t().requiredQuantityPlaceholder, "3");
-    type(t().unitPlaceholder, "قطعة");
     await click(t().registerUnlistedAction);
     expect(fixture.submits).toEqual([
       {
-        need: { name: "وصف الفني", quantity: 3, unit: "قطعة" },
+        need: { name: "وصف الفني", quantity: 3 },
         confirmReceipt: false,
       },
     ]);

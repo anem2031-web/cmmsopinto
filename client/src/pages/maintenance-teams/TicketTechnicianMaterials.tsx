@@ -34,9 +34,13 @@ export function TicketTechnicianMaterials({ state, assignment: a, balances, busy
         {a.stage === "waiting_material" && left > 0 && !balance && !differentUnit && <p className="text-muted-foreground">{t.recheckingBalance}</p>}
         {differentUnit && <p className="text-amber-800">{l("تم ربط الصنف؛ وحدة الكتالوج مختلفة وتحتاج مراجعة قبل الاستلام.", "Item linked; catalog unit differs and needs review before receipt.", "صنف منسلک ہوگیا؛ وصولی سے پہلے مختلف اکائی کا جائزہ درکار ہے۔")}</p>}
         {waitingIdentity && <p className="text-amber-800">{l("بانتظار تحديد المستودع للصنف والوحدة.", "Awaiting catalog identification by the warehouse.", "گودام سے کیٹلاگ کی شناخت کا انتظار۔")}</p>}
-        {state.supplies.filter(s => s.needId === n.id).map(s => <p key={s.id}><span className="font-medium">{s.sourceNumber}</span> · {s.quantity} {n.unit}</p>)}
+        {state.supplies.filter(s => s.needId === n.id).map(s => <p key={s.id}><span className="font-medium">{s.sourceNumber}</span> · {s.quantity} {s.physicalUnit ?? n.unit}{s.replacementName && <> · {s.replacementName} ({s.originalEquivalent} {n.unit})</>}</p>)}
         {canReceive && <TicketMaterialReceiptButton name={n.name} quantity={left} unit={n.unit} warehouseName={warehouseName} language={language} busy={busy} disabled={!canReceive} onConfirm={() => onReceive(n.id)} />}
         {n.used !== null && <p>{t.usedQuantityLabel}: {n.used} {n.unit} · {l("المرتجع المعلق", "Pending return", "زیر التوا واپسی")}: {returnLeft} {n.unit}</p>}
+        {state.deliveries.filter(d => d.needId === n.id && (d.replacementName || (n.used === null && d.used !== null))).map(d => <p key={`actual-${d.id}`}>
+          {d.replacementName ?? n.name} — {d.quantity} {d.physicalUnit ?? n.unit}
+          {d.used !== null && <> · {t.usedQuantityLabel}: {d.used} · {l("المرتجع المعلق", "Pending return", "زیر التوا واپسی")}: {Math.max(0, d.quantity - d.used - d.returned)} {d.physicalUnit ?? n.unit}</>}
+        </p>)}
       </div>;
     })}
   </div>;

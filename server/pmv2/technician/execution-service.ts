@@ -55,7 +55,7 @@ type SubmitBasicResultInput = {
   taskItemId: number;
   result: BasicResult;
   note?: string;
-  materialUsages?: Array<{ catalogItemId: number; usedQuantity: number }>;
+  materialUsages?: Array<{ catalogItemId: number; usedQuantity: number; physicalUsages?:Array<{deliveryDocumentId:number;usedQuantity:number}> }>;
 };
 
 type SubmitDependencyResultInput = {
@@ -541,7 +541,7 @@ export class Pmv2TechnicianExecutionService {
         joinedVisit = true;
       }
 
-      let materialSettlement = { pendingReturnQuantity: 0, declarations: [] as any[] };
+      let materialSettlement = { pendingReturnQuantity: 0,hasPhysicalReturns:false, declarations: [] as any[] };
       if (row.itemStatus === "ready_to_complete" || resumedMaterialCompletion) {
         materialSettlement = await pmv2TeamIssueHandoffService.declareConsumptionWithDb(
           tx,
@@ -629,6 +629,7 @@ export class Pmv2TechnicianExecutionService {
         joinedVisit,
         isLeader,
         pendingReturnQuantity: materialSettlement.pendingReturnQuantity,
+        hasPhysicalReturns:materialSettlement.hasPhysicalReturns,
         materialDeclarations: materialSettlement.declarations,
         taskCompleted: taskStatus === "completed",
       };

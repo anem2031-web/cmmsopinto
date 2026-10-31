@@ -1292,6 +1292,12 @@ async function startServer() {
   const DATABASE_STARTUP_RETRY_DELAYS_MS = [5000, 10000, 20000, 30000] as const;
 
   async function startBackgroundJobsWhenDatabaseReady(attempt = 0): Promise<void> {
+    // Explicit opt-out for local acceptance runs; normal deployments keep the
+    // existing scheduling behavior when this variable is absent.
+    if (process.env.BACKGROUND_JOBS_ENABLED === "false") {
+      console.log("[Jobs] Background jobs explicitly disabled");
+      return;
+    }
     if (backgroundJobsStarted) return;
 
     try {

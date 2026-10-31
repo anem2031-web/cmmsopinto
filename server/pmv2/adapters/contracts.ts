@@ -122,6 +122,7 @@ export interface Pmv2WarehouseTransferRef {
   toWarehouseId: Pmv2ExternalId;
   fromInventoryId: Pmv2ExternalId;
   catalogItemId: Pmv2ExternalId | null;
+  inventoryLotId?: Pmv2ExternalId | null;
   quantity: number;
   unit: string | null;
   createdById: Pmv2ExternalId;

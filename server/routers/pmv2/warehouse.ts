@@ -65,6 +65,7 @@ export const pmv2WarehouseRouter = router({
     .input(z.object({
       requestItemId: z.number().int().positive(),
       catalogItemId: z.number().int().positive(),
+      requestedQuantity: z.number().positive().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       try {

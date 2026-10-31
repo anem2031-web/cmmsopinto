@@ -1,0 +1,53 @@
+{
+  "references": {
+    "teamId": 30001,
+    "siteId": 390001,
+    "sectionId": 150011,
+    "categoryId": 2,
+    "catalogItemId": 180300,
+    "unit": "قطعة",
+    "quantity": 4,
+    "date": "2026-10-30"
+  },
+  "label": "TEST-SUPPLIER-RETURN-PMV2-20261030-B",
+  "stage": "complete",
+  "checklistId": 60002,
+  "checklistItemId": 60002,
+  "programId": 60002,
+  "targetId": 60002,
+  "taskId": 180052,
+  "taskItemId": 180185,
+  "requestId": 120002,
+  "requestItemId": 120002,
+  "handoff": {
+    "requestItemId": 120002,
+    "requestId": 120002,
+    "taskId": 180052,
+    "taskItemId": 180185,
+    "taskNumber": "PMV2-20261030-P60002-T60002",
+    "catalogItemId": 180300,
+    "itemName": "مفصلة 3 سم",
+    "itemCode": "02-04-007",
+    "unit": "قطعة",
+    "unitId": 30001,
+    "requestShortageQuantity": 4,
+    "issuedToTeamQuantity": 0,
+    "remainingQuantity": 4,
+    "availableMainQuantity": 0,
+    "pendingPurchaseCoverage": 0,
+    "purchaseMinimumQuantity": 4,
+    "mainWarehouse": {
+      "id": 1,
+      "code": "WH-MAIN",
+      "nameAr": "المخزن الرئيسي",
+      "nameEn": "Main Warehouse",
+      "isActive": true
+    }
+  },
+  "purchaseOrderId": 3810007,
+  "order": {
+    "id": 3810007,
+    "poNumber": "PR-2026-210477",
+    "itemId": 3780007
+  }
+}

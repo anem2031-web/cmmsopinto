@@ -19,6 +19,7 @@ export type OperationalDelivery = {
   lotUnitCost: number; cost: number; returnedQuantity: number; lotCode: string; createdAt: string;
 };
 export type OperationalLotChoice = {
+  replacementName?: string;
   receivedAt?: string;
   inventoryId: number; warehouseId: number; warehouseNameAr: string; warehouseNameEn: string | null;
   lotId: number; lotCode: string; trackingToken: string; quantity: number; unit: string; unitCost: number;
@@ -28,6 +29,8 @@ export type OperationalPurchaseLink = {
   status: string; itemStatus: string; quantity: number; unit: string; changed: boolean;
 };
 export type OperationalStock = {
+  fulfillment?: { remainingOriginalQuantity: number; ready: boolean; allocations: OperationalLotChoice[];
+    replacements: Array<{ planId: number; purchaseOrderId: number; itemName: string; quantity: number; unit: string }> };
   itemId: number; totalQuantity: number; unit: string; lots: OperationalLotChoice[];
   needsReview: boolean; purchase: OperationalPurchaseLink | null;
 };

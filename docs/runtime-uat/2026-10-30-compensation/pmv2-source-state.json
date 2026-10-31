@@ -1,0 +1,22 @@
+{
+  "references": {
+    "teamId": 30001,
+    "siteId": 390001,
+    "sectionId": 150011,
+    "categoryId": 2,
+    "catalogItemId": 180230,
+    "unit": "قطعة",
+    "quantity": 4,
+    "date": "2026-10-30"
+  },
+  "label": "TEST-SUPPLIER-RETURN-PMV2-20261030",
+  "stage": "materialRequest",
+  "checklistId": 60001,
+  "checklistItemId": 60001,
+  "programId": 60001,
+  "targetId": 60001,
+  "taskId": 180051,
+  "taskItemId": 180184,
+  "requestId": 120001,
+  "requestItemId": 120001
+}

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   pmv2ItemActions,
   pmv2MaterialRequestItems,
@@ -16,6 +16,7 @@ import {
 } from "../adapters/current-system";
 import { writePmv2AuditWithDb } from "../audit/service";
 import { validatePmv2MaterialRequestItemWrite } from "./request-item-validation";
+import { loadPmv2Replacements, loadPmv2ReplacementStock, replacementForPhysicalLot,planPmv2Fulfillment } from "./replacement-coverage";
 
 const MATERIAL_TRANSFER_LINK_ACTION = "material_transfer_linked";
 const MAX_TRANSFER_NUMBERS_PER_LINK = 20;
@@ -37,6 +38,9 @@ type MaterialTransferLinkSnapshot = {
   fromWarehouseId: number;
   toWarehouseId: number;
   catalogItemId: number;
+  originalQuantity?: number;
+  replacementPlanId?: number;
+  unit?: string;
 };
 
 function normalizeUnit(value: string | null | undefined) {
@@ -67,6 +71,7 @@ function parseTransferLinkSnapshot(note: string | null | undefined): MaterialTra
     ) {
       return null;
     }
+    if (value.originalQuantity != null && (!Number.isFinite(Number(value.originalQuantity)) || Number(value.originalQuantity)<=0 || !Number.isSafeInteger(value.replacementPlanId) || Number(value.replacementPlanId)<=0 || !value.unit)) return null;
     return {
       version: 1,
       materialRequestItemId: Number(value.materialRequestItemId),
@@ -77,6 +82,7 @@ function parseTransferLinkSnapshot(note: string | null | undefined): MaterialTra
       fromWarehouseId: Number(value.fromWarehouseId),
       toWarehouseId: Number(value.toWarehouseId),
       catalogItemId: Number(value.catalogItemId),
+      ...(value.originalQuantity != null && { originalQuantity: Number(value.originalQuantity), replacementPlanId: Number(value.replacementPlanId), unit: String(value.unit ?? "") }),
     };
   } catch {
     return null;
@@ -155,6 +161,7 @@ export class Pmv2WarehouseTransferHandoffService {
     if (context.catalogItemId == null) {
       throw new Pmv2WarehouseTransferHandoffError("لا يمكن بدء تحويل قبل ربط المادة بصنف معروف في الدليل");
     }
+    const replacements=(await loadPmv2Replacements(db,[requestItemId])).get(requestItemId)??[];
 
     let mainWarehouse;
     let teamWarehouse;
@@ -163,16 +170,16 @@ export class Pmv2WarehouseTransferHandoffService {
       [mainWarehouse, teamWarehouse, catalogItem] = await Promise.all([
         currentWarehouseAdapter.requireSingleActiveMainWarehouse(),
         currentWarehouseAdapter.requireActiveWarehouse(context.teamWarehouseId),
-        currentCatalogAdapter.requireActiveItem(context.catalogItemId),
+        replacements.length ? currentCatalogAdapter.getItemsByIds([context.catalogItemId]).then(items=>items[0]??{nameAr:context.itemNameSnapshot,nameEn:"",unit:context.unitSnapshot,isActive:false}) : currentCatalogAdapter.requireActiveItem(context.catalogItemId),
       ]);
     } catch (error) {
       mapExternalReferenceError(error);
     }
 
-    const availability = await currentInventoryAdapter.getCatalogAvailability(
+    const availability = catalogItem!.isActive ? await currentInventoryAdapter.getCatalogAvailability(
       context.catalogItemId,
       mainWarehouse!.id,
-    );
+    ) : {catalogItemId:context.catalogItemId,warehouseId:mainWarehouse!.id,inventoryId:null,availableQuantity:0,unit:context.unitSnapshot,lotsRequired:true,ambiguous:false};
     if (availability.ambiguous) {
       throw new Pmv2WarehouseTransferHandoffError(
         "توجد أكثر من بطاقة مخزون لنفس الصنف في المستودع الرئيسي؛ صحح الهوية قبل التحويل",
@@ -191,13 +198,23 @@ export class Pmv2WarehouseTransferHandoffService {
     const requestedQuantity = Number(context.requestedQuantity || 0);
     const issuedToTeamQuantity = Number(context.issuedToTeamQuantity || 0);
     const remainingQuantity = roundQuantity(requestedQuantity - issuedToTeamQuantity);
-    const availableQuantity = roundQuantity(Number(availability.availableQuantity || 0));
-    const transferableNow = roundQuantity(Math.min(remainingQuantity, availableQuantity));
+    const replacementCatalogs=await currentCatalogAdapter.getItemsByIds(replacements.map(({plan})=>plan.catalogItemId));
+    if(replacements.some(({plan})=>!replacementCatalogs.some(item=>item.id===plan.catalogItemId&&item.isActive))) throw new Pmv2WarehouseTransferHandoffError("صنف البديل غير نشط حاليًا؛ راجع تعريف الصنف قبل التحويل");
+    const stock=await loadPmv2ReplacementStock(db,replacements,[mainWarehouse!.id]);
+    const replacementLotIds=new Set(replacements.flatMap(({plan})=>plan.lots.map(lot=>lot.lotId)));
+    const originalLots=availability.inventoryId ? (await currentInventoryAdapter.listAvailableLots(availability.inventoryId)).filter(lot=>!replacementLotIds.has(lot.id)) : [];
+    const previousRows=await db.select({note:pmv2ItemActions.note}).from(pmv2ItemActions).where(and(eq(pmv2ItemActions.taskItemId,context.taskItemId),eq(pmv2ItemActions.action,MATERIAL_TRANSFER_LINK_ACTION)));
+    const previous=previousRows.map((row:any)=>parseTransferLinkSnapshot(row.note)).filter((link:any)=>link?.materialRequestItemId===requestItemId);
+    const fulfillment=planPmv2Fulfillment({requiredOriginal:remainingQuantity,originalUnit:String(context.unitSnapshot),originalStock:originalLots.map(lot=>({lotId:lot.id,inventoryId:availability.inventoryId!,warehouseId:mainWarehouse!.id,catalogItemId:context.catalogItemId!,unit:String(availability.unit||context.unitSnapshot),quantity:lot.quantity,lotCode:lot.lotCode,trackingToken:lot.trackingToken})),replacements:replacements.map(replacement=>({replacement,stock:replacement.plan.lots.map(lot=>stock.get(`${mainWarehouse!.id}:${lot.lotId}`)).filter((lot):lot is NonNullable<typeof lot>=>!!lot),alreadyAllocated:previous.filter((link:any)=>link.replacementPlanId===replacement.plan.planId).reduce((sum:number,link:any)=>sum+Number(link.originalQuantity??0),0)}))});
+    const fulfillmentAllocations=fulfillment.allocations.map(part=>({sourceInventoryId:part.inventoryId,catalogItemId:part.catalogItemId,materialName:part.replacementPlanId?replacements.find(({plan})=>plan.planId===part.replacementPlanId)!.plan.itemName:context.itemNameSnapshot,quantity:part.quantity,unit:part.unit,originalQuantity:part.originalQuantity,lotId:part.lotId,lotCode:part.lotCode,trackingToken:part.trackingToken,...(part.replacementPlanId?{replacementPlanId:part.replacementPlanId}:{})}));
+    const availableQuantity=fulfillment.availableOriginal;
+    const transferableNow=fulfillment.complete?remainingQuantity:0;
 
     if (remainingQuantity <= 0) {
       throw new Pmv2WarehouseTransferHandoffError("تم تغطية كمية هذا الطلب بالفعل");
     }
-    if (availability.inventoryId == null || availableQuantity <= 0) {
+    if(!fulfillment.complete&&fulfillment.unrepresentable) throw new Pmv2WarehouseTransferHandoffError("أرصدة لوتات البديل لا تحقق نسبة التعويض المعتمدة بوحدات صحيحة؛ راجع توزيع اللوتات والكمية دون تقريب");
+    if (availableQuantity <= 0) {
       throw new Pmv2WarehouseTransferHandoffError("لا توجد كمية قابلة للتحويل من المستودع الرئيسي حاليًا؛ استخدم مسار شراء العجز");
     }
     if (availableQuantity + 0.0005 < remainingQuantity) {
@@ -221,8 +238,9 @@ export class Pmv2WarehouseTransferHandoffService {
       transferableNow,
       sourceWarehouse: mainWarehouse!,
       destinationWarehouse: teamWarehouse!,
-      sourceInventoryId: availability.inventoryId,
+      sourceInventoryId: availability.inventoryId ?? fulfillmentAllocations[0]?.sourceInventoryId ?? null,
       lotsRequired: availability.lotsRequired,
+      fulfillmentAllocations,
     };
   }
 
@@ -292,23 +310,9 @@ export class Pmv2WarehouseTransferHandoffService {
           `التحويل ${transfer.transferNumber} لا يتجه إلى مخزن الفريق المرتبط بالطلب`,
         );
       }
-      if (transfer.catalogItemId !== initialContext.catalogItemId) {
-        throw new Pmv2WarehouseTransferHandoffError(
-          `الصنف في التحويل ${transfer.transferNumber} لا يطابق مادة طلب PM V2`,
-        );
-      }
       if (!Number.isFinite(transfer.quantity) || transfer.quantity <= 0) {
         throw new Pmv2WarehouseTransferHandoffError(
           `كمية التحويل ${transfer.transferNumber} غير صالحة`,
-        );
-      }
-      if (
-        transfer.unit &&
-        initialContext.unitSnapshot &&
-        normalizeUnit(transfer.unit) !== normalizeUnit(initialContext.unitSnapshot)
-      ) {
-        throw new Pmv2WarehouseTransferHandoffError(
-          `وحدة التحويل ${transfer.transferNumber} لا تطابق وحدة طلب PM V2`,
         );
       }
     }
@@ -353,8 +357,17 @@ export class Pmv2WarehouseTransferHandoffService {
       }
 
       const newlyLinked: MaterialTransferLinkSnapshot[] = [];
+      const replacements = (await loadPmv2Replacements(tx, [requestItemId])).get(requestItemId) ?? [];
       for (const transfer of transfers) {
         if (linkedForRequest.has(transfer.id)) continue;
+        let replacementCoverage: { originalQuantity: number; replacementPlanId: number; unit: string } | undefined;
+        if (replacements.some(({plan})=>plan.lots.some(lot=>lot.lotId===transfer.inventoryLotId)) || transfer.catalogItemId !== context.catalogItemId || normalizeUnit(transfer.unit) !== normalizeUnit(context.unitSnapshot)) {
+          await tx.execute(sql`SELECT id FROM warehouse_transfers WHERE id=${transfer.id} FOR UPDATE`);
+          const coverage = replacementForPhysicalLot(replacements, { lotId: transfer.inventoryLotId ?? null, catalogItemId: transfer.catalogItemId, unit: transfer.unit, quantity: transfer.quantity });
+          const alreadyCovered = Array.from(linkedForRequest.values()).filter(link=>link.replacementPlanId===coverage.replacement.plan.planId).reduce((sum,link)=>sum+Number(link.originalQuantity ?? 0),0);
+          if (alreadyCovered+coverage.originalQuantity>coverage.replacement.maximumOriginalQuantity+0.0005) throw new Pmv2WarehouseTransferHandoffError("سبق تخصيص كمية هذا البديل لاحتياج PMV2");
+          replacementCoverage = { originalQuantity: coverage.originalQuantity, replacementPlanId: coverage.replacement.plan.planId, unit: String(transfer.unit) };
+        }
         const snapshot: MaterialTransferLinkSnapshot = {
           version: 1,
           materialRequestItemId: requestItemId,
@@ -364,7 +377,8 @@ export class Pmv2WarehouseTransferHandoffService {
           quantity: roundQuantity(transfer.quantity),
           fromWarehouseId: transfer.fromWarehouseId,
           toWarehouseId: transfer.toWarehouseId,
-          catalogItemId: initialContext.catalogItemId!,
+          catalogItemId: transfer.catalogItemId!,
+          ...replacementCoverage,
         };
         await tx.insert(pmv2ItemActions).values({
           taskItemId: context.taskItemId,
@@ -382,7 +396,7 @@ export class Pmv2WarehouseTransferHandoffService {
       const requestedQuantity = Number(context.requestedQuantity || 0);
       const confirmedQuantity = roundQuantity(
         Array.from(linkedForRequest.values()).reduce(
-          (sum, snapshot) => sum + Number(snapshot.quantity || 0),
+          (sum, snapshot) => sum + Number(snapshot.originalQuantity ?? snapshot.quantity ?? 0),
           0,
         ),
       );

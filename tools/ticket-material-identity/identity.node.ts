@@ -47,7 +47,7 @@ test("identity lookup rejects other need, old material round, ended ticket and a
     const d = await setup(); await d.store.transaction(async s => {
       if (alteration === "round") s.needs[0].round = 99;
       if (alteration === "closed") s.tickets[0].closed = true;
-      if (alteration === "resolved") s.needs[0].catalogItemId = 101;
+      if (alteration === "resolved") { s.needs[0].catalogItemId = 101; s.needs[0].unit = "قطعة"; }
       if (alteration === "stage") s.assignments[0].stage = "awaiting_review";
     });
     await assert.rejects(d.service.materialIdentityContext(2, d.a.id, alteration === "other" ? 999 : d.need.id));
@@ -70,19 +70,18 @@ test("catalog/reference reader errors do not turn into false zero availability",
   const d = await setup(); const context = await d.service.materialIdentityContext(2, d.a.id, d.need.id); const r = readers();
   r.deps.balances = async () => { throw new Error("read failed"); }; await assert.rejects(searchTicketIdentityCandidates(context, "", r.deps), /read failed/);
 });
-test("identity link accepts a different unit without changing quantities or permitting unconverted stock operations", async () => {
+test("warehouse approves catalog unit and quantity without moving stock or erasing original wording", async () => {
   const d = await setup(); const before = await d.store.read(); const physical = await d.store.inspectPhysical();
   await d.store.transaction(async s => { s.catalog.push({ id: 999, name: "زيت", unit: "لتر", active: true }); });
-  await d.service.resolveMaterial(2, await d.command(), d.need.id, 999, "مطابقة");
+  await d.service.resolveMaterial(2, await d.command(), d.need.id, 999, "مطابقة", 4);
   const linked = (await d.store.read()).needs[0];
-  assert.equal(linked.catalogItemId, 999); assert.equal(linked.unit, before.needs[0].unit);
-  assert.equal(linked.requested, before.needs[0].requested); assert.equal(linked.originalName, before.needs[0].originalName);
+  assert.equal(linked.catalogItemId, 999); assert.equal(linked.unit, "لتر");
+  assert.equal(linked.requested, 4); assert.equal(linked.originalName, before.needs[0].originalName);
   assert.equal(materialSection(await d.store.read(), linked, 9999), "waiting");
-  for (const kind of ["purchase", "transfer"] as const) {
-    await assert.rejects(d.service.provideMaterial(2, await d.command(), d.need.id, kind), /وحدة/);
-    await assert.rejects(d.service.prepareSupply(2, d.a.id, d.need.id, kind), /وحدة/);
-  }
-  await assert.rejects(d.service.receiveMaterial(3, await d.command(), d.need.id));
+  const audit = JSON.parse((await d.store.read()).actions.at(-1)!.note).identityReview;
+  assert.deepEqual(audit.before, { catalogItemId: null, name: linked.originalName, originalName: linked.originalName, unit: "", requestedQuantity: 3 });
+  assert.deepEqual(audit.after, { catalogItemId: 999, name: "زيت", originalName: linked.originalName, unit: "لتر", requestedQuantity: 4 });
+  assert.equal((await d.service.prepareSupply(2, d.a.id, d.need.id, "purchase")).unit, "لتر");
   assert.deepEqual(await d.store.inspectPhysical(), physical);
 });
 test("identity linking still denies duplicate catalog identities", async () => {
@@ -172,4 +171,93 @@ test("unit options deny a closed or missing parent even if an assignment survive
     await d.store.transaction(async s => { if (missing) s.tickets = []; else s.tickets[0].closed = true; });
     await assert.rejects(d.service.materialUnitsContext(3, d.a.id));
   }
+});
+test("catalog needs use the current server unit, while free text accepts name and quantity only", async () => {
+  const d = createDemo(); const a = await d.service.assign(1, { ...(await d.store.read()).tickets[0], teamId: 21 });
+  const command = async () => ({ assignmentId: a.id, expectedRevision: (await d.store.read()).assignments[0].revision, operationKey: `authoritative-unit:${++seq}` });
+  const physical = await d.store.inspectPhysical();
+  const preview = await d.service.previewMaterials(3, a.id, [{ catalogItemId: 101, quantity: 2, unit: "علبة مزورة" }, { name: "مادة حرة", quantity: 7 }]);
+  assert.equal(preview.rows[0].unit, "قطعة"); assert.equal(preview.rows[1].unit, "");
+  await d.service.registerMaterialNeed(3, await command(), { catalogItemId: 101, quantity: 2, unit: "علبة مزورة" });
+  await d.service.registerMaterialNeed(3, await command(), { name: "مادة حرة", quantity: 7 });
+  const needs = (await d.store.read()).needs;
+  assert.equal(needs[0].unit, "قطعة"); assert.equal(needs[1].unit, ""); assert.equal(needs[1].requested, 7);
+  assert.deepEqual(await d.store.inspectPhysical(), physical);
+});
+test("warehouse repairs a previously linked mismatch only on the same catalog item, with exact audit and replay", async () => {
+  const d = await setup();
+  await d.store.transaction(async s => { s.needs[0].catalogItemId = 101; s.needs[0].unit = "حبة قديمة"; });
+  const context = await d.service.materialIdentityContext(2, d.a.id, d.need.id);
+  assert.equal(context.catalogItemId, 101); assert.equal(context.catalogUnit, "قطعة");
+  const r = readers();
+  const readCatalog = r.deps.searchCatalog;
+  r.deps.searchCatalog = async (search, limit, catalogItemId) => { assert.equal(search, ""); assert.equal(limit, 1); assert.equal(catalogItemId, 101); return readCatalog(search, limit); };
+  const found = await searchTicketIdentityCandidates(context, "unrelated", r.deps);
+  assert.deepEqual(found.items.map(item => item.id), [101]);
+  const physical = await d.store.inspectPhysical(), c = await d.command();
+  await assert.rejects(d.service.resolveMaterial(2, c, d.need.id, 102, "تبديل", 8), /الصنف نفسه/);
+  const result = await d.service.resolveMaterial(2, c, d.need.id, 101, "اعتماد الكمية بوحدة الكتالوج", 8);
+  assert.deepEqual(await d.service.resolveMaterial(2, c, d.need.id, 101, "اعتماد الكمية بوحدة الكتالوج", 8), result);
+  await assert.rejects(d.service.resolveMaterial(2, c, d.need.id, 101, "اعتماد الكمية بوحدة الكتالوج", 9), /مرجع العملية/);
+  const state = await d.store.read(), need = state.needs[0], audit = JSON.parse(state.actions.at(-1)!.note).identityReview;
+  assert.equal(need.unit, "قطعة"); assert.equal(need.requested, 8); assert.equal(need.originalName, d.need.originalName);
+  assert.equal(audit.before.unit, "حبة قديمة"); assert.equal(audit.before.requestedQuantity, 3);
+  assert.equal(audit.after.unit, "قطعة"); assert.equal(audit.after.requestedQuantity, 8);
+  assert.deepEqual(await d.store.inspectPhysical(), physical);
+});
+test("identity review denies any supply history including cancelled, physical delivery or usage declaration", async () => {
+  for (const history of ["cancelled", "pending", "received", "delivery", "used-zero", "returned"] as const) {
+    const d = await setup();
+    await d.store.transaction(async s => {
+      s.needs[0].catalogItemId = 101; s.needs[0].unit = "حبة";
+      if (["cancelled", "pending", "received"].includes(history)) s.supplies.push({ id: 777, needId: d.need.id, kind: "purchase", sourceId: 77, sourceNumber: "PR-77", quantity: 3, status: history as "cancelled" });
+      if (history === "used-zero") s.needs[0].used = 0;
+      if (history === "delivery" || history === "returned") s.deliveries.push({ id: 888, needId: d.need.id, deliveryId: 88, deliveryNumber: "DLV-88", lotId: 8, inventoryTransactionId: 89, quantity: 3, receivedById: 3, used: null, returned: history === "returned" ? 3 : 0 });
+      if (history === "returned") s.returns.push({ id: 889, deliveryLinkId: 888, sourceDeliveryId: 88, returnId: 90, returnNumber: "RTN-90", quantity: 3, actorId: 2 });
+    });
+    const before = await d.store.read();
+    await assert.rejects(d.service.materialIdentityContext(2, d.a.id, d.need.id), /مرتجع سابق/);
+    await assert.rejects(d.service.resolveMaterial(2, await d.command(), d.need.id, 101, "مراجعة", 1), /مرتجع سابق/);
+    assert.deepEqual(await d.store.read(), before);
+  }
+});
+test("resolve API accepts approved quantity, rejects forged unit, wrong actors, nonintegers and stale/closed needs", async () => {
+  const d = await setup();
+  const api = rootRouter({ ticketTeamExecution: createTicketTeamExecutionRouter(() => d.service) });
+  const caller = (id: number, role: string) => api.createCaller({ user: { id, role, isActive: 1 }, req: {} } as any).ticketTeamExecution;
+  const input = { ...await d.command(), needId: d.need.id, catalogItemId: 101, note: "اعتماد الوحدة والكمية", requestedQuantity: 2 };
+  for (const requestedQuantity of [0, -1, 1.5]) await assert.rejects(caller(2, "warehouse").resolve({ ...input, requestedQuantity }));
+  await assert.rejects(caller(2, "warehouse").resolve({ ...input, unit: "علبة" } as any));
+  await assert.rejects(caller(3, "technician").resolve(input));
+  await assert.rejects(caller(1, "maintenance_manager").resolve(input));
+  await assert.rejects(caller(2, "warehouse").resolve({ ...input, expectedRevision: input.expectedRevision + 1 }));
+  await d.store.transaction(async s => { s.tickets[0].closed = true; });
+  await assert.rejects(caller(2, "warehouse").resolve(input), /البلاغ الأصلي/);
+  await d.store.transaction(async s => { s.tickets[0].closed = false; });
+  await caller(2, "warehouse").resolve(input);
+  assert.equal((await d.store.read()).needs[0].requested, 2);
+});
+test("register API permits omitted unit and never accepts a caller's catalog unit as authority", async () => {
+  const d = createDemo(); const a = await d.service.assign(1, { ...(await d.store.read()).tickets[0], teamId: 21 });
+  const api = rootRouter({ ticketTeamExecution: createTicketTeamExecutionRouter(() => d.service) });
+  const caller = api.createCaller({ user: { id: 3, role: "technician", isActive: 1 }, req: {} } as any).ticketTeamExecution;
+  const command = async () => ({ assignmentId: a.id, expectedRevision: (await d.store.read()).assignments[0].revision, operationKey: `unit-rpc:${++seq}` });
+  await caller.registerMaterialNeed({ ...await command(), need: { name: "مادة جديدة", quantity: 2 } });
+  await caller.registerMaterialNeed({ ...await command(), need: { catalogItemId: 101, quantity: 3, unit: "عبوة" } });
+  const state = await d.store.read(); assert.equal(state.needs[0].unit, ""); assert.equal(state.needs[1].unit, "قطعة");
+});
+test("unit review rechecks current catalog data and never invents a missing or inactive unit", async () => {
+  for (const invalid of ["blank", "inactive"] as const) {
+    const d = await setup(); await d.store.transaction(async s => {
+      if (invalid === "blank") s.catalog[0].unit = "  "; else s.catalog[0].active = false;
+    });
+    const before = await d.store.read();
+    await assert.rejects(d.service.resolveMaterial(2, await d.command(), d.need.id, 101, "مراجعة", 2));
+    assert.deepEqual(await d.store.read(), before);
+  }
+  const d = await setup();
+  await d.service.materialIdentityContext(2, d.a.id, d.need.id);
+  await d.store.transaction(async s => { s.catalog[0].unit = "كرتون"; });
+  await d.service.resolveMaterial(2, await d.command(), d.need.id, 101, "اعتماد وحدة الكتالوج الحالية");
+  assert.equal((await d.store.read()).needs[0].unit, "كرتون");
 });

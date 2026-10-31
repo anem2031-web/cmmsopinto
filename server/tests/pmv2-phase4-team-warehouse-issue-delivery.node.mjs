@@ -63,7 +63,8 @@ test("requesting technician is the default recipient but another active team tec
 });
 
 test("one logical PM V2 issue can post multiple existing Delivery Documents by lot", () => {
-  assert.match(service, /for \(const allocation of plan\.allocations\)/);
+  assert.match(service, /for \(const allocation of allocations\)/);
+  assert.match(service, /inventoryId: allocation\.inventoryId, quantity: allocation\.quantity, unit: allocation\.unit/);
   assert.match(service, /currentInventoryIssueAdapter\.issueDelivery/);
   assert.match(service, /lotTrackingToken: allocation\.trackingToken/);
   assert.match(service, /posted\.push/);

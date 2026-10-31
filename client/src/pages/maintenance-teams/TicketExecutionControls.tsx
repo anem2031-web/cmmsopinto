@@ -27,7 +27,10 @@ export function TicketExecutionControls({ state, assignment: a, actorId, languag
   const [dependency, setDependency] = useState<"blocked" | "external" | null>(null);
   const [dependencyNote, setDependencyNote] = useState("");
   const [error, setError] = useState("");
+  const [physicalUsages, setPhysicalUsages] = useState<Record<number, string>>({});
   const current = state.needs.filter(n => n.assignmentId === a.id && n.round === a.materialRound);
+  const substituted = current.filter(n => state.deliveries.some(d => d.needId === n.id && d.replacementPlanId != null));
+  const actualDeliveries = state.deliveries.filter(d => substituted.some(n => n.id === d.needId));
   const actionable = ["action_required", "ready_to_repair", "reinstall_required"].includes(a.stage);
   const materialCompletion = a.stage === "ready_to_repair";
   const leader = session.openVisit?.leaderId === actorId;
@@ -39,9 +42,10 @@ export function TicketExecutionControls({ state, assignment: a, actorId, languag
     }
     const input: CompletionInput = {
       note, otherMaterials: outcome === "fixed" ? otherMaterials : undefined,
-      usages: outcome === "fixed" ? current.map(n => ({ catalogItemId: n.catalogItemId!, used: Number(usages[n.id] ?? issued(state, n.id)) })) : [],
+      usages: outcome === "fixed" ? current.filter(n => !substituted.includes(n)).map(n => ({ catalogItemId: n.catalogItemId!, used: Number(usages[n.id] ?? issued(state, n.id)) })) : [],
+      ...(outcome === "fixed" && actualDeliveries.length ? { physicalUsages: actualDeliveries.map(d => ({ deliveryId: d.deliveryId, used: Number(physicalUsages[d.deliveryId] ?? d.quantity - d.returned) })) } : {}),
     };
-    if (await onOutcome(outcome, input)) { setNote(""); setOtherMaterials(""); setUsages({}); }
+    if (await onOutcome(outcome, input)) { setNote(""); setOtherMaterials(""); setUsages({}); setPhysicalUsages({}); }
   }
   return <div className="space-y-4">
     {session.conflict && <p role="alert" className="text-sm text-destructive">{t.multipleOpenVisits}</p>}
@@ -64,9 +68,17 @@ export function TicketExecutionControls({ state, assignment: a, actorId, languag
       <Textarea rows={2} maxLength={4000} disabled={busy || !participating} value={note} onChange={e => setNote(e.target.value)} placeholder={l("ملاحظات الفحص / تفاصيل الإصلاح (إلزامية عند الإصلاح)", "Inspection notes / repair details (required for repair)", "معائنے کے نوٹس / مرمت کی تفصیل (مرمت کے لیے ضروری)")} />
       {current.length > 0 && current.map(n => <div key={n.id} className="rounded-md border bg-background p-2 text-xs">
         <p className="font-medium">{n.name} — {n.unit}</p><p>{t.issuedForTask}: {issued(state, n.id)}</p>
+        {substituted.includes(n) ? state.deliveries.filter(d => d.needId === n.id).map(d => <div className="mt-2 rounded border p-2" key={d.deliveryId}>
+          <p>{d.replacementName ?? n.name} — {d.quantity - d.returned} {d.physicalUnit ?? n.unit} · {d.deliveryNumber}</p>
+          <label htmlFor={`physical-used-${d.deliveryId}`} className="mt-1 block font-medium">{l("المستخدم الفعلي من هذا السند", "Actual quantity used from this delivery", "اس رسید سے اصل استعمال شدہ مقدار")}</label>
+          <Input id={`physical-used-${d.deliveryId}`} type="number" min={0} max={d.quantity - d.returned} step={1} disabled={busy || !participating}
+            value={physicalUsages[d.deliveryId] ?? ""} onChange={e => setPhysicalUsages(v => ({ ...v, [d.deliveryId]: e.target.value }))} />
+          <p className="mt-1 text-muted-foreground">{l("المرتجع الفعلي", "Actual return", "اصل واپسی")}: {Math.max(0, d.quantity - d.returned - Number(physicalUsages[d.deliveryId] ?? d.quantity - d.returned))} {d.physicalUnit ?? n.unit}</p>
+        </div>) : <>
         <label htmlFor={`used-${n.id}`} className="mt-2 block font-medium">{t.usedQuantityLabel}</label>
         <Input id={`used-${n.id}`} type="number" min={0} max={issued(state, n.id) - state.deliveries.filter(d => d.needId === n.id).reduce((sum, d) => sum + d.returned, 0)} step={1} disabled={busy || !participating} value={usages[n.id] ?? ""} onChange={e => setUsages(v => ({ ...v, [n.id]: e.target.value }))} />
         <p className="mt-1 text-muted-foreground">{l("المرتجع", "Return", "واپسی")}: {Math.max(0, issued(state, n.id) - Number(usages[n.id] ?? issued(state, n.id)))}</p>
+        </>}
       </div>)}
       {session.working && <Textarea maxLength={4000} rows={2} value={otherMaterials} onChange={e => setOtherMaterials(e.target.value)} disabled={busy} placeholder={l("مواد أخرى استُخدمت وتفاصيلها (إن وجدت)", "Other materials used and details (if any)", "دیگر استعمال شدہ مواد کی تفصیل")} />}
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

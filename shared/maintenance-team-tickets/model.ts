@@ -118,6 +118,12 @@ export interface DeliveryLink {
   receivedById: number;
   used: number | null;
   returned: number;
+  /** Derived from approved replacement provenance; never persisted as stock. */
+  originalEquivalent?: number;
+  replacementName?: string;
+  physicalUnit?: string;
+  physicalCatalogItemId?: number;
+  replacementPlanId?: number;
 }
 export interface SupplyLink {
   id: number;
@@ -127,6 +133,9 @@ export interface SupplyLink {
   sourceNumber: string;
   quantity: number;
   status: "pending" | "received" | "cancelled";
+  originalEquivalent?: number;
+  physicalUnit?: string;
+  replacementName?: string;
 }
 export interface ReturnLink {
   id: number;
@@ -167,12 +176,15 @@ export interface Command {
 export interface NeedInput {
   catalogItemId?: number;
   name?: string;
-  unit: string;
+  /** Compatibility input only; catalog units are authoritative server-side. */
+  unit?: string;
   quantity: number;
 }
 export interface CompletionInput {
   note: string;
   usages: Array<{ catalogItemId: number; used: number }>;
+  /** Substitution uses actual delivery units; no rounded original-unit usage. */
+  physicalUsages?: Array<{ deliveryId: number; used: number }>;
   otherMaterials?: string;
 }
 export class TeamTicketError extends Error {
@@ -221,19 +233,28 @@ export function required(value: string, label: string, max = 4000): string {
   return value.trim();
 }
 export function issued(state: Snapshot, needId: number): number {
-  return state.deliveries
+  return Math.round(state.deliveries
     .filter(d => d.needId === needId)
-    .reduce((n, d) => n + d.quantity, 0);
+    .reduce((n, d) => n + (d.originalEquivalent ?? d.quantity), 0) * 1000) / 1000;
+}
+export function deliveryOriginalEquivalent(link: DeliveryLink, physical: number): number {
+  const value = physical * (link.originalEquivalent ?? link.quantity) / link.quantity;
+  const rounded = Math.round(value * 1000) / 1000;
+  if (!Number.isFinite(value) || Math.abs(value - rounded) > 0.0000001)
+    throw new TeamTicketError("INVALID", "كمية البديل الجزئية لا تمثل كمية دقيقة من الاحتياج الأصلي");
+  return rounded;
 }
 export function remainingReturn(state: Snapshot, needId: number): number {
   const need = state.needs.find(n => n.id === needId);
-  if (!need || need.used === null) return 0;
   const links = state.deliveries.filter(d => d.needId === needId);
-  return (
+  if (need && links.some(d => d.replacementPlanId != null) && links.length > 0 && links.every(d => d.used !== null))
+    return links.reduce((sum, d) => sum + Math.max(0, d.quantity - d.used! - d.returned), 0);
+  if (!need || need.used === null) return 0;
+  return Math.round((
     issued(state, needId) -
     need.used -
-    links.reduce((sum, d) => sum + d.returned, 0)
-  );
+    links.reduce((sum, d) => sum + deliveryOriginalEquivalent(d, d.returned), 0)
+  ) * 1000) / 1000;
 }
 export function isRequiredNow(stage: Stage): boolean {
   return ["action_required", "ready_to_repair", "reinstall_required"].includes(

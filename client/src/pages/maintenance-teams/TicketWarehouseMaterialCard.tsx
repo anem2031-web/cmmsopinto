@@ -31,6 +31,7 @@ export function TicketWarehouseMaterialCard({
   language,
   warehouse,
   quantityFields,
+  onReviewIdentity,
   children,
 }: {
   state: Snapshot;
@@ -41,6 +42,7 @@ export function TicketWarehouseMaterialCard({
   language: string;
   warehouse: boolean;
   quantityFields: ReactNode;
+  onReviewIdentity?: () => void;
   children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -50,6 +52,10 @@ export function TicketWarehouseMaterialCard({
     .pmv2;
   const received = issued(state, need.id),
     returns = remainingReturn(state, need.id);
+  const actualLinks = state.deliveries.filter(d => d.needId === need.id);
+  const physicalReturns = actualLinks.some(d => d.replacementPlanId != null) && actualLinks.every(d => d.used !== null);
+  const physicalReturnText = actualLinks.filter(d => d.used !== null && d.quantity > d.used! + d.returned)
+    .map(d => `${d.quantity - d.used! - d.returned} ${d.physicalUnit ?? need.unit} — ${d.deliveryNumber}`).join(" · ");
   if (received === 0 && materialUnitMismatch(state, need)) return <div className="space-y-2 rounded-lg border border-amber-200 p-3 text-sm">
     <p className="font-semibold">{need.name}</p>
     <p>{l("المطلوب", "Requested", "درخواست")}: {need.requested} {need.unit}</p>
@@ -58,6 +64,7 @@ export function TicketWarehouseMaterialCard({
       "تم ربط الصنف. راجع وحدة وكمية الاحتياج قبل الصرف أو التوفير؛ لم تُحوّل الكمية تلقائيًا.",
       "Item linked. Review the requested unit and quantity before issue or supply; no automatic conversion was made.",
       "صنف منسلک ہوگیا۔ اجرا یا فراہمی سے پہلے اکائی اور مقدار کا جائزہ لیں؛ خودکار تبدیلی نہیں ہوئی۔")}</p>
+    {onReviewIdentity && <Button type="button" onClick={onReviewIdentity}>{l("مراجعة واعتماد الكمية بوحدة الكتالوج", "Review and approve quantity in catalog units", "کیٹلاگ کی اکائی میں مقدار کا جائزہ اور منظوری")}</Button>}
   </div>;
   if (!warehouse)
     return (
@@ -69,7 +76,7 @@ export function TicketWarehouseMaterialCard({
           {l("المطلوب", "Requested", "درخواست")}: {need.requested} /{" "}
           {l("المستلم", "Received", "وصول")}: {received} /{" "}
           {l("المستخدم", "Used", "استعمال")}: {need.used ?? "—"} /{" "}
-          {l("المرتجع المعلق", "Pending return", "واپسی باقی")}: {returns}
+          {l("المرتجع المعلق", "Pending return", "واپسی باقی")}: {physicalReturns ? physicalReturnText : returns}
         </p>
         {quantityFields}
         {balance && (
@@ -290,7 +297,7 @@ export function TicketWarehouseMaterialCard({
                       {box(l("المستخدم", "Used", "استعمال"), amount(need.used))}
                       {box(
                         l("المرتجع المعلق", "Pending return", "واپسی باقی"),
-                        amount(returns)
+                        physicalReturns ? physicalReturnText : amount(returns)
                       )}
                     </>
                   )}
@@ -379,7 +386,7 @@ export function TicketWarehouseMaterialCard({
                   ) : (
                     <ArrowLeftRight className="me-1 inline h-3 w-3" />
                   )}
-                  {s.sourceNumber} · {amount(s.quantity)} ·{" "}
+                  {s.sourceNumber} · {s.quantity} {s.physicalUnit ?? need.unit}{s.replacementName ? ` — ${s.replacementName} (${amount(s.originalEquivalent)})` : ""} ·{" "}
                   {s.status === "received"
                     ? l("مستلم", "Received", "وصول شدہ")
                     : s.status === "cancelled"

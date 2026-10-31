@@ -24,7 +24,7 @@ const need = z
   .object({
     catalogItemId: id.optional(),
     name: z.string().trim().max(250).optional(),
-    unit: z.string().trim().min(1).max(50),
+    unit: z.string().trim().max(50).optional(),
     quantity: z.number().int().positive(),
   })
   .strict();
@@ -257,6 +257,7 @@ export function createTicketTeamExecutionRouter(
               )
               .max(20),
             otherMaterials: z.string().max(4000).optional(),
+            physicalUsages: z.array(z.object({ deliveryId: id, used: z.number().int().nonnegative() }).strict()).max(100).optional(),
           })
           .strict()
       )
@@ -266,6 +267,7 @@ export function createTicketTeamExecutionRouter(
             note: input.note,
             usages: input.usages,
             otherMaterials: input.otherMaterials,
+            physicalUsages: input.physicalUsages,
           })
         )
       ),
@@ -320,6 +322,7 @@ export function createTicketTeamExecutionRouter(
           .extend({
             needId: id,
             catalogItemId: id,
+            requestedQuantity: z.number().int().positive().optional(),
             note: z.string().trim().min(1).max(4000),
           })
           .strict()
@@ -333,7 +336,8 @@ export function createTicketTeamExecutionRouter(
             input,
             input.needId,
             input.catalogItemId,
-            input.note
+            input.note,
+            input.requestedQuantity
           )
         )
       ),

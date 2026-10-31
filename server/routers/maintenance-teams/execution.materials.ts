@@ -13,6 +13,7 @@ import type { TeamManagementActor } from "../../../shared/maintenance-team-ticke
 import type { TeamDatabaseTransaction } from "./repository";
 import { selectRows, type ExecutionOptions } from "./execution.repository";
 import { canExecuteAllTicketTeams } from "../../../shared/maintenance-team-tickets/execution-permissions";
+import { exactOriginalAllocation, limitReplacementSourceCoverage, loadReplacementFulfillments, replacementAllocationQuantum, representableReplacementAllocation, replacementOriginalToPhysical, replacementPhysicalToOriginal, type ReplacementFulfillment } from "../../supplier-return-followup/fulfillment";
 
 export interface InventoryWriters {
   transferBatch?(input: any, tx: any): Promise<any>;
@@ -42,6 +43,7 @@ async function currentWriters(): Promise<InventoryWriters> {
 }
 export class ProductionMaterialGateway implements MaterialGateway {
   purchaseForm?: MaterialGateway["purchaseForm"];
+  private replacementLookup?: ReturnType<typeof loadReplacementFulfillments>;
   constructor(
     private readonly tx: TeamDatabaseTransaction,
     private readonly state: Snapshot,
@@ -49,6 +51,104 @@ export class ProductionMaterialGateway implements MaterialGateway {
     private readonly options: ExecutionOptions,
     private readonly writers: () => Promise<InventoryWriters> = currentWriters
   ) {}
+  private async replacements(needId: number) {
+    const n = this.state.needs.find(need => need.id === needId);
+    const a = this.state.assignments[0];
+    if (!n || n.assignmentId !== a.id) throw new TeamTicketError("CONFLICT", "الاحتياج لا يتبع التذكرة");
+    const sources = this.state.supplies.filter(s => s.needId === needId && s.kind === "purchase");
+    // The gateway belongs to one authorized read/transaction; batch all sources
+    // once and never reuse this snapshot for a subsequent operation.
+    this.replacementLookup ??= loadReplacementFulfillments(this.tx,
+      this.state.supplies.filter(s => s.kind === "purchase").map(s => s.sourceId));
+    const lookup = await this.replacementLookup;
+    const plans = sources.flatMap(source => limitReplacementSourceCoverage(lookup.get(source.sourceId) ?? [], String(source.quantity)));
+    for (const p of plans) {
+      if (p.sourceCatalogItemId !== n.catalogItemId || p.originalUnit !== n.unit || p.sourceTicketId !== a.ticketId || p.sourceTicketItemId !== a.ticketItemId)
+        throw new TeamTicketError("CONFLICT", "مصدر البديل لا يطابق احتياج الفريق الأصلي");
+    }
+    return plans;
+  }
+  async replacementContext(needId: number) { return (await this.replacements(needId)).length > 0; }
+  private async validateReplacementWrites(needId: number) {
+    const ids = Array.from(new Set((await this.replacements(needId)).map(plan => plan.catalogItemId)));
+    for (let offset = 0; offset < ids.length; offset += 500) {
+      const part = ids.slice(offset, offset + 500);
+      const rows = await selectRows(this.tx, sql`SELECT c.id,c.isActive,EXISTS (SELECT 1 FROM catalog_units u WHERE u.isActive=0 AND (u.nameAr=c.unit OR u.nameEn=c.unit)) AS inactiveUnit FROM catalog_items c WHERE c.id IN (${sql.join(part.map(id => sql`${id}`), sql`,`)}) FOR UPDATE`);
+      if (rows.length !== part.length || rows.some(row => Number(row.isActive) !== 1 || Number(row.inactiveUnit) === 1))
+        throw new TeamTicketError("CONFLICT", "صنف البديل أو وحدته غير نشط؛ راجع الكتالوج قبل الصرف أو التحويل");
+    }
+  }
+  private async fulfillmentPlan(needId: number, warehouseId: number, required: number, requireFull = true) {
+    const need = this.state.needs.find(n => n.id === needId)!;
+    const plans = await this.replacements(needId);
+    type Allocation = { catalogItemId: number; unit: string; quantity: number; originalEquivalent: number; lotIds?: number[]; replacement?: ReplacementFulfillment };
+    const candidates: Array<{ allocation: Omit<Allocation, "quantity" | "originalEquivalent">; maximum: string; quantum: string }> = [];
+    for (const p of plans) {
+      const stock = await this.stock(warehouseId, p.catalogItemId);
+      const lots = stock.lots.filter(lot => p.lots.some(l => l.lotId === Number(lot.lotId)));
+      const prior = this.state.deliveries.filter(d => d.needId === needId && p.lots.some(l => l.lotId === d.lotId))
+        .reduce((sum, d) => sum + (d.originalEquivalent ?? Number(replacementPhysicalToOriginal(p, String(d.quantity)))), 0);
+      const allowance = Math.min(required, Math.max(0, Number(p.maximumOriginalQuantity) - prior));
+      if (allowance <= 0) continue;
+      const available = lots.reduce((sum, lot) => sum + Math.floor(Number(lot.quantity)), 0);
+      const selected = representableReplacementAllocation(p, { availablePhysical: String(available), maxOriginal: String(allowance), originalStep: "1", physicalStep: "1" });
+      if (Number(selected.physicalQuantity) <= 0) continue;
+      candidates.push({ allocation: { catalogItemId: p.catalogItemId, unit: p.lots[0].unit, lotIds: lots.map(l => Number(l.lotId)), replacement: p },
+        maximum: selected.originalQuantity, quantum: replacementAllocationQuantum(p, { originalStep: "1", physicalStep: "1" }).originalQuantity });
+    }
+    const originalStock = await this.stock(warehouseId, need.catalogItemId!);
+    const approvedLots = new Set(plans.flatMap(plan => plan.lots.map(lot => lot.lotId)));
+    // A received replacement lot must retain its approved ratio even when it
+    // has the same catalog identity as the source; never count it again 1:1.
+    const originalLots = originalStock.lots.filter(lot => !approvedLots.has(Number(lot.lotId)));
+    const originalAvailable = Math.min(originalStock.available, originalLots.reduce((sum, lot) => sum + Math.floor(Number(lot.quantity)), 0));
+    if (originalAvailable > 0) candidates.push({ allocation: { catalogItemId: need.catalogItemId!, unit: need.unit, lotIds: originalLots.map(lot => Number(lot.lotId)) }, maximum: String(Math.min(required, originalAvailable)), quantum: "1" });
+    let chosen = exactOriginalAllocation(String(required), candidates);
+    if (!chosen && requireFull) throw new TeamTicketError("CONFLICT", "رصيد الصنف والبديل المعتمد لا يغطي كامل الاحتياج بتوزيع دقيق");
+    if (!chosen) {
+      let left = required;
+      chosen = candidates.map(candidate => {
+        const quantum = Number(candidate.quantum), take = Math.floor(Math.min(left, Number(candidate.maximum)) / quantum) * quantum;
+        left -= take; return String(take);
+      });
+    }
+    const allocations: Allocation[] = [];
+    chosen.forEach((value, index) => {
+      const equivalent = Number(value); if (equivalent <= 0) return;
+      const candidate = candidates[index].allocation;
+      const quantity = candidate.replacement ? Number(replacementOriginalToPhysical(candidate.replacement, value)) : equivalent;
+      if (!Number.isSafeInteger(quantity)) throw new TeamTicketError("CONFLICT", "كمية الصرف الفعلية يجب أن تكون صحيحة");
+      allocations.push({ ...candidate, quantity, originalEquivalent: equivalent });
+    });
+    return { allocations, covered: Math.round(allocations.reduce((sum, part) => sum + part.originalEquivalent, 0) * 1000) / 1000 };
+  }
+  async issueNeed(needId: number, input: Parameters<MaterialGateway["issue"]>[0]) {
+    if (!await this.replacementContext(needId)) return this.issue(input);
+    await this.validateReplacementWrites(needId);
+    const { allocations } = await this.fulfillmentPlan(needId, input.warehouseId, input.quantity);
+    const results: PhysicalDelivery[] = [];
+    for (const segment of allocations) {
+      const rows = await this.issue({ ...input, catalogItemId: segment.catalogItemId, quantity: segment.quantity, unit: segment.unit, lotIds: segment.lotIds });
+      for (const row of rows) results.push({ ...row, originalEquivalent: segment.replacement ? Number(replacementPhysicalToOriginal(segment.replacement, String(row.quantity))) : row.quantity,
+        ...(segment.replacement ? { replacementPlanId: segment.replacement.planId, replacementName: segment.replacement.itemName } : {}) });
+    }
+    return results;
+  }
+  async transferNeed(needId: number, input: Parameters<MaterialGateway["transfer"]>[0]) {
+    await this.validateReplacementWrites(needId);
+    const inBranch = await this.fulfillmentPlan(needId, input.destinationWarehouseId, input.quantity, false);
+    const shortage = Math.round((input.quantity - inBranch.covered) * 1000) / 1000;
+    if (shortage <= 0) throw new TeamTicketError("CONFLICT", "الاحتياج والبديل متوفران بمخزن الفريق؛ استخدم الصرف");
+    const main = await this.mainWarehouseId();
+    const { allocations } = await this.fulfillmentPlan(needId, main, shortage);
+    const result: SupplyResult[] = [];
+    for (const segment of allocations) {
+      const rows = await this.transfer({ ...input, catalogItemId: segment.catalogItemId, quantity: segment.quantity, unit: segment.unit, lotIds: segment.lotIds });
+      result.push(...rows.map(row => ({ ...row, originalEquivalent: segment.replacement ? Number(replacementPhysicalToOriginal(segment.replacement, String(row.quantity))) : row.quantity,
+        ...(segment.replacement ? { physicalUnit: segment.unit, replacementName: segment.replacement.itemName } : {}) })));
+    }
+    return result;
+  }
   async mainWarehouseId(): Promise<number> {
     const rows = await selectRows(
       this.tx,
@@ -100,6 +200,11 @@ export class ProductionMaterialGateway implements MaterialGateway {
     return { inventory, lots: matching, available };
   }
   async availability(warehouseId: number, catalogItemId: number) {
+    const a = this.state.assignments[0];
+    const candidates = this.state.needs.filter(n => n.assignmentId === a?.id && n.round === a.materialRound && n.catalogItemId === catalogItemId);
+    if (candidates.length === 1 && await this.replacementContext(candidates[0].id)) {
+      return (await this.fulfillmentPlan(candidates[0].id, warehouseId, candidates[0].requested, false)).covered;
+    }
     return (await this.stock(warehouseId, catalogItemId)).available;
   }
   async sourceInventoryId(warehouseId: number, catalogItemId: number) {
@@ -183,7 +288,8 @@ export class ProductionMaterialGateway implements MaterialGateway {
     warehouseId: number,
     catalogItemId: number,
     quantity: number,
-    unit: string
+    unit: string,
+    lotIds?: number[]
   ) {
     const stock = await this.stock(warehouseId, catalogItemId);
     if (
@@ -197,7 +303,7 @@ export class ProductionMaterialGateway implements MaterialGateway {
       );
     let left = quantity;
     const allocations: Array<{ lot: any; quantity: number }> = [];
-    for (const lot of stock.lots) {
+    for (const lot of stock.lots.filter(lot => !lotIds || lotIds.includes(Number(lot.lotId)))) {
       const take = Math.min(left, Math.floor(Number(lot.quantity)));
       if (take > 0) {
         allocations.push({ lot, quantity: take });
@@ -219,6 +325,7 @@ export class ProductionMaterialGateway implements MaterialGateway {
     unit: string;
     receiverId: number;
     location: LocationRef;
+    lotIds?: number[];
   }): Promise<PhysicalDelivery[]> {
     const recipient = this.state.users.find(
       x => x.id === input.receiverId && x.active
@@ -248,7 +355,8 @@ export class ProductionMaterialGateway implements MaterialGateway {
         input.warehouseId,
         input.catalogItemId,
         input.quantity,
-        input.unit
+        input.unit,
+        input.lotIds
       ),
       writers = await this.writers(),
       result: PhysicalDelivery[] = [];
@@ -297,13 +405,15 @@ export class ProductionMaterialGateway implements MaterialGateway {
     catalogItemId: number;
     quantity: number;
     unit: string;
+    lotIds?: number[];
   }): Promise<SupplyResult[]> {
     const main = await this.mainWarehouseId(),
       { inventory, allocations } = await this.plan(
         main,
         input.catalogItemId,
         input.quantity,
-        input.unit
+        input.unit,
+        input.lotIds
       ),
       writers = await this.writers(),
       result: SupplyResult[] = [];

@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { TicketMaterialIdentityResolver } from "./TicketMaterialIdentityResolver";
+import { canReviewTicketMaterialQuantity } from "./material-identity-review";
 import { ArrowLeftRight, Link2, Loader2, Send, ShoppingCart } from "lucide-react";
 import ar from "@/i18n/ar";
 import en from "@/i18n/en";
@@ -148,7 +149,7 @@ export function ExecutionPanel({
       mode === "execution" &&
       canReviewTicketTeamExecution(role, actorId, a?.responsibleManagerId);
   const catalogNeed = warehouse && a?.stage === "waiting_material" && !details.error
-    ? state?.needs.find(n => n.id === catalogNeedId && (warehouseNeedId == null || n.id === warehouseNeedId) && n.assignmentId === a.id && n.round === a.materialRound && n.catalogItemId == null)
+    ? state?.needs.find(n => n.id === catalogNeedId && (warehouseNeedId == null || n.id === warehouseNeedId) && n.assignmentId === a.id && n.round === a.materialRound && canReviewTicketMaterialQuantity(state, n))
     : undefined;
   const balances = trpc.ticketTeamExecution.balances.useQuery(
     { assignmentId },
@@ -164,6 +165,27 @@ export function ExecutionPanel({
         needId,
         kind,
       });
+      if (kind === "transfer" && h.replacementFulfillment) {
+        const fingerprint = JSON.stringify({ kind: "replacement-transfer", needId });
+        if (retry.current?.fingerprint !== fingerprint)
+          retry.current = { fingerprint, key: `mtt:${crypto.randomUUID()}` };
+        await utils.client.ticketTeamExecution.provide.mutate({
+          assignmentId,
+          needId,
+          kind: "transfer",
+          expectedRevision: h.revision,
+          operationKey: retry.current.key,
+        });
+        retry.current = null;
+        setMessage(l("تم تحويل مواد الاحتياج والبديل المعتمد", "Need materials and approved replacement transferred", "ضرورت کا مواد اور منظور شدہ متبادل منتقل کر دیا گیا"));
+        await Promise.all([
+          details.refetch(),
+          utils.ticketTeamExecution.balances.invalidate(),
+          utils.ticketTeamAssignments.warehouseRequests.invalidate(),
+        ]);
+        onChanged();
+        return;
+      }
       const params = new URLSearchParams({
         ticketTeamAssignmentId: String(h.assignmentId),
         ticketTeamNeedId: String(h.needId),
@@ -438,6 +460,8 @@ export function ExecutionPanel({
                 ticket={warehouseTicket}
                 language={language}
                 warehouse={mode === "warehouse" && warehouseNeedId != null}
+                onReviewIdentity={warehouse && a.stage === "waiting_material" && n.round === a.materialRound && canReviewTicketMaterialQuantity(state, n)
+                  ? () => { setCatalogNeedId(n.id); setError(""); } : undefined}
                 quantityFields={
                   <>
                     {warehouse &&
@@ -697,7 +721,8 @@ export function ExecutionPanel({
                       dir="auto"
                     >
                       {d.deliveryNumber} — {l("اللوت", "Lot", "لاٹ")} #{d.lotId}{" "}
-                      — {d.quantity} {n.unit} —{" "}
+                      — {d.quantity} {d.physicalUnit || n.unit} —{" "}
+                      {d.replacementName && <span className="font-medium">{l("بديل معتمد", "Approved replacement", "منظور شدہ متبادل")}: {d.replacementName} ({d.originalEquivalent} {n.unit}) — </span>}
                       {l("المستلم", "Recipient", "وصول کنندہ")}:{" "}
                       {state.users.find(u => u.id === d.receivedById)?.name ??
                         `#${d.receivedById}`}
@@ -710,6 +735,7 @@ export function ExecutionPanel({
                         <label className="flex items-center gap-2" key={lotId}>
                           {l("مرتجع اللوت", "Return from lot", "لاٹ کی واپسی")}{" "}
                           #{lotId}
+                          {" "}{state.deliveries.find(d => d.needId === n.id && d.lotId === lotId)?.physicalUnit || n.unit}
                           <Input
                             className="w-24"
                             type="number"
@@ -929,8 +955,8 @@ export function ExecutionPanel({
         key={`${a.id}:${catalogNeed.id}:${catalogNeed.round}`}
         assignment={a} need={catalogNeed} language={language} busy={busy} error={error}
         onClose={() => setCatalogNeedId(null)}
-        onConfirm={(catalogItemId, note) => run("resolve", { needId: catalogNeed.id, catalogItemId, note }, c =>
-          utils.client.ticketTeamExecution.resolve.mutate({ ...c, needId: catalogNeed.id, catalogItemId, note }))}
+        onConfirm={(catalogItemId, note, requestedQuantity) => run("resolve", { needId: catalogNeed.id, catalogItemId, note, requestedQuantity }, c =>
+          utils.client.ticketTeamExecution.resolve.mutate({ ...c, needId: catalogNeed.id, catalogItemId, note, requestedQuantity }))}
       />}
     </div>
   );

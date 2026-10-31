@@ -14,6 +14,8 @@ import {
 import type { TeamManagementActor } from "../../../shared/maintenance-team-tickets/team-management";
 import { canExecuteAllTicketTeams } from "../../../shared/maintenance-team-tickets/execution-permissions";
 import type { TeamDatabase, TeamDatabaseTransaction } from "./repository";
+import { limitReplacementSourceCoverage, loadReplacementFulfillments, replacementPhysicalToOriginal } from "../../supplier-return-followup/fulfillment";
+import { decimal4 } from "../../supplier-return-followup/amounts";
 
 export const resultRows = (value: unknown): any[] => {
   if (!Array.isArray(value) || !Array.isArray(value[0]))
@@ -161,6 +163,41 @@ export async function loadExecution(
     tx,
     sql`SELECT d.* FROM ticket_team_supply_links d INNER JOIN ticket_team_material_needs n ON n.id=d.needId WHERE n.assignmentId=${id} ORDER BY d.id${suffix}`
   );
+  const replacementBySource = await loadReplacementFulfillments(tx,
+    supplies.filter(s => s.sourceKind === "purchase").map(s => num(s.sourceId)));
+  const equivalentByDelivery = new Map<number, number>();
+  const replacementDelivery = new Map<number, { replacementPlanId: number; replacementName: string; physicalUnit: string; physicalCatalogItemId: number }>();
+  const equivalentBySupply = new Map<number, number>();
+  const replacementSupply = new Map<number, { physicalUnit: string; replacementName: string }>();
+  const transferIds = supplies.filter(s => s.sourceKind === "transfer").map(s => num(s.sourceId));
+  const transferLots = new Map<number, number>();
+  if (replacementBySource.size) {
+    for (let offset = 0; offset < transferIds.length; offset += 500) {
+      const rows = await selectRows(tx, sql`SELECT id,lotId FROM warehouse_transfers WHERE id IN (${sql.join(transferIds.slice(offset, offset + 500).map(id => sql`${id}`), sql`,`)})`);
+      for (const row of rows) transferLots.set(num(row.id), num(row.lotId));
+    }
+    for (const source of supplies.filter(s => s.sourceKind === "purchase")) {
+      const need = needs.find(n => num(n.id) === num(source.needId));
+      for (const plan of limitReplacementSourceCoverage(replacementBySource.get(num(source.sourceId)) ?? [], String(source.linkedQuantity))) {
+        if (!need || plan.sourceCatalogItemId !== num(need.catalogItemId) || plan.originalUnit !== need.unitSnapshot
+          || plan.sourceTicketId !== num(r.ticketId) || plan.sourceTicketItemId !== num(r.ticketItemId))
+          throw new TeamTicketError("CONFLICT", "تعويض المورد لا يطابق احتياج الفريق");
+        let deliveredCoverage = BigInt(0), transferredCoverage = BigInt(0);
+        for (const d of deliveries.filter(d => num(d.needId) === num(need.id) && plan.lots.some(l => l.lotId === num(d.lotId)))) {
+          const coverage = replacementPhysicalToOriginal(plan, String(d.issuedQuantity)); deliveredCoverage += decimal4(coverage);
+          equivalentByDelivery.set(num(d.id), Number(coverage));
+          replacementDelivery.set(num(d.id), { replacementPlanId: plan.planId, replacementName: plan.itemName, physicalUnit: plan.lots.find(l => l.lotId === num(d.lotId))!.unit, physicalCatalogItemId: plan.catalogItemId });
+        }
+        for (const s of supplies.filter(s => num(s.needId) === num(need.id) && s.sourceKind === "transfer" && plan.lots.some(l => l.lotId === transferLots.get(num(s.sourceId))))) {
+          const coverage = replacementPhysicalToOriginal(plan, String(s.linkedQuantity)); transferredCoverage += decimal4(coverage);
+          equivalentBySupply.set(num(s.id), Number(coverage));
+          replacementSupply.set(num(s.id), { physicalUnit: plan.lots.find(l => l.lotId === transferLots.get(num(s.sourceId)))!.unit, replacementName: plan.itemName });
+        }
+        if (deliveredCoverage > decimal4(plan.maximumOriginalQuantity) || transferredCoverage > decimal4(plan.maximumOriginalQuantity))
+          throw new TeamTicketError("CONFLICT", "تغطية البديل تتجاوز كمية مصدر الشراء المرتبطة بالاحتياج");
+      }
+    }
+  }
   // Re-read canonical procurement decisions. Never infer physical receipt, and a
   // reopened purchase blocks replacement again instead of retaining a stale cancellation.
   for (const s of supplies.filter(
@@ -358,6 +395,8 @@ export async function loadExecution(
       receivedById: num(d.receivedById),
       used: d.usedQuantity == null ? null : num(d.usedQuantity),
       returned: num(d.returnedQuantity),
+      ...(equivalentByDelivery.has(num(d.id)) ? { originalEquivalent: equivalentByDelivery.get(num(d.id)) } : {}),
+      ...(replacementDelivery.get(num(d.id)) ?? {}),
     })),
     supplies: supplies.map(s => ({
       id: num(s.id),
@@ -367,6 +406,8 @@ export async function loadExecution(
       sourceNumber: s.sourceNumber,
       quantity: num(s.linkedQuantity),
       status: s.status,
+      ...(equivalentBySupply.has(num(s.id)) ? { originalEquivalent: equivalentBySupply.get(num(s.id)) } : {}),
+      ...(replacementSupply.get(num(s.id)) ?? {}),
     })),
     returns: returns.map(x => ({
       id: num(x.id),
@@ -430,7 +471,7 @@ export async function persistExecution(
     if (before.needs.some(x => x.id === n.id)) {
       needIds.set(n.id, n.id);
       await tx.execute(
-        sql`UPDATE ticket_team_material_needs SET catalogItemId=${n.catalogItemId},itemNameSnapshot=${n.name},usedQuantity=${n.used} WHERE id=${n.id} AND assignmentId=${a.id}`
+        sql`UPDATE ticket_team_material_needs SET catalogItemId=${n.catalogItemId},itemNameSnapshot=${n.name},unitSnapshot=${n.unit},requestedQuantity=${n.requested},usedQuantity=${n.used} WHERE id=${n.id} AND assignmentId=${a.id}`
       );
     } else
       needIds.set(

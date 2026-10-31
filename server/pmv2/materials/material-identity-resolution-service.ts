@@ -1,4 +1,4 @@
-import { and, desc, eq, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, ne, notInArray, sql } from "drizzle-orm";
 import {
   pmv2ItemActions,
   pmv2MaterialRequestItems,
@@ -16,6 +16,8 @@ import {
   Pmv2ExternalReferenceError,
 } from "../adapters/current-system";
 import { writePmv2AuditWithDb } from "../audit/service";
+import { canRoleAccessPmv2Warehouse } from "../../../shared/roles";
+import { assertPmv2UnitApprovalUntouched, pmv2ApprovedMaterialQuantity, pmv2CatalogBaseUnit } from "./catalog-unit-policy";
 import {
   Pmv2MaterialRequestItemValidationError,
   validatePmv2MaterialRequestItemWrite,
@@ -174,9 +176,8 @@ export class Pmv2MaterialIdentityResolutionService {
     if (context.status !== "waiting_warehouse") {
       throw new Pmv2MaterialIdentityResolutionError("بند المادة لم يعد بانتظار معالجة المستودع");
     }
-    if (context.catalogItemId != null) {
-      throw new Pmv2MaterialIdentityResolutionError("تم تحديد هوية هذه المادة مسبقًا");
-    }
+    if (["cancelled", "completed"].includes(context.taskStatus) || context.itemStatus !== "waiting_material" || context.itemResult !== "needs_material")
+      throw new Pmv2MaterialIdentityResolutionError("بند الصيانة لم يعد في حالة انتظار المواد");
 
     let teamWarehouse;
     let mainWarehouse;
@@ -189,7 +190,10 @@ export class Pmv2MaterialIdentityResolutionService {
       mapIntegrationError(error);
     }
 
-    const items = await currentCatalogAdapter.searchActiveItems(query, 30);
+    const items = context.catalogItemId == null ? await currentCatalogAdapter.searchActiveItems(query, 30)
+      : await currentCatalogAdapter.getItemsByIds([Number(context.catalogItemId)]);
+    if (context.catalogItemId != null && (!items[0]?.isActive || normalizeUnit(items[0].unit) === normalizeUnit(context.unitSnapshot)))
+      throw new Pmv2MaterialIdentityResolutionError("تم تحديد هوية هذه المادة ووحدتها مسبقًا؛ حدّث الشاشة");
     const ids = items.map((item) => item.id);
     const [teamAvailabilities, mainAvailabilities] = await Promise.all([
       currentInventoryAdapter.getCatalogAvailabilities(ids, Number(context.teamWarehouseId)),
@@ -236,7 +240,7 @@ export class Pmv2MaterialIdentityResolutionService {
 
   async resolveIdentity(
     actorUserId: number,
-    input: { requestItemId: number; catalogItemId: number },
+    input: { requestItemId: number; catalogItemId: number; requestedQuantity?: number },
     auditContext?: { ipAddress?: string; userAgent?: string },
   ) {
     const requestItemId = Number(input.requestItemId);
@@ -251,30 +255,49 @@ export class Pmv2MaterialIdentityResolutionService {
     } catch (error) {
       mapIntegrationError(error);
     }
-    const officialItemName = String(catalogItem!.nameAr || catalogItem!.nameEn || `#${catalogItemId}`);
+    let officialItemName = String(catalogItem!.nameAr || catalogItem!.nameEn || `#${catalogItemId}`);
 
     const db = await requireDb();
     const result = await db.transaction(async (tx: any) => {
+      const [actorRows] = await tx.execute(sql`SELECT id,role,isActive FROM users WHERE id=${actorUserId} FOR UPDATE`);
+      const actor = Array.isArray(actorRows) ? actorRows[0] : null;
+      if (!actor || Number(actor.isActive) !== 1 || !canRoleAccessPmv2Warehouse(actor.role))
+        throw new Pmv2MaterialIdentityResolutionError("ليس لديك صلاحية معالجة طلب مواد المستودع");
       await tx.execute(sql`SELECT id FROM pmv2_material_request_items WHERE id = ${requestItemId} FOR UPDATE`);
       const context = await loadUnlistedContext(tx, requestItemId);
       if (!context) throw new Pmv2MaterialIdentityResolutionError("بند طلب المادة غير موجود");
       if (context.status !== "waiting_warehouse") {
         throw new Pmv2MaterialIdentityResolutionError("بند المادة لم يعد بانتظار معالجة المستودع");
       }
-      if (context.catalogItemId != null) {
-        throw new Pmv2MaterialIdentityResolutionError("تم تحديد هوية هذه المادة مسبقًا؛ حدّث الشاشة");
-      }
-      if (context.itemStatus !== "waiting_material" || context.itemResult !== "needs_material") {
+      const [catalogRows] = await tx.execute(sql`SELECT id,nameAr,nameEn,code,unit,isActive FROM catalog_items WHERE id=${catalogItemId} FOR UPDATE`);
+      const currentCatalog = Array.isArray(catalogRows) ? catalogRows[0] : null;
+      if (!currentCatalog || Number(currentCatalog.isActive) !== 1) throw new Pmv2MaterialIdentityResolutionError("صنف الكتالوج غير نشط أو غير موجود");
+      catalogItem = { ...catalogItem!, ...currentCatalog, isActive: true };
+      officialItemName = String(currentCatalog.nameAr || currentCatalog.nameEn || `#${catalogItemId}`);
+      let authoritativeUnit: string;
+      try { authoritativeUnit = pmv2CatalogBaseUnit(currentCatalog.unit); } catch (error) { throw new Pmv2MaterialIdentityResolutionError((error as Error).message); }
+      const repairing = context.catalogItemId != null;
+      if (repairing && (Number(context.catalogItemId) !== catalogItemId || normalizeUnit(context.unitSnapshot) === normalizeUnit(authoritativeUnit)))
+        throw new Pmv2MaterialIdentityResolutionError("تم تحديد هوية هذه المادة ووحدتها مسبقًا؛ حدّث الشاشة");
+      if (["cancelled", "completed"].includes(context.taskStatus) || context.itemStatus !== "waiting_material" || context.itemResult !== "needs_material") {
         throw new Pmv2MaterialIdentityResolutionError("بند الصيانة لم يعد في حالة انتظار المواد");
       }
 
       const routeDecision = await loadLatestRequestRouteDecision(tx, Number(context.taskItemId), requestItemId);
-      if (!routeDecision || routeDecision.snapshot.catalogItemId != null) {
+      if (!routeDecision || (repairing ? Number(routeDecision.snapshot.catalogItemId) !== catalogItemId : routeDecision.snapshot.catalogItemId != null)) {
         throw new Pmv2MaterialIdentityResolutionError("تعذر العثور على قرار المادة غير المدرجة المرتبط بهذا الطلب");
       }
       if (Number(routeDecision.snapshot.teamWarehouseId) !== Number(context.teamWarehouseId)) {
         throw new Pmv2MaterialIdentityResolutionError("مخزن الفريق في قرار المادة لا يطابق الطلب الحالي");
       }
+      const [historyRows] = await tx.execute(sql`SELECT (EXISTS(SELECT 1 FROM pmv2_material_purchase_links WHERE materialRequestItemId=${requestItemId})
+        OR EXISTS(SELECT 1 FROM pmv2_material_usages WHERE materialRequestItemId=${requestItemId})) AS hasHistory`);
+      if (!Array.isArray(historyRows) || historyRows.length !== 1) throw Error("تعذر التحقق من سجل احتياج المواد");
+      const historyActions = await tx.select({ action: pmv2ItemActions.action, note: pmv2ItemActions.note }).from(pmv2ItemActions)
+        .where(eq(pmv2ItemActions.taskItemId, Number(context.taskItemId)));
+      try { assertPmv2UnitApprovalUntouched({ received: Number(context.receivedWarehouseQuantity || 0), issued: Number(context.issuedToTeamQuantity || 0),
+        hasProcurementOrUsage: Number(historyRows[0].hasHistory) !== 0, actions: historyActions, requestItemId, routeActionId: routeDecision.id }); }
+      catch (error) { throw new Pmv2MaterialIdentityResolutionError((error as Error).message); }
 
       const otherActive = await tx
         .select({ id: pmv2MaterialRequestItems.id })
@@ -283,6 +306,7 @@ export class Pmv2MaterialIdentityResolutionService {
         .where(and(
           eq(pmv2MaterialRequests.taskItemId, Number(context.taskItemId)),
           eq(pmv2MaterialRequestItems.catalogItemId, catalogItemId),
+          ne(pmv2MaterialRequestItems.id, requestItemId),
           notInArray(pmv2MaterialRequestItems.status, ["consumed", "cancelled"]),
         ))
         .limit(1);
@@ -309,17 +333,16 @@ export class Pmv2MaterialIdentityResolutionService {
         throw new Pmv2MaterialIdentityResolutionError("توجد أكثر من بطاقة مخزون للصنف المحدد في مخزن الفريق؛ صحح هوية المخزون قبل الربط");
       }
 
-      const requestUnit = String(routeDecision.snapshot.unit || context.unitSnapshot || "").trim();
-      const authoritativeUnit = String(
-        teamAvailability.unit || mainAvailability.unit || catalogItem!.unit || "",
-      ).trim();
-      if (authoritativeUnit && requestUnit && normalizeUnit(authoritativeUnit) !== normalizeUnit(requestUnit)) {
+      const requestUnit = authoritativeUnit;
+      if ([teamAvailability, mainAvailability].some(stock => stock.inventoryId && stock.unit && normalizeUnit(stock.unit) !== normalizeUnit(authoritativeUnit))) {
         throw new Pmv2MaterialIdentityResolutionError(
-          `وحدة الطلب التي أدخلها الفني هي «${requestUnit}»، بينما وحدة الصنف/المخزون هي «${authoritativeUnit}». صحح الوحدة قبل ربط المادة حتى لا تتغير الكمية بالخطأ.`,
+          "وحدة المخزون الحالية تختلف عن وحدة الكتالوج؛ راجع سجل الصنف قبل اعتماد الاحتياج",
         );
       }
 
-      const fullNeedQuantity = roundQuantity(Number(routeDecision.snapshot.requestedQuantity));
+      let fullNeedQuantity: number;
+      try { fullNeedQuantity = pmv2ApprovedMaterialQuantity(input.requestedQuantity ?? routeDecision.snapshot.requestedQuantity, authoritativeUnit); }
+      catch (error) { throw new Pmv2MaterialIdentityResolutionError((error as Error).message); }
       const teamAvailableQuantity = roundQuantity(Number(teamAvailability.availableQuantity || 0));
       const shortageQuantity = roundQuantity(fullNeedQuantity - teamAvailableQuantity);
       const route = shortageQuantity <= 0 ? "team_inventory" as const : "material_request" as const;
@@ -377,6 +400,8 @@ export class Pmv2MaterialIdentityResolutionService {
         materialRequestId: Number(context.requestId),
         materialRequestItemId: requestItemId,
         originalItemName: String(context.itemNameSnapshot),
+        originalRequestedQuantity: Number(routeDecision.snapshot.requestedQuantity),
+        originalUnit: routeDecision.snapshot.unit || context.unitSnapshot || null,
         resolvedCatalogItemId: catalogItemId,
         resolvedItemName: officialItemName,
         resolvedItemCode: catalogItem!.code || null,
@@ -403,7 +428,7 @@ export class Pmv2MaterialIdentityResolutionService {
         entity: "material_request_item",
         entityId: requestItemId,
         oldValues: {
-          catalogItemId: null,
+          catalogItemId: context.catalogItemId,
           itemNameSnapshot: String(context.itemNameSnapshot),
           requestedQuantity: Number(context.requestedQuantity || 0),
           unitSnapshot: context.unitSnapshot,

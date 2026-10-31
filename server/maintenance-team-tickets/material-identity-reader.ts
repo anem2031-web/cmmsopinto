@@ -3,7 +3,7 @@ import type { IdentityAvailability, MaterialIdentityCandidate, TicketIdentityCon
 import { searchTicketMaterialCatalog } from "./material-catalog-search";
 
 export interface IdentityReaders {
-  searchCatalog(search: string, limit: number): Promise<Array<Omit<MaterialIdentityCandidate, "teamAvailability" | "mainWarehouseAvailability">>>;
+  searchCatalog(search: string, limit: number, catalogItemId?: number): Promise<Array<Omit<MaterialIdentityCandidate, "teamAvailability" | "mainWarehouseAvailability">>>;
   requireWarehouse(id: number): Promise<{ id: number }>;
   mainWarehouse(): Promise<{ id: number }>;
   balances(ids: number[], warehouseId: number): Promise<IdentityAvailability[]>;
@@ -23,7 +23,8 @@ export async function searchTicketIdentityCandidates(context: TicketIdentityCont
   const readers = injected ?? await existingReaders();
   try {
     const [team, main] = await Promise.all([readers.requireWarehouse(context.warehouseId), readers.mainWarehouse()]);
-    const items = await readers.searchCatalog(search.trim(), 30);
+    const found = await readers.searchCatalog(context.catalogItemId == null ? search.trim() : "", context.catalogItemId == null ? 30 : 1, context.catalogItemId);
+    const items = context.catalogItemId == null ? found : found.filter(item => item.id === context.catalogItemId);
     const ids = items.map(item => item.id);
     const [teamBalances, mainBalances] = ids.length ? await Promise.all([readers.balances(ids, team.id), readers.balances(ids, main.id)]) : [[], []];
     const teamById = new Map(teamBalances.map(item => [item.catalogItemId, item]));

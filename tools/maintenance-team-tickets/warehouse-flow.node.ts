@@ -14,6 +14,7 @@ import type {
 import { createTicketTeamExecutionRouter } from "../../server/routers/maintenance-teams/execution.router";
 import { SqlTicketTeamAssignmentRepository } from "../../server/routers/maintenance-teams/assignment.repository";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
+import { router as rpcRouter } from "../../server/routers/_shared/procedures";
 
 async function setup(catalogItemId = 102, quantity = 3) {
   const d = createDemo();
@@ -285,11 +286,11 @@ test("strict API issues from authenticated warehouse to an explicit recipient", 
     assert.equal(options?.recipientId, 4);
     return d.service;
   });
-  const caller = router.createCaller({
+  const caller = rpcRouter({ ticketTeamExecution: router }).createCaller({
     user: { id: 2, role: "warehouse", isActive: 1 },
     req: {},
     res: {},
-  } as any);
+  } as any).ticketTeamExecution;
   await assert.rejects(
     caller.issue({
       ...(await d.cmd()),
@@ -394,6 +395,8 @@ test("existing purchase form sends ticket linkage only for tickets; ordinary and
       validatePurchaseForm: () => true,
       validateMaterialLinkedPurchase: () => true,
       isLinkedTicketActionBlocked: false,
+      isReturnReplacement: false,
+      supplierReturnPlanId: undefined,
       fromIdeaId: undefined,
       ticketId: 1001,
       ticketItemId: 5001,

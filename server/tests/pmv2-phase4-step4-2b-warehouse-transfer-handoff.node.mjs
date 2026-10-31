@@ -47,7 +47,8 @@ test("prepareTransferHandoff blocks ambiguous inventory and unit mismatch", () =
 
 test("transfer handoff still computes current availability but new default requires the full shortage before opening transfer", () => {
   assert.match(handoffService, /requestedQuantity - issuedToTeamQuantity/);
-  assert.match(handoffService, /Math\.min\(remainingQuantity, availableQuantity\)/);
+  assert.match(handoffService, /planPmv2Fulfillment/);
+  assert.match(handoffService, /fulfillmentAllocations/);
   assert.match(handoffService, /availableQuantity \+ 0\.0005 < remainingQuantity/);
   assert.match(handoffService, /لا يبدأ PM V2 تحويلًا جزئيًا افتراضيًا/);
 });
@@ -58,11 +59,14 @@ test("PM V2 accepts only transfer numbers that already exist in the current tran
   assert.match(handoffService, /لم يتم العثور على تحويل مستودع مؤكد/);
 });
 
-test("confirmed transfers must match Main source, Team destination, Catalog identity and unit", () => {
+test("confirmed transfers match Main and Team and either original identity/unit or verified replacement lot", () => {
   assert.match(handoffService, /transfer\.fromWarehouseId !== mainWarehouse/);
   assert.match(handoffService, /transfer\.toWarehouseId !== teamWarehouse/);
-  assert.match(handoffService, /transfer\.catalogItemId !== initialContext\.catalogItemId/);
-  assert.match(handoffService, /normalizeUnit\(transfer\.unit\) !== normalizeUnit\(initialContext\.unitSnapshot\)/);
+  assert.match(handoffService, /transfer\.catalogItemId !== context\.catalogItemId/);
+  assert.match(handoffService, /normalizeUnit\(transfer\.unit\) !== normalizeUnit\(context\.unitSnapshot\)/);
+  assert.match(handoffService, /replacementForPhysicalLot\(replacements/);
+  assert.match(handoffService, /lotId: transfer\.inventoryLotId/);
+  assert.match(handoffService, /maximumOriginalQuantity/);
 });
 
 test("each real transfer is traced in PM V2 and the same transfer cannot satisfy another request", () => {

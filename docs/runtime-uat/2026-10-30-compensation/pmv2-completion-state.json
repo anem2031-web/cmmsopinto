@@ -1,0 +1,299 @@
+{
+  "source": {
+    "taskId": 180052,
+    "taskItemId": 180185,
+    "requestItemId": 120002,
+    "requestId": 120002,
+    "catalogItemId": 180300,
+    "quantity": 4,
+    "unit": "قطعة"
+  },
+  "marker": "TEST-SUPPLIER-RETURN-PMV2-20261030-B:replacement-transfer:120002",
+  "originalName": "مفصلة 3 سم",
+  "stage": "complete",
+  "transferHandoff": {
+    "requestItemId": 120002,
+    "requestId": 120002,
+    "taskItemId": 180185,
+    "taskNumber": "PMV2-20261030-P60002-T60002",
+    "catalogItemId": 180300,
+    "materialName": "مفصلة 3 سم",
+    "unit": "قطعة",
+    "requestedQuantity": 4,
+    "issuedToTeamQuantity": 0,
+    "remainingQuantity": 4,
+    "availableQuantity": 4,
+    "transferableNow": 4,
+    "sourceWarehouse": {
+      "id": 1,
+      "code": "WH-MAIN",
+      "nameAr": "المخزن الرئيسي",
+      "nameEn": "Main Warehouse",
+      "isActive": true
+    },
+    "destinationWarehouse": {
+      "id": 30002,
+      "code": "SUB-1",
+      "nameAr": "مخزن الدهانات",
+      "nameEn": "Paint warehouse",
+      "isActive": true
+    },
+    "sourceInventoryId": 390004,
+    "lotsRequired": true,
+    "fulfillmentAllocations": [
+      {
+        "sourceInventoryId": 390006,
+        "catalogItemId": 180302,
+        "materialName": "مفصلة خزانة ذات اغلاق لين مجلفنه",
+        "quantity": 6,
+        "unit": "قطعة",
+        "originalQuantity": 4,
+        "lotId": 150008,
+        "lotCode": "LOT-2026-00845",
+        "trackingToken": "CMMS-LOT-4cbf31e8-cfe5-4457-902b-1f2dd78cbe4b",
+        "replacementPlanId": 6
+      }
+    ]
+  },
+  "transferAttempted": true,
+  "transferResult": {
+    "batchNumber": "TRB-2026-120001",
+    "batchId": 120001,
+    "results": [
+      {
+        "fromInventoryId": 390006,
+        "success": true,
+        "transferNumber": "TRF-2026-120002",
+        "categoryMismatch": true,
+        "lotId": 150008,
+        "lotCode": "LOT-2026-00845",
+        "message": "تم — تنبيه: تصنيف غير مطابق"
+      }
+    ]
+  },
+  "transferNumbers": [
+    "TRF-2026-120002"
+  ],
+  "transferDetail": {
+    "displayNumber": "TRB-2026-120001",
+    "fromWarehouseId": 1,
+    "toWarehouseId": 30002,
+    "notes": "TEST-SUPPLIER-RETURN-PMV2-20261030-B:replacement-transfer:120002",
+    "createdById": 60723,
+    "createdAt": "2026-10-30 15:15:13",
+    "items": [
+      {
+        "transferNumber": "TRF-2026-120002",
+        "itemName": "مفصلة خزانة ذات اغلاق لين مجلفنه",
+        "internalCode": "INV-2026-390006",
+        "unit": "قطعة",
+        "lotId": 150008,
+        "lotCode": "LOT-2026-00845",
+        "quantity": "6.000",
+        "categoryMismatch": true,
+        "notes": "TEST-SUPPLIER-RETURN-PMV2-20261030-B:replacement-transfer:120002"
+      }
+    ]
+  },
+  "transferLink": {
+    "recovered": true,
+    "status": "consumed",
+    "issuedToTeamQuantity": 4
+  },
+  "routeDecisionActionId": 120006,
+  "issueResult": {
+    "completed": true,
+    "partial": false,
+    "posted": [
+      {
+        "deliveryNumber": "DLV-2026-480006",
+        "deliveryDocumentId": 390006,
+        "inventoryTransactionId": 660026,
+        "lotId": 150008,
+        "lotCode": "LOT-2026-00845",
+        "lotTrackingToken": "CMMS-LOT-4cbf31e8-cfe5-4457-902b-1f2dd78cbe4b",
+        "quantity": 6,
+        "unit": "قطعة",
+        "link": {
+          "idempotent": false,
+          "issueActionId": 120008,
+          "deliveryNumber": "DLV-2026-480006",
+          "linkedQuantity": 4,
+          "physicalQuantity": 6,
+          "totalIssuedQuantity": 4,
+          "remainingQuantity": 0,
+          "allIssued": true,
+          "taskStatus": "ready_to_complete"
+        }
+      }
+    ],
+    "issuedQuantity": 4,
+    "recipientUserId": 60723
+  },
+  "physicalParts": [
+    {
+      "deliveryDocumentId": 390006,
+      "lotCode": "LOT-2026-00845",
+      "itemName": "مفصلة خزانة ذات اغلاق لين مجلفنه",
+      "catalogItemId": 180302,
+      "quantity": 6,
+      "unit": "قطعة",
+      "originalQuantity": 4,
+      "replacementPlanId": 6
+    }
+  ],
+  "originalCompletion": {
+    "routeDecisionActionId": 120006,
+    "catalogItemId": 180300,
+    "itemName": "مفصلة 3 سم",
+    "itemCode": "02-04-007",
+    "unit": "قطعة",
+    "requiredQuantity": 4,
+    "issuedQuantity": 4,
+    "defaultUsedQuantity": 4,
+    "physicalParts": [
+      {
+        "deliveryDocumentId": 390006,
+        "lotCode": "LOT-2026-00845",
+        "itemName": "مفصلة خزانة ذات اغلاق لين مجلفنه",
+        "catalogItemId": 180302,
+        "quantity": 6,
+        "unit": "قطعة",
+        "originalQuantity": 4,
+        "replacementPlanId": 6
+      }
+    ]
+  },
+  "physicalUsages": [
+    {
+      "deliveryDocumentId": 390006,
+      "usedQuantity": 5
+    }
+  ],
+  "completionResult": {
+    "taskId": 180052,
+    "taskItemId": 180185,
+    "taskStatus": "completed",
+    "itemStatus": "completed",
+    "result": "fixed",
+    "note": "TEST-SUPPLIER-RETURN-PMV2-20261030-B:replacement-transfer:120002",
+    "visitId": 120002,
+    "joinedVisit": false,
+    "isLeader": true,
+    "pendingReturnQuantity": 0,
+    "hasPhysicalReturns": true,
+    "materialDeclarations": [
+      {
+        "declarationActionId": 120009,
+        "version": 1,
+        "routeDecisionActionId": 120006,
+        "catalogItemId": 180300,
+        "materialRequestItemId": 120002,
+        "requiredQuantity": 4,
+        "issuedQuantity": 4,
+        "usedQuantity": null,
+        "toReturnQuantity": null,
+        "unit": "قطعة",
+        "declaredById": 60723,
+        "physicalMode": true,
+        "physicalUsages": [
+          {
+            "deliveryDocumentId": 390006,
+            "usedQuantity": 5
+          }
+        ]
+      }
+    ],
+    "taskCompleted": true
+  },
+  "declarationActionId": 120009,
+  "pendingReturn": {
+    "declarationActionId": 120009,
+    "taskNumber": "PMV2-20261030-P60002-T60002",
+    "taskItemTitle": "TEST-SUPPLIER-RETURN-PMV2-20261030-B",
+    "catalogItemId": 180300,
+    "itemName": "مفصلة 3 سم",
+    "itemCode": "02-04-007",
+    "unit": "قطعة",
+    "issuedQuantity": 4,
+    "usedQuantity": null,
+    "toReturnQuantity": null,
+    "physicalMode": true,
+    "physicalUsages": [
+      {
+        "deliveryDocumentId": 390006,
+        "itemName": "مفصلة خزانة ذات اغلاق لين مجلفنه",
+        "lotCode": "LOT-2026-00845",
+        "unit": "قطعة",
+        "usedQuantity": 5
+      }
+    ],
+    "returnedQuantity": 0,
+    "remainingReturnQuantity": 1,
+    "previousRecipientUserId": 60723,
+    "previousRecipientName": "مدير النظام",
+    "lots": [
+      {
+        "lotId": 150008,
+        "lotCode": "LOT-2026-00845",
+        "issuedQuantity": 6,
+        "returnableQuantity": 1,
+        "physicalReturnableQuantity": 1,
+        "physicalUnit": "قطعة"
+      }
+    ],
+    "singleLot": true
+  },
+  "returnAttempted": true,
+  "returnResult": {
+    "completed": true,
+    "posted": [
+      {
+        "returnId": 240009,
+        "returnNumber": "RTN-2026-240009",
+        "sourceDeliveryDocumentId": 390006,
+        "lotId": 150008,
+        "lotCode": "LOT-2026-00845",
+        "returnedQuantity": 1
+      }
+    ],
+    "remainingReturnQuantity": 0
+  },
+  "originalAfter": {
+    "requestId": 120002,
+    "requestedById": 60723,
+    "visitId": 120002,
+    "createdAt": "2026-10-30 14:56:10",
+    "requestItemId": 120002,
+    "catalogItemId": 180300,
+    "itemNameSnapshot": "مفصلة 3 سم",
+    "requestedQuantity": 4,
+    "unitSnapshot": "قطعة",
+    "status": "consumed",
+    "receivedWarehouseQuantity": 0,
+    "issuedToTeamQuantity": 4,
+    "identityResolution": null
+  },
+  "taskAfter": {
+    "itemStatus": "completed",
+    "itemResult": "fixed"
+  },
+  "result": {
+    "originalQuantity": 4,
+    "originalCatalogItemId": 180300,
+    "physicalIssued": 6,
+    "physicalUsed": 5,
+    "physicalReturned": 1,
+    "actualCatalogItemId": 180302,
+    "actualUnit": "قطعة",
+    "deliveryDocumentIds": [
+      390006
+    ],
+    "transferNumbers": [
+      "TRF-2026-120002"
+    ],
+    "returnIds": [
+      240009
+    ]
+  }
+}

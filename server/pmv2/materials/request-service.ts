@@ -10,7 +10,7 @@ import {
   pmv2Teams,
 } from "../../../drizzle/schema";
 import { getDb } from "../../_core/db/client";
-import { getPmv2MaterialQuantityValidationMessage } from "../../../shared/pmv2MaterialQuantity";
+import { pmv2ApprovedMaterialQuantity, pmv2CatalogBaseUnit } from "./catalog-unit-policy";
 import {
   currentCatalogAdapter,
   currentInventoryAdapter,
@@ -38,7 +38,7 @@ type SubmitMaterialNeedInput = {
   catalogItemId: number | null;
   unlistedItemName?: string;
   quantity: number;
-  unit: string;
+  unit?: string;
 };
 
 const MATERIAL_ROUTE_DECISION_ACTION = "material_route_decision";
@@ -67,7 +67,7 @@ function parseMaterialRouteDecision(note: string | null | undefined): MaterialRo
     if (parsed.version !== 1) return null;
     if (parsed.route !== "team_inventory" && parsed.route !== "material_request") return null;
     if (parsed.catalogItemId != null && (!Number.isInteger(parsed.catalogItemId) || parsed.catalogItemId <= 0)) return null;
-    if (!parsed.itemNameSnapshot || !parsed.unit) return null;
+    if (!parsed.itemNameSnapshot || (parsed.catalogItemId != null && !parsed.unit)) return null;
     const requestedQuantity = Number(parsed.requestedQuantity);
     const shortageQuantity = Number(parsed.shortageQuantity);
     if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) return null;
@@ -78,7 +78,7 @@ function parseMaterialRouteDecision(note: string | null | undefined): MaterialRo
       catalogItemId: parsed.catalogItemId ?? null,
       itemNameSnapshot: String(parsed.itemNameSnapshot),
       requestedQuantity,
-      unit: String(parsed.unit),
+      unit: String(parsed.unit || ""),
       teamWarehouseId: Number(parsed.teamWarehouseId || 0),
       inventoryId: parsed.inventoryId == null ? null : Number(parsed.inventoryId),
       availableQuantity: parsed.availableQuantity == null ? null : Number(parsed.availableQuantity),
@@ -500,14 +500,8 @@ export class Pmv2MaterialRequestService {
     auditContext?: { ipAddress?: string; userAgent?: string },
   ) {
     const quantity = Number(input.quantity);
-    const unit = input.unit.trim();
-    if (!unit || unit.length > 50) {
-      throw new Pmv2MaterialFlowError("وحدة المادة مطلوبة ويجب ألا تتجاوز 50 حرفًا");
-    }
-    const quantityValidationMessage = getPmv2MaterialQuantityValidationMessage(quantity, unit);
-    if (quantityValidationMessage) {
-      throw new Pmv2MaterialFlowError(quantityValidationMessage);
-    }
+    // Client unit is retained only as a compatibility input; never authoritative.
+    let unit = "";
 
     const catalogItemId = input.catalogItemId == null ? null : Number(input.catalogItemId);
     if (catalogItemId !== null && (!Number.isInteger(catalogItemId) || catalogItemId <= 0)) {
@@ -529,7 +523,7 @@ export class Pmv2MaterialRequestService {
         mapIntegrationError(error);
       }
     }
-    const itemNameSnapshot = catalogItem
+    let itemNameSnapshot = catalogItem
       ? (catalogItem.nameAr || catalogItem.nameEn)
       : unlistedItemName;
 
@@ -542,6 +536,7 @@ export class Pmv2MaterialRequestService {
           taskItemId: pmv2TaskItems.id,
           itemStatus: pmv2TaskItems.status,
           itemResult: pmv2TaskItems.result,
+          taskStatus: pmv2Tasks.status,
           teamId: pmv2Tasks.teamId,
           teamWarehouseId: pmv2Teams.warehouseId,
         })
@@ -562,9 +557,18 @@ export class Pmv2MaterialRequestService {
 
       const context = accessible[0];
       if (!context) throw new Pmv2TechnicianAccessError();
-      if (context.itemStatus !== "waiting_material" || context.itemResult !== "needs_material") {
+      if (["cancelled", "completed"].includes(context.taskStatus) || context.itemStatus !== "waiting_material" || context.itemResult !== "needs_material") {
         throw new Pmv2MaterialFlowError("يمكن تحديد الاحتياج المادي فقط لبند حالته بانتظار المواد");
       }
+      if (catalogItemId !== null) {
+        const [current] = await tx.execute(sql`SELECT id,nameAr,nameEn,code,unit,isActive FROM catalog_items WHERE id=${catalogItemId} FOR UPDATE`);
+        const item = Array.isArray(current) ? current[0] : null;
+        if (!item || Number(item.isActive) !== 1) throw new Pmv2MaterialFlowError("صنف الكتالوج غير نشط أو غير موجود");
+        try { unit = pmv2CatalogBaseUnit(item.unit); } catch (error) { throw new Pmv2MaterialFlowError((error as Error).message); }
+        catalogItem = { ...catalogItem!, ...item, isActive: true };
+        itemNameSnapshot = String(item.nameAr || item.nameEn || `#${catalogItemId}`);
+      }
+      try { pmv2ApprovedMaterialQuantity(quantity, unit); } catch (error) { throw new Pmv2MaterialFlowError((error as Error).message); }
 
       const needActions = await tx
         .select({ id: pmv2ItemActions.id, visitId: pmv2ItemActions.visitId })

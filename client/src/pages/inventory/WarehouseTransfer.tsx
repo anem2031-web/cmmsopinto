@@ -21,6 +21,7 @@ import { fmtDate } from "@/lib/printInventoryOperationDocuments";
 import { requiresBranchTransferConfirmation } from "@shared/branch-transfer-confirmation";
 import { BranchTransferConfirmation } from "@/components/inventory/BranchTransferConfirmation";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { buildPmv2TransferCart } from "@/lib/pmv2-transfer-plan";
 
 const MAX_ITEMS_PER_TRANSFER = 20;
 
@@ -37,6 +38,7 @@ interface CartItem {
   lotBalanceAtAddTime?: number;
   notes?: string;
   materialNeedId?: number;
+  originalQuantity?: number;
 }
 
 interface MaterialTransferHandoffContext {
@@ -121,6 +123,8 @@ export default function WarehouseTransfer() {
   const lotsEnabled = !!lotTrackingStatus?.enabled;
   const resolveTransferLotMut = trpc.transfers.resolveLot.useMutation();
   const linkConfirmedPmv2TransfersMut = trpc.pmv2.warehouse.linkConfirmedTransfers.useMutation();
+  const preparePmv2TransferMut = trpc.pmv2.warehouse.prepareTransferHandoff.useMutation();
+  const [pmv2Prepared, setPmv2Prepared] = useState(false);
 
   const [fromWarehouseId, setFromWarehouseId] = useState<string>("");
   const [toWarehouseId, setToWarehouseId] = useState<string>("");
@@ -152,6 +156,14 @@ export default function WarehouseTransfer() {
 
   useEffect(() => {
     if (!materialHandoff || pmv2HandoffInitialized || !inventoryList) return;
+    if(materialHandoff.source==="pmv2") {
+      setPmv2HandoffInitialized(true);
+      void preparePmv2TransferMut.mutateAsync({requestItemId:materialHandoff.requestItemId}).then(handoff=>{
+        const prepared=buildPmv2TransferCart(handoff,materialHandoff,inventoryList as any[],MAX_ITEMS_PER_TRANSFER);
+        setFromWarehouseId(String(handoff.sourceWarehouse.id));setToWarehouseId(String(handoff.destinationWarehouse.id));setCart(prepared);setFoundItem(null);setPmv2Prepared(true);
+      }).catch(error=>toast.error(error?.message||"تعذر تحميل توزيع مواد PMV2 المعتمد"));
+      return;
+    }
     const item = (inventoryList as any[]).find(
       (candidate: any) =>
         Number(candidate.id) === materialHandoff.inventoryId &&
@@ -187,7 +199,7 @@ export default function WarehouseTransfer() {
     if (!materialHandoff) return null;
     const alreadyInCart = cart
       .filter((item) => item.materialNeedId === materialHandoff.requestItemId)
-      .reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+      .reduce((sum, item) => sum + Number(item.originalQuantity ?? item.quantity ?? 0), 0);
     return Math.max(0, Number((materialHandoff.quantity - alreadyInCart).toFixed(3)));
   };
 
@@ -214,6 +226,7 @@ export default function WarehouseTransfer() {
     (usersList as any[])?.find((u: any) => u.id === id)?.name || `#${id}`;
 
   function selectItem(item: any) {
+    if(pmv2Prepared) {toast.error("توزيع الصنف والبدائل محمّل من احتياج PMV2؛ ارجع إلى الطلب لتحديثه");return;}
     if (materialHandoff && Number(item.id) !== materialHandoff.inventoryId) {
       toast.error(materialHandoff?.source === "tickets" ? "هذا التحويل مرتبط بصنف التذكرة؛ ارجع للطلب لبدء تحويل مادة أخرى" : "هذا التحويل بدأ من طلب PM V2 لصنف محدد؛ ارجع للطلب لبدء تحويل مادة أخرى");
       return;
@@ -225,6 +238,7 @@ export default function WarehouseTransfer() {
   }
 
   async function handleQRScan(code: string) {
+    if(pmv2Prepared) {toast.error("تم تحديد اللوتات المعتمدة لاحتياج PMV2 تلقائيًا");return;}
     if (materialHandoff && materialTransferPosted) {
       toast.error(materialHandoff?.source === "tickets" ? "تم تنفيذ التحويل؛ ارجع إلى مواد التذكرة لإعادة فحص المتبقي قبل تحويل جديد" : "تم تنفيذ تحويل مرتبط بهذا السياق بالفعل؛ ارجع إلى طلب PM V2 لإعادة فحص المتبقي قبل تحويل جديد");
       return;
@@ -280,6 +294,7 @@ export default function WarehouseTransfer() {
   }
 
   function addItemToCart() {
+    if(pmv2Prepared) return;
     if (materialHandoff && materialTransferPosted) {
       toast.error(materialHandoff?.source === "tickets" ? "تم تنفيذ التحويل؛ ارجع إلى مواد التذكرة لإعادة فحص المتبقي قبل تحويل جديد" : "تم تنفيذ تحويل مرتبط بهذا السياق بالفعل؛ ارجع إلى طلب PM V2 لإعادة فحص المتبقي قبل تحويل جديد");
       return;
@@ -352,6 +367,7 @@ export default function WarehouseTransfer() {
   }
 
   function removeFromCart(idx: number) {
+    if(pmv2Prepared) {toast.error("يجب تحويل كامل توزيع احتياج PMV2؛ ارجع إلى الطلب لتحديث التوزيع");return;}
     setCart(prev => prev.filter((_, i) => i !== idx));
   }
 
@@ -392,7 +408,7 @@ export default function WarehouseTransfer() {
       const materialCartQuantity = Number(
         cart
           .filter((item) => item.materialNeedId === materialHandoff.requestItemId)
-          .reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+          .reduce((sum, item) => sum + Number(item.originalQuantity ?? item.quantity ?? 0), 0)
           .toFixed(3),
       );
       if (Math.abs(materialCartQuantity - materialHandoff.quantity) > 0.0005) {
@@ -806,7 +822,7 @@ export default function WarehouseTransfer() {
                             </Badge>
                           )}
                         </div>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-destructive" onClick={() => removeFromCart(idx)}>
+                        <Button variant="ghost" size="icon" disabled={pmv2Prepared} className="h-7 w-7 shrink-0 text-destructive" onClick={() => removeFromCart(idx)}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>

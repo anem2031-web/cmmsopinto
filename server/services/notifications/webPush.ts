@@ -70,6 +70,7 @@ async function sendToSubscriptions(
   subscriptions: Array<{ endpoint: string; p256dh: string; auth: string }>,
   payload: PushPayload
 ) {
+  if (process.env.WEB_PUSH_ENABLED === "false") return { sent: 0, failed: 0 };
   let sent = 0;
   let failed = 0;
 

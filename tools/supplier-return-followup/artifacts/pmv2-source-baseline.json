@@ -1,0 +1,45 @@
+{
+  "baselineCommit": "8e4fd3cc1930ce47092a2a6502b10c53852ca6d7",
+  "baseline": {
+    "passed": 33,
+    "failed": [
+      "warehouse queue explains the task need, team snapshot, Main-Warehouse need and remaining transfer",
+      "warehouse queue rechecks on the server before navigating to the existing transfer screen",
+      "existing Warehouse Transfer screen receives PM V2 context without replacing its transfer engine",
+      "PM V2 handoff locks its route and exact source Inventory identity",
+      "PM V2 quantity cap applies across multiple Lot rows",
+      "Lot QR validation remains owned by the existing transfer workflow",
+      "a posted PM V2 transfer freezes the stale handoff until the operator returns to the queue",
+      "operator can retry PM V2 linking without repeating the physical transfer",
+      "current transfer receives a readable PM V2 reference while normal transfers remain unchanged",
+      "full remaining task need is calculated server-side and lot allocations are automatic",
+      "requesting technician is the default recipient but another active team technician may receive",
+      "technician completion requests only actual used quantity",
+      "technician save creates a pending return instead of mutating warehouse stock",
+      "warehouse pending-return queue identifies original recipient and only original issue lots",
+      "single-lot return is fixed automatically without QR or lot selection",
+      "a physical Delivery that fails PM V2 linking is persisted as relink-only recovery"
+    ]
+  },
+  "working": {
+    "passed": 33,
+    "failed": [
+      "warehouse queue explains the task need, team snapshot, Main-Warehouse need and remaining transfer",
+      "warehouse queue rechecks on the server before navigating to the existing transfer screen",
+      "existing Warehouse Transfer screen receives PM V2 context without replacing its transfer engine",
+      "PM V2 handoff locks its route and exact source Inventory identity",
+      "PM V2 quantity cap applies across multiple Lot rows",
+      "Lot QR validation remains owned by the existing transfer workflow",
+      "a posted PM V2 transfer freezes the stale handoff until the operator returns to the queue",
+      "operator can retry PM V2 linking without repeating the physical transfer",
+      "current transfer receives a readable PM V2 reference while normal transfers remain unchanged",
+      "full remaining task need is calculated server-side and lot allocations are automatic",
+      "requesting technician is the default recipient but another active team technician may receive",
+      "technician completion requests only actual used quantity",
+      "technician save creates a pending return instead of mutating warehouse stock",
+      "warehouse pending-return queue identifies original recipient and only original issue lots",
+      "single-lot return is fixed automatically without QR or lot selection",
+      "a physical Delivery that fails PM V2 linking is persisted as relink-only recovery"
+    ]
+  }
+}

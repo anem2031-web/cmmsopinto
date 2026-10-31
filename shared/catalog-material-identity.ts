@@ -27,4 +27,7 @@ export interface TicketIdentityContext {
   requestedQuantity: number;
   unit: string;
   warehouseId: number;
+  /** Present for a linked need whose unit requires warehouse review. */
+  catalogItemId?: number;
+  catalogUnit?: string;
 }

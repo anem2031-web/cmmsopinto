@@ -24,6 +24,7 @@ export const operationalDispatchText = {
     unavailable: "المخزون غير متاح",
     noStock: "لا يوجد رصيد في المستودع المحدد",
     optional: "اختياري",
+    replacement: "البديل المعتمد للاحتياج الأصلي",
   },
   en: {
     add: "Add item",
@@ -49,6 +50,7 @@ export const operationalDispatchText = {
     unavailable: "Stock unavailable",
     noStock: "No stock in selected warehouse",
     optional: "Optional",
+    replacement: "Approved replacement for original need",
   },
   ur: {
     add: "آئٹم شامل کریں",
@@ -75,5 +77,6 @@ export const operationalDispatchText = {
     unavailable: "اسٹاک دستیاب نہیں",
     noStock: "منتخب گودام میں اسٹاک نہیں",
     optional: "اختیاری",
+    replacement: "اصل ضرورت کا منظور شدہ متبادل",
   },
 };

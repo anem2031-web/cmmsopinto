@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { applyOperationalReplacementStock, loadOperationalReplacements, replacementStockLines } from "./replacement";
 import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import {
@@ -358,12 +359,17 @@ export async function issuePrepared(
     )
       invalid("المستلم الفعلي يجب أن يكون فنيًا نشطًا");
     // Lock inventory in ID order before any stock mutation. The canonical writer rechecks each physical lot.
-    const stock = await loadOperationalStock(
+    const replacements = await loadOperationalReplacements(tx, lines);
+    const substituteLines = replacementStockLines(replacements);
+    const allStockLines = [...lines, ...substituteLines];
+    if (allStockLines.length > 500) invalid("عدد مراجع اللوتات والتعويضات يتجاوز حد الصرف الجماعي؛ يلزم مراجعة الطلب");
+    const allStock = await loadOperationalStock(
       tx,
-      lines,
+      allStockLines,
       true,
       contexts[0]!.warehouseId
     );
+    const stock = applyOperationalReplacementStock(allStock.filter(s => s.itemId > 0), allStock.filter(s => s.itemId < 0), replacements);
     const allocations = lines.map(line =>
       allocateOperationalFifo(
         stock.find(s => s.itemId === Number(line.id))!,
@@ -392,15 +398,16 @@ export async function issuePrepared(
             operationalBatchKey: input.operationKey,
             operationalOperationKey: hash([input.operationKey, line.id, k]),
             operationalRequestFingerprint: fingerprint,
+            operationalReplacementAware: replacements.has(Number(line.id)),
             inventoryId: lot.inventoryId,
             quantity: lot.quantity,
-            unit: line.unit,
+            unit: lot.unit,
             performedById: actor.id,
             deliveredToId: recipient.actualCollectorId,
             assignedTechnicianId: context.collectorId,
             assignedTechnicianName: context.collectorName,
             lotTrackingToken: lot.trackingToken,
-            notes: `${order.orderNumber}: ${order.reason}\nالمستلم المحدد: ${context.collectorName}${recipient.notes ? `\n${recipient.notes}` : ""}`,
+            notes: `${order.orderNumber}: ${order.reason}\nالمستلم المحدد: ${context.collectorName}${lot.replacementName ? `\nتعويض الاحتياج الأصلي: ${line.itemName}\nالبديل المعتمد: ${lot.replacementName}` : ""}${recipient.notes ? `\n${recipient.notes}` : ""}`,
             costAllocations: [
               {
                 beneficiarySiteId: context.siteId,

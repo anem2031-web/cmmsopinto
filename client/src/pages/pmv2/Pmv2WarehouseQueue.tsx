@@ -10,6 +10,7 @@ import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { localizeApiError } from "@/i18n/apiError";
+import { getPmv2MaterialQuantityValidationMessage, pmv2MaterialUnitRequiresWholeQuantity } from "@shared/pmv2MaterialQuantity";
 
 function buildStatusView(t: any): Record<string, { label: string; className: string }> {
   return {
@@ -62,6 +63,7 @@ export default function Pmv2WarehouseQueue() {
   const [returnQtyByLot, setReturnQtyByLot] = useState<Record<string, string>>({});
   const [identityRequest, setIdentityRequest] = useState<any | null>(null);
   const [identitySearch, setIdentitySearch] = useState("");
+  const [approvedIdentityQuantity, setApprovedIdentityQuantity] = useState("");
   const [selectedIdentityCatalogId, setSelectedIdentityCatalogId] = useState<number | null>(null);
   const [activeSection, setActiveSection] = useState<"waiting" | "ready" | "returns">("waiting");
 
@@ -92,7 +94,8 @@ export default function Pmv2WarehouseQueue() {
   const openIdentityResolver = (item: any) => {
     setIdentityRequest(item);
     setIdentitySearch("");
-    setSelectedIdentityCatalogId(null);
+    setSelectedIdentityCatalogId(item.catalogItemId == null ? null : Number(item.catalogItemId));
+    setApprovedIdentityQuantity(String(item.taskNeedQuantity ?? item.requestedQuantity ?? ""));
   };
 
   const issueRequirement = trpc.pmv2.warehouse.issueReadyRequirement.useMutation({
@@ -122,6 +125,7 @@ export default function Pmv2WarehouseQueue() {
 
   const data = queue.data;
   const identityItems = identityCandidates.data?.items ?? [];
+  const identityCatalogUnit = identityItems.find(item => Number(item.id) === selectedIdentityCatalogId)?.unit || "";
 
   async function startWarehouseTransfer(requestItemId: number) {
     try {
@@ -418,10 +422,11 @@ export default function Pmv2WarehouseQueue() {
                     <div className="rounded-lg border bg-muted/10 p-3">
                       <p className="mb-3 text-sm font-semibold">{t.workflow.pmv2.actionLabel}</p>
                       <div className="space-y-3">
-                        {item.catalogItemId == null && (
+                        {(item.catalogItemId == null || (item.catalogItem?.unit && item.unitSnapshot !== item.catalogItem.unit)) && (
                           <Button className="w-full gap-2" onClick={() => openIdentityResolver(item)}>
                             <Link2 className="h-4 w-4" />
-                            {t.workflow.pmv2.identifyFromCatalog}
+                            {item.catalogItemId == null ? t.workflow.pmv2.identifyFromCatalog
+                              : language === "ar" ? "اعتماد وحدة وكمية الاحتياج" : language === "ur" ? "ضرورت کی اکائی اور مقدار کی تصدیق" : "Confirm requested unit and quantity"}
                           </Button>
                         )}
 
@@ -508,7 +513,7 @@ export default function Pmv2WarehouseQueue() {
                       <p><span className="text-muted-foreground">{t.workflow.pmv2.materialRequester}:</span> <strong>{item.requesterName}</strong></p>
                       <p className="mt-1"><span className="text-muted-foreground">{t.workflow.pmv2.teamLabel}:</span> {item.teamCode}</p>
                       {!!item.lotAllocations?.length && (
-                        <p className="mt-1"><span className="text-muted-foreground">{t.workflow.pmv2.autoLotAllocation}:</span> {item.lotAllocations.map((lot: any) => `${lot.lotCode} = ${qty(lot.quantity, item.unit)}`).join(" + ")}</p>
+                        <p className="mt-1"><span className="text-muted-foreground">{t.workflow.pmv2.autoLotAllocation}:</span> {item.lotAllocations.map((lot: any) => `${lot.lotCode} = ${qty(lot.quantity, lot.unit||item.unit)}${lot.replacementPlanId ? ` ↔ ${qty(lot.originalQuantity,item.unit)}`:""}`).join(" + ")}</p>
                       )}
                     </div>
                     {item.pendingRelink ? (
@@ -574,13 +579,14 @@ export default function Pmv2WarehouseQueue() {
                     <p className="mb-3 font-semibold">{t.workflow.pmv2.quantities}</p>
                     <div className="grid gap-2 sm:grid-cols-4">
                       <div><span className="text-muted-foreground">{t.workflow.pmv2.issuedForTaskWh}</span><div className="font-semibold">{qty(item.issuedQuantity, item.unit)}</div></div>
-                      <div><span className="text-muted-foreground">{t.workflow.pmv2.usedQuantityLabel}</span><div className="font-semibold">{qty(item.usedQuantity, item.unit)}</div></div>
-                      <div><span className="text-muted-foreground">{t.workflow.pmv2.remainingReturnQty}</span><div className="font-semibold">{qty(item.remainingReturnQuantity, item.unit)}</div></div>
+                      <div><span className="text-muted-foreground">{t.workflow.pmv2.usedQuantityLabel}</span><div className="font-semibold">{item.physicalMode?"—":qty(item.usedQuantity, item.unit)}</div></div>
+                      <div><span className="text-muted-foreground">{t.workflow.pmv2.remainingReturnQty}</span><div className="font-semibold">{item.physicalMode?item.lots.map((lot:any)=>qty(lot.returnableQuantity,lot.physicalUnit)).join(" + "):qty(item.remainingReturnQuantity, item.unit)}</div></div>
                       <div><span className="text-muted-foreground">{t.workflow.pmv2.previousRecipient}</span><div className="font-semibold">{item.previousRecipientName || "—"}</div></div>
                     </div>
+                    {!!item.physicalMode && <div className="mt-2 text-xs">{item.physicalUsages.map((part:any)=><p key={part.deliveryDocumentId}>{part.itemName} · {part.lotCode}: {qty(part.usedQuantity,part.unit)}</p>)}</div>}
                   </div>
                   {item.singleLot ? (
-                    <p className="rounded-md border bg-muted/30 p-2">{t.workflow.pmv2.returnLotFixed}: <strong>{item.lots[0]?.lotCode || `#${item.lots[0]?.lotId}`}</strong></p>
+                    <p className="rounded-md border bg-muted/30 p-2">{t.workflow.pmv2.returnLotFixed}: <strong>{item.lots[0]?.lotCode || `#${item.lots[0]?.lotId}`}</strong>{item.lots[0]?.physicalUnit ? ` — ${qty(Number((item.remainingReturnQuantity*item.lots[0].physicalReturnableQuantity/item.lots[0].returnableQuantity).toFixed(3)),item.lots[0].physicalUnit)}`:""}</p>
                   ) : (
                     <div className="rounded-md border p-3">
                       <p className="mb-2 font-medium">{t.workflow.pmv2.selectReturnLots}</p>
@@ -588,8 +594,8 @@ export default function Pmv2WarehouseQueue() {
                         {item.lots.map((lot: any) => {
                           const key = `${item.declarationActionId}:${lot.lotId}`;
                           return <label key={lot.lotId} className="flex items-center justify-between gap-2 rounded border p-2">
-                            <span>{lot.lotCode || `Lot #${lot.lotId}`} · {t.workflow.pmv2.maxReturn}: {lot.returnableQuantity}</span>
-                            <input type="number" min="0" max={lot.returnableQuantity} step="1" dir="ltr" className="h-9 w-24 rounded border px-2" value={returnQtyByLot[key] || ""}
+                            <span>{lot.lotCode || `Lot #${lot.lotId}`} · {t.workflow.pmv2.maxReturn}: {lot.returnableQuantity} {item.physicalMode?lot.physicalUnit:item.unit}{!item.physicalMode&&lot.physicalUnit&&(lot.physicalUnit!==item.unit||Math.abs(lot.physicalReturnableQuantity-lot.returnableQuantity)>0.0005) ? ` ↔ ${lot.physicalReturnableQuantity} ${lot.physicalUnit}`:""}</span>
+                            <input type="number" min="0" max={lot.returnableQuantity} step="0.001" dir="ltr" className="h-9 w-24 rounded border px-2" value={returnQtyByLot[key] || ""}
                               onChange={(event) => setReturnQtyByLot((current) => ({ ...current, [key]: event.target.value }))} />
                           </label>;
                         })}
@@ -630,6 +636,12 @@ export default function Pmv2WarehouseQueue() {
       </Card>
 
       <MaterialIdentityDialog
+        allowDifferentUnits
+        lockCatalogSelection={identityRequest?.catalogItemId != null}
+        quantityApproval={{ value: approvedIdentityQuantity, onChange: setApprovedIdentityQuantity,
+          step: pmv2MaterialUnitRequiresWholeQuantity(identityCatalogUnit) ? 1 : 0.001,
+          validate: value => getPmv2MaterialQuantityValidationMessage(value, identityCatalogUnit)
+            || (Math.abs(value * 1000 - Math.round(value * 1000)) > 0.000001 ? "دقة الكمية لا تتجاوز ثلاث منازل عشرية" : null) }}
         open={Boolean(identityRequest)} onClose={() => { if (!resolveMaterialIdentity.isPending) { setIdentityRequest(null); setIdentitySearch(""); setSelectedIdentityCatalogId(null); } }}
         language={language} originalName={identityRequest?.itemNameSnapshot || ""}
         requestedQuantity={identityRequest?.taskNeedQuantity ?? identityRequest?.requestedQuantity}
@@ -637,7 +649,7 @@ export default function Pmv2WarehouseQueue() {
         search={identitySearch} onSearch={value => { setIdentitySearch(value); setSelectedIdentityCatalogId(null); }}
         items={identityItems} selectedId={selectedIdentityCatalogId} onSelect={setSelectedIdentityCatalogId}
         loading={identityCandidates.isFetching} error={identityCandidates.error} busy={resolveMaterialIdentity.isPending}
-        onConfirm={() => { if (identityRequest?.requestItemId && selectedIdentityCatalogId) resolveMaterialIdentity.mutate({ requestItemId: Number(identityRequest.requestItemId), catalogItemId: Number(selectedIdentityCatalogId) }); }}
+        onConfirm={() => { if (identityRequest?.requestItemId && selectedIdentityCatalogId) resolveMaterialIdentity.mutate({ requestItemId: Number(identityRequest.requestItemId), catalogItemId: Number(selectedIdentityCatalogId), requestedQuantity: Number(approvedIdentityQuantity) }); }}
       />
     </div>
   );

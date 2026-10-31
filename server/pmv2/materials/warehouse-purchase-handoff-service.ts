@@ -16,6 +16,7 @@ import {
   Pmv2ExternalReferenceError,
 } from "../adapters/current-system";
 import { writePmv2AuditWithDb } from "../audit/service";
+import { assertPmv2CompensationSettled,Pmv2ReplacementCoverageError } from "./replacement-coverage";
 
 export class Pmv2WarehousePurchaseHandoffError extends Error {
   constructor(message: string) {
@@ -301,6 +302,8 @@ export class Pmv2WarehousePurchaseHandoffService {
     if (context.catalogItemId == null) {
       throw new Pmv2WarehousePurchaseHandoffError("لا يمكن بدء طلب شراء قبل ربط المادة بصنف معروف في الدليل");
     }
+    try {await assertPmv2CompensationSettled(db,requestItemId,Number(context.taskItemId));}
+    catch(error) {if(error instanceof Pmv2ReplacementCoverageError) throw new Pmv2WarehousePurchaseHandoffError(error.message);throw error;}
 
     let mainWarehouse;
     let catalogItem;
@@ -404,6 +407,8 @@ export class Pmv2WarehousePurchaseHandoffService {
       if (!locked || locked.catalogItemId !== context.catalogItemId) {
         throw new Pmv2WarehousePurchaseHandoffError("تغيرت هوية طلب المواد أثناء الربط؛ حدّث الشاشة");
       }
+      try {await assertPmv2CompensationSettled(tx,requestItemId,Number(locked.taskItemId));}
+      catch(error) {if(error instanceof Pmv2ReplacementCoverageError) throw new Pmv2WarehousePurchaseHandoffError(error.message);throw error;}
 
       const existingRows = await tx
         .select({

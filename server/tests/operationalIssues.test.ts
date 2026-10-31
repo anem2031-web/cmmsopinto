@@ -33,6 +33,7 @@ function fixture() {
   const tx: any = {
     execute: async (statement: any) => {
       const { sql: q, params: p } = new MySqlDialect().sqlToQuery(statement); queries.push({ q, p });
+      if (q.includes("information_schema.TABLES")) return rows([]);
       if (q.startsWith("SELECT id FROM users WHERE id=")) return rows([{ id: p[0] }]);
       if (q.includes("FROM operational_issue_orders WHERE operationKey=")) return rows(state.orders.filter((o: any) => o.operationKey === p[0] && o.createdById === p[1]));
       if (q.includes("FROM sections WHERE")) return rows(flags.sectionValid && p[0] === 2 && p[1] === 1 ? [{ id: 2 }] : []);

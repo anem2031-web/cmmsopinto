@@ -346,13 +346,12 @@ test("shortage creates need only, never partial self-issue", async () => {
     "CONFLICT"
   );
 });
-test("material input rejects empty, duplicate, wrong unit, fractional and negative quantities", async () => {
+test("material input rejects empty, duplicate, fractional and negative quantities", async () => {
   const d = await setup();
   const good = { catalogItemId: 101, unit: "قطعة", quantity: 1 };
   for (const input of [
     [],
     [good, good],
-    [{ ...good, unit: "متر" }],
     [{ ...good, quantity: 0.5 }],
     [{ ...good, quantity: -1 }],
   ])

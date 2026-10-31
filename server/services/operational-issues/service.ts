@@ -1,10 +1,11 @@
 import { sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
-import { canCreateOperationalIssue, canProcessOperationalIssue, canReadOperationalIssue, operationalNetCost, type OperationalActor, type OperationalOrder, type OperationalLine, type OperationalDelivery } from "../../../shared/operational-issues";
+import { canCreateOperationalIssue, canProcessOperationalIssue, canReadOperationalIssue, operationalNetCost, type OperationalActor, type OperationalOrder, type OperationalLine, type OperationalDelivery, type OperationalStock } from "../../../shared/operational-issues";
 import { executionRows as rows } from "./issue-reference";
 import { dispatchContext } from "../../../shared/operational-dispatch";
 import { addOperationalPurchaseDraft, loadOperationalStock, operationalPurchaseLinks, operationalPurchaseReady, type OperationalPurchasePorts } from "./stock-procurement";
+import { applyOperationalReplacementStock, assertOperationalReplacementIdentity, loadOperationalReplacements, replacementStockLines } from "./replacement";
 
 export interface OperationalPorts {
   database(): Promise<any>;
@@ -40,6 +41,8 @@ export class OperationalIssueService {
     this.actor(actor, "read");
     const db = await this.ports.database(); const order = await this.order(db, actor, id);
     const items = await rows(db, sql`SELECT i.*,COALESCE((SELECT SUM(d.quantity) FROM operational_issue_deliveries d WHERE d.orderItemId=i.id),0) AS issuedQuantity FROM operational_issue_items i WHERE i.orderId=${id} ORDER BY i.id`) as OperationalLine[];
+    const replacements = await loadOperationalReplacements(db, items);
+    for (const line of items) if (replacements.has(Number(line.id))) line.issuedQuantity = replacements.get(Number(line.id))!.issued;
     const deliveries = await rows(db, sql`SELECT x.*,d.deliveryNumber,l.lotCode,COALESCE((SELECT SUM(r.returnedQuantity) FROM warehouse_returns r WHERE r.sourceDeliveryDocumentId=x.deliveryDocumentId),0) AS returnedQuantity
       FROM operational_issue_deliveries x INNER JOIN operational_issue_items i ON i.id=x.orderItemId
       INNER JOIN delivery_documents d ON d.id=x.deliveryDocumentId LEFT JOIN inventory_lots l ON l.id=d.lotId WHERE i.orderId=${id} ORDER BY x.id`) as OperationalDelivery[];
@@ -54,7 +57,13 @@ export class OperationalIssueService {
     const db = await this.ports.database(); await this.order(db, actor, id);
     const lines = await rows(db, sql`SELECT * FROM operational_issue_items WHERE orderId=${id} ORDER BY id`) as OperationalLine[];
     const context = dispatchContext(lines[0]?.dispatchContext);
-    const items = await loadOperationalStock(db, lines, false, context?.warehouseId);
+    const replacements = await loadOperationalReplacements(db, lines);
+    const ordinaryStock = await loadOperationalStock(db, lines, false, context?.warehouseId);
+    const substituteLines = replacementStockLines(replacements);
+    const substituteStock: OperationalStock[] = [];
+    for (let offset = 0; offset < substituteLines.length; offset += 500)
+      substituteStock.push(...await loadOperationalStock(db, substituteLines.slice(offset, offset + 500), false, context?.warehouseId));
+    const items = applyOperationalReplacementStock(ordinaryStock, substituteStock, replacements);
     const procurementReady = await operationalPurchaseReady(db);
     const links = procurementReady ? await operationalPurchaseLinks(db, id, lines) : [];
     for (const item of items) item.purchase = links.find(link => link.orderItemId === item.itemId) || null;
@@ -144,13 +153,13 @@ export class OperationalIssueService {
       if (line?.dispatchContext != null) throw new TRPCError({ code: "BAD_REQUEST", message: "يلزم تأكيد صرف الطلب بالكامل" });
       if (!line || order.status !== "approved") throw new TRPCError({ code: "BAD_REQUEST", message: "الصنف لا ينتمي إلى أمر معتمد" });
       const lot = await this.ports.resolveLot({ warehouseId: input.warehouseId, identifier: input.lotTrackingToken });
-      if (Number(lot.linkedItemId) !== Number(line.catalogItemId)) throw new TRPCError({ code: "BAD_REQUEST", message: "اللوت لا يطابق الصنف المطلوب" });
-      if (String(lot.unit || "").trim() !== String(line.unit).trim()) throw new TRPCError({ code: "CONFLICT", message: "وحدة اللوت لا تطابق وحدة أمر الصرف؛ لا يتم تحويل الكمية تلقائيًا" });
+      const replacement = await assertOperationalReplacementIdentity(tx, line, { catalogItemId: Number(lot.linkedItemId), lotTrackingToken: lot.trackingToken, unit: String(lot.unit || ""), quantity: input.quantity });
+      const replacementPlan = replacement?.plans.find(plan => plan.lots.some(allowed => allowed.trackingToken === lot.trackingToken));
       const result = await this.ports.issue(tx, {
         operationalIssueItemId: input.itemId, operationalOperationKey: input.operationKey, operationalRequestFingerprint: requestFingerprint,
-        inventoryId: lot.inventoryId, quantity: input.quantity, unit: String(line.unit),
+        inventoryId: lot.inventoryId, quantity: input.quantity, unit: String(lot.unit), operationalReplacementAware: Boolean(replacement),
         performedById: actor.id, deliveredToId: Number(order.collectorId), lotTrackingToken: lot.trackingToken,
-        notes: `${order.orderNumber}: ${order.reason}`,
+        notes: `${order.orderNumber}: ${order.reason}${replacementPlan ? `\nتعويض الاحتياج الأصلي: ${line.itemName}\nالبديل المعتمد: ${replacementPlan.itemName}` : ""}`,
         costAllocations: [{ beneficiarySiteId: Number(order.siteId), beneficiarySectionId: Number(order.sectionId), quantity: input.quantity }],
       });
       await this.audit(tx, actor.id, input.orderId, "operational_issue_delivered"); return result;

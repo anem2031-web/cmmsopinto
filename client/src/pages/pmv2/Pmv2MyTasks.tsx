@@ -226,7 +226,6 @@ function MaterialNeedPanel({ taskId, taskItemId, onBusyChange }: { taskId: numbe
   const [materialPickerOpen, setMaterialPickerOpen] = useState(false);
   const [unlistedItemName, setUnlistedItemName] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [unit, setUnit] = useState("");
   const [lastRoute, setLastRoute] = useState<any>(null);
   const [formOpenOverride, setFormOpenOverride] = useState<boolean | null>(null);
   const [receiveConfirmation, setReceiveConfirmation] = useState<null | {
@@ -246,7 +245,6 @@ function MaterialNeedPanel({ taskId, taskItemId, onBusyChange }: { taskId: numbe
     setMaterialPickerOpen(false);
     setUnlistedItemName("");
     setQuantity("");
-    setUnit("");
   };
 
   const materialState = trpc.pmv2.technician.materialState.useQuery({ taskId, taskItemId });
@@ -373,8 +371,9 @@ function MaterialNeedPanel({ taskId, taskItemId, onBusyChange }: { taskId: numbe
   const selectedCatalogItem = catalogItems.find(item => String(item.id) === catalogItemId)
     ?? (String(selectedCatalogItemSnapshot?.id ?? "") === catalogItemId ? selectedCatalogItemSnapshot : undefined);
   const selectedAvailability = selectedCatalogItem?.teamAvailability;
+  const unit = entryMode === "catalog" ? String(selectedCatalogItem?.unit || "").trim() : "";
   const parsedQuantity = Number(quantity);
-  const previewUnit = selectedAvailability?.unit || unit.trim() || selectedCatalogItem?.unit || t.workflow.pmv2.unitGeneric;
+  const previewUnit = unit || t.workflow.pmv2.unitGeneric;
   const quantityValidationMessage = quantity.trim()
     ? getPmv2MaterialQuantityValidationMessage(parsedQuantity, unit)
     : null;
@@ -390,7 +389,7 @@ function MaterialNeedPanel({ taskId, taskItemId, onBusyChange }: { taskId: numbe
     catalogItemId && quantityIsValid && unit.trim() && !blockedCatalogItemIds.has(Number(catalogItemId)),
   );
   const canSubmitUnlisted = Boolean(
-    unlistedItemName.trim() && quantityIsValid && unit.trim() && !unlistedDuplicateActive,
+    unlistedItemName.trim() && quantityIsValid && !unlistedDuplicateActive,
   );
   const fullStockReadyForSelfReceive = Boolean(
     entryMode === "catalog" &&
@@ -646,8 +645,6 @@ function MaterialNeedPanel({ taskId, taskItemId, onBusyChange }: { taskId: numbe
                               setCatalogItemId(String(item.id));
                               setSelectedCatalogItemSnapshot(item);
                               setLastRoute(null);
-                              const preferredUnit = item.teamAvailability?.unit || item.unit;
-                              if (preferredUnit) setUnit(preferredUnit);
                               setSearch("");
                               setMaterialPickerOpen(false);
                             }}
@@ -742,15 +739,8 @@ function MaterialNeedPanel({ taskId, taskItemId, onBusyChange }: { taskId: numbe
             dir="ltr"
             aria-invalid={Boolean(quantityValidationMessage)}
           />
-          <Input
-            value={unit}
-            onChange={event => {
-              setUnit(event.target.value);
-              setLastRoute(null);
-            }}
-            placeholder={t.workflow.pmv2.unitPlaceholder}
-            maxLength={50}
-          />
+          {entryMode === "catalog" ? <Input value={unit} readOnly aria-label={t.workflow.pmv2.unitPlaceholder} placeholder={t.workflow.pmv2.unitPlaceholder} />
+            : <p className="self-center text-xs text-muted-foreground">{language === "ar" ? "يحدد المستودع الوحدة والكمية عند الربط بالكتالوج" : language === "ur" ? "کیٹلاگ سے ربط کے وقت گودام اکائی اور مقدار کی تصدیق کرے گا" : "Warehouse confirms the unit and quantity when linking the catalog item"}</p>}
         </div>
 
         {quantityValidationMessage && (
@@ -818,7 +808,7 @@ function MaterialNeedPanel({ taskId, taskItemId, onBusyChange }: { taskId: numbe
           disabled={anyMaterialMutationPending || (entryMode === "catalog" ? !canSubmitCatalog : !canSubmitUnlisted)}
           onClick={() => {
             const nextQuantity = Number(quantity);
-            if (!unit.trim()) {
+            if (entryMode === "catalog" && !unit.trim()) {
               toast.error(t.workflow.pmv2.enterMaterialUnit);
               return;
             }
@@ -853,7 +843,7 @@ function MaterialNeedPanel({ taskId, taskItemId, onBusyChange }: { taskId: numbe
               catalogItemId: entryMode === "catalog" ? Number(catalogItemId) : null,
               unlistedItemName: entryMode === "unlisted" ? unlistedItemName.trim() : undefined,
               quantity: nextQuantity,
-              unit: unit.trim(),
+              unit: entryMode === "catalog" ? unit : undefined,
             });
           }}
         >
@@ -925,13 +915,20 @@ function MaterialNeedPanel({ taskId, taskItemId, onBusyChange }: { taskId: numbe
 }
 
 function MaterialCompletionPanel({ taskId, taskItemId, onBusyChange }: { taskId: number; taskItemId: number; onBusyChange?: (busy: boolean) => void }) {
+  const {t}=useTranslation();
   const utils = trpc.useUtils();
   const materials = trpc.pmv2.technician.completionMaterials.useQuery({ taskId, taskItemId });
   const [usedByCatalog, setUsedByCatalog] = useState<Record<number, string>>({});
+  const [usedByDelivery, setUsedByDelivery] = useState<Record<number,string>>({});
   const [note, setNote] = useState("");
 
   useEffect(() => {
     if (!materials.data) return;
+    setUsedByDelivery(current=>{
+      const next={...current};
+      for(const item of materials.data) for(const part of item.physicalParts ?? []) if(next[part.deliveryDocumentId]==null) next[part.deliveryDocumentId]=String(part.quantity);
+      return next;
+    });
     setUsedByCatalog((current) => {
       const next = { ...current };
       for (const item of materials.data) {
@@ -943,7 +940,8 @@ function MaterialCompletionPanel({ taskId, taskItemId, onBusyChange }: { taskId:
 
   const complete = trpc.pmv2.technician.submitBasicResult.useMutation({
     onSuccess: async (data: any) => {
-      if (Number(data.pendingReturnQuantity || 0) > 0) {
+      if(data.hasPhysicalReturns) toast.success(t.workflow.pmv2.pendingPmv2Returns);
+      else if (Number(data.pendingReturnQuantity || 0) > 0) {
         toast.success(t.workflow.pmv2.usageRecordedReturnPending.replace("{qty}", String(data.pendingReturnQuantity)));
       } else {
         toast.success(t.workflow.pmv2.fixedNoReturn);
@@ -960,12 +958,12 @@ function MaterialCompletionPanel({ taskId, taskItemId, onBusyChange }: { taskId:
     onError: (error) => toast.error(localizeApiError(error.message)),
   });
 
+  useEffect(() => { onBusyChange?.(complete.isPending); return () => onBusyChange?.(false); }, [complete.isPending, onBusyChange]);
   if (materials.isLoading) return <p className="text-xs text-muted-foreground">{t.workflow.pmv2.loadingIssuedMaterials}</p>;
   if (materials.error) return <p className="text-xs text-destructive">{localizeApiError(materials.error.message)}</p>;
   const rows = materials.data ?? [];
   if (!rows.length) return <p className="text-xs text-muted-foreground">{t.workflow.pmv2.noIssuedMaterials}</p>;
 
-  useEffect(() => { onBusyChange?.(complete.isPending); return () => onBusyChange?.(false); }, [complete.isPending, onBusyChange]);
   return (
     <div className="w-full space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 sm:w-[420px]">
       <div>
@@ -976,7 +974,11 @@ function MaterialCompletionPanel({ taskId, taskItemId, onBusyChange }: { taskId:
         <div key={item.catalogItemId} className="rounded-md border bg-background p-2">
           <div className="text-sm font-medium">{item.itemName}{item.itemCode ? ` — ${item.itemCode}` : ""}</div>
           <div className="mt-1 text-xs text-muted-foreground">{t.workflow.pmv2.issuedForTask}: {item.issuedQuantity} {item.unit} · {t.workflow.pmv2.requiredLabel}: {item.requiredQuantity} {item.unit}</div>
-          <label className="mt-2 block text-xs font-medium">{t.workflow.pmv2.usedQuantityLabel}</label>
+          {!!item.physicalParts?.length ? item.physicalParts.map((part:any)=><div key={part.deliveryDocumentId} className="mt-2 rounded border p-2">
+            <p className="text-xs font-medium">{part.itemName} · {part.lotCode} · {part.quantity} {part.unit} ↔ {part.originalQuantity} {item.unit}</p>
+            <label className="mt-2 block text-xs font-medium">{t.workflow.pmv2.usedQuantityLabel} ({part.unit})</label>
+            <Input type="number" min="0" max={part.quantity} step={pmv2MaterialUnitRequiresWholeQuantity(part.unit)?"1":"0.001"} value={usedByDelivery[part.deliveryDocumentId]??""} onChange={event=>setUsedByDelivery(current=>({...current,[part.deliveryDocumentId]:event.target.value}))}/>
+          </div>) : <><label className="mt-2 block text-xs font-medium">{t.workflow.pmv2.usedQuantityLabel}</label>
           <Input
             type="number"
             min="0"
@@ -984,7 +986,7 @@ function MaterialCompletionPanel({ taskId, taskItemId, onBusyChange }: { taskId:
             step={pmv2MaterialUnitRequiresWholeQuantity(item.unit) ? "1" : "0.001"}
             value={usedByCatalog[item.catalogItemId] ?? ""}
             onChange={(event) => setUsedByCatalog((current) => ({ ...current, [item.catalogItemId]: event.target.value }))}
-          />
+          /></>}
         </div>
       ))}
       <Textarea rows={2} maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} placeholder={t.workflow.pmv2.repairNoteOptional} />
@@ -996,8 +998,9 @@ function MaterialCompletionPanel({ taskId, taskItemId, onBusyChange }: { taskId:
           const materialUsages = rows.map((item) => ({
             catalogItemId: item.catalogItemId,
             usedQuantity: Number(usedByCatalog[item.catalogItemId] ?? item.issuedQuantity),
+            ...(item.physicalParts?.length ? {physicalUsages:item.physicalParts.map((part:any)=>({deliveryDocumentId:part.deliveryDocumentId,usedQuantity:Number(usedByDelivery[part.deliveryDocumentId]??part.quantity)}))}: {}),
           }));
-          if (materialUsages.some((item) => !Number.isFinite(item.usedQuantity) || item.usedQuantity < 0)) {
+          if (materialUsages.some((item) => !Number.isFinite(item.usedQuantity) || item.usedQuantity < 0 || item.physicalUsages?.some((part:any)=>!Number.isFinite(part.usedQuantity)||part.usedQuantity<0))) {
             toast.error(t.workflow.pmv2.invalidUsedQty);
             return;
           }

@@ -67,6 +67,11 @@ export function allocateOperationalFifo(
 ) {
   if (stock.needsReview || !Number.isFinite(quantity) || quantity <= 0)
     throw new Error("راجع أرصدة الصنف قبل الصرف");
+  if (stock.fulfillment) {
+    if (!stock.fulfillment.ready || Math.round(quantity * 1000) !== Math.round(stock.fulfillment.remainingOriginalQuantity * 1000))
+      throw new Error("الرصيد غير كافٍ لاستكمال الاحتياج وبدائله المعتمدة بالكامل");
+    return stock.fulfillment.allocations.map(lot => ({ ...lot }));
+  }
   let remaining = Math.round(quantity * 1000);
   const allocations: Array<OperationalStock["lots"][number]> = [];
   for (const lot of [...stock.lots].sort(

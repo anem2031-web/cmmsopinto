@@ -1,0 +1,95 @@
+{
+  "runId": "UAT-ALTERNATIVES-20261030",
+  "endpoint": "http://localhost:4002",
+  "environment": "copycmms2",
+  "orderIds": [
+    3810008,
+    3810009
+  ],
+  "receipts": {
+    "3810008": {
+      "receiptId": 570007,
+      "receiptNumber": "RCV-2026-570007",
+      "inventoryId": 390005,
+      "lot": {
+        "lotId": 150007,
+        "lotCode": "LOT-2026-00844",
+        "trackingToken": "CMMS-LOT-386e4f2f-a2c6-4093-9b1f-0bc7dec3aa8d",
+        "sourceType": "receipt",
+        "catalogItemId": 180228,
+        "originalQuantity": 6,
+        "remainingQuantity": 6,
+        "balanceQuantity": 6,
+        "purchaseUnit": "قطعة",
+        "issueUnit": "قطعة",
+        "batchNumber": null,
+        "expiryDate": null,
+        "receiptId": 570007,
+        "receiptNumber": "RCV-2026-570007",
+        "invoiceNumber": "UAT-ALTERNATIVES-20261030-3810008",
+        "invoiceDate": "2026-10-30",
+        "receiptVendorName": "GREAT SOUTHERN ENERGY",
+        "supplierNameAr": "GREAT SOUTHERN ENERGY",
+        "supplierNameEn": "GREAT SOUTHERN ENERGY",
+        "createdAt": "2026-10-30 15:12:28",
+        "supplierName": "GREAT SOUTHERN ENERGY"
+      }
+    },
+    "3810009": {
+      "receiptId": 570008,
+      "receiptNumber": "RCV-2026-570008",
+      "inventoryId": 390006,
+      "lot": {
+        "lotId": 150008,
+        "lotCode": "LOT-2026-00845",
+        "trackingToken": "CMMS-LOT-4cbf31e8-cfe5-4457-902b-1f2dd78cbe4b",
+        "sourceType": "receipt",
+        "catalogItemId": 180302,
+        "originalQuantity": 6,
+        "remainingQuantity": 6,
+        "balanceQuantity": 6,
+        "purchaseUnit": "قطعة",
+        "issueUnit": "قطعة",
+        "batchNumber": null,
+        "expiryDate": null,
+        "receiptId": 570008,
+        "receiptNumber": "RCV-2026-570008",
+        "invoiceNumber": "UAT-ALTERNATIVES-20261030-3810009",
+        "invoiceDate": "2026-10-30",
+        "receiptVendorName": "GREAT SOUTHERN ENERGY",
+        "supplierNameAr": "GREAT SOUTHERN ENERGY",
+        "supplierNameEn": "GREAT SOUTHERN ENERGY",
+        "createdAt": "2026-10-30 15:12:44",
+        "supplierName": "GREAT SOUTHERN ENERGY"
+      }
+    }
+  },
+  "stages": [
+    {
+      "phase": "review",
+      "at": "2026-10-30T15:08:35.019Z",
+      "actorId": 60723
+    },
+    {
+      "phase": "price",
+      "at": "2026-10-30T15:09:36.496Z",
+      "actorId": 3540173
+    },
+    {
+      "phase": "approve",
+      "at": "2026-10-30T15:10:35.039Z",
+      "actorId": 60723
+    },
+    {
+      "phase": "buy",
+      "at": "2026-10-30T15:12:06.238Z",
+      "actorId": 3540173
+    },
+    {
+      "phase": "receive",
+      "at": "2026-10-30T15:12:56.892Z",
+      "actorId": 60723
+    }
+  ],
+  "bundleId": 8
+}

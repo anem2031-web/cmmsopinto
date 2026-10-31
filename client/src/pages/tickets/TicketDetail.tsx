@@ -700,7 +700,7 @@ const { getField } = useResolvedTranslation(
 
   if (!ticket) return <div className="text-center py-12 text-muted-foreground">{t.common.noData}</div>;
 
-  const materialsUsedText = formatTicketMaterialsUsed(ticket.materialsUsed, getField("materialsUsed"), t.tickets.unspecified);
+  const materialsUsedText = formatTicketMaterialsUsed(ticket.materialsUsed, getField("materialsUsed"), t.tickets.unspecified, language);
 
   const reportedBy = users?.find(u => u.id === ticket.reportedById);
   const assignedTo = users?.find(u => u.id === ticket.assignedToId);

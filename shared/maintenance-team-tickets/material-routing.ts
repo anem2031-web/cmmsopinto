@@ -9,7 +9,8 @@ export function materialUnitMismatch(state: Pick<Snapshot, "catalog">, need: Mat
 export function materialRouteNote(
   need: MaterialNeed,
   shortage: number,
-  message: string
+  message: string,
+  identityReview?: { before: unknown; after: unknown }
 ): string {
   return JSON.stringify({
     version: 1,
@@ -19,6 +20,7 @@ export function materialRouteNote(
     catalogItemId: need.catalogItemId,
     shortage,
     message,
+    ...(identityReview ? { identityReview } : {}),
   });
 }
 function parse(note: string) {
@@ -72,10 +74,17 @@ export function materialSupplyRemaining(
           s.kind === "transfer" &&
           s.status === "received"
       )
-      .reduce((sum, s) => sum + s.quantity, 0);
+      .reduce((sum, s) => sum + (s.originalEquivalent ?? s.quantity), 0);
     return Math.max(0, route.shortage - transferred);
   }
   return null;
 }
-export const materialActionMessage = (note: string): string =>
-  parse(note)?.message ?? note;
+export const materialActionMessage = (note: string): string => {
+  const route = parse(note);
+  if (route) return route.message;
+  try {
+    const review = JSON.parse(note);
+    if (review?.type === "ticket_material_identity_review" && review.version === 1 && typeof review.message === "string") return review.message;
+  } catch { /* Ordinary historical notes remain plain text. */ }
+  return note;
+};
