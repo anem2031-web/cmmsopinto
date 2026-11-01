@@ -21,7 +21,7 @@ export function createPricingBundlesRouter(ports: PricingBundlePorts, enabled: (
     remove: protectedProcedure.input(z.object({ id, itemId: id })).mutation(({ ctx, input }) => { available(); return service.remove(ctx.user, input.id, input.itemId); }),
     send: protectedProcedure.input(z.object({ id, revision: z.number().int().nonnegative() })).mutation(({ ctx, input }) => { available(); return service.send(ctx.user, input.id, input.revision); }),
     retrySync: protectedProcedure.input(z.object({ id })).mutation(({ ctx, input }) => { available(); return service.finish(ctx.user, input.id); }),
-    pdf: protectedProcedure.input(z.object({ id })).mutation(({ ctx, input }) => { available(); return service.pdf(ctx.user, input.id); }),
+    pdf: protectedProcedure.input(z.object({ id, approvedDocument: z.boolean().optional() })).mutation(({ ctx, input }) => { available(); return service.pdf(ctx.user, input.id, input.approvedDocument); }),
     archive: protectedProcedure.input(z.object({ id })).mutation(({ ctx, input }) => { available(); return service.archive(ctx.user, input.id); }),
   });
 }

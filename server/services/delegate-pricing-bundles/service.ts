@@ -5,6 +5,7 @@ import { assertBundleItemEligible, canReadPricingBundles, PRICING_BUNDLE_LIMIT, 
 import { hasOwnPurchaseDocumentApproval, isPurchasePdfApprover, PURCHASE_PDF_APPROVAL_MESSAGE } from "../../_core/authz/purchase-document";
 import { documentDayBoundary, documentSearchPattern, type DocumentListPageInput } from "../../../shared/document-list";
 import { supplierReturnDatabaseEnabled } from "../../supplier-return-followup/feature";
+import { approvedBundleCondition, approvedBundleSnapshot } from "./approved-document";
 export interface PricingBundlePorts {
   database(): Promise<any>;
   submitPO(poId: number, actor: PricingBundleActor, options: { selectedItemIds: number[]; tx: any; purchasePackageSubmissionId?: number; skipArchive: true; bundleId: number; delegateSignatureSnapshot?: string | null }): Promise<any>;
@@ -96,7 +97,7 @@ export class PricingBundleService {
   async listPage(actor: PricingBundleActor, input: DocumentListPageInput) {
     this.read(actor);
     const database = await this.ports.database();
-    const base = sql`b.status IN ('sent','archived') AND ${actor.role === "delegate" ? sql`b.delegateId=${actor.id}` : sql`1=1`}`;
+    const base = sql`b.status IN ('sent','archived') AND ${actor.role === "delegate" ? sql`b.delegateId=${actor.id}` : sql`1=1`} AND ${approvedBundleCondition()}`;
     const conditions = [base];
     if (input.delegateId != null) conditions.push(sql`b.delegateId=${input.delegateId}`);
     if (input.dateFrom) conditions.push(sql`COALESCE(b.sentAt,b.createdAt) >= ${documentDayBoundary(input.dateFrom)}`);
@@ -279,7 +280,7 @@ export class PricingBundleService {
       } catch (error) { console.error("[PricingBundle] linked workflow finalization requires retry", error); return false; }
     });
   }
-  async pdf(actor: PricingBundleActor, id: number) {
+  async pdf(actor: PricingBundleActor, id: number, approvedDocument = false) {
     this.read(actor); if (actor.role === "observer") fail("المراقب لا يستطيع التصدير", "FORBIDDEN");
     const database = await this.ports.database();
     // Authorize every request before consulting the shared render promise, including cached files.
@@ -291,6 +292,17 @@ export class PricingBundleService {
       const ids = Array.isArray(frozen?.rows) ? frozen.rows.map((item: any) => Number(item?.purchaseOrderId)) : [];
       const permission = this.permission(actor, bundle, ids, await this.approvalRows(database, [id]));
       if (!permission.pdfAllowed) fail(permission.pdfBlockedReason!, "FORBIDDEN");
+    }
+    if (approvedDocument && actor.role !== "delegate") {
+      const [stored] = await rows(database, sql`SELECT snapshotJson FROM delegate_pricing_bundles WHERE id=${id}`);
+      const snapshot = json(stored?.snapshotJson) as PricingBundleSnapshot;
+      if (!snapshot || snapshot.number !== bundle.bundleNumber || Number(snapshot.delegate?.id) !== Number(bundle.delegateId)
+        || !Array.isArray(snapshot.rows) || !snapshot.rows.length || snapshot.rows.length > PRICING_BUNDLE_LIMIT
+        || !Array.isArray(snapshot.signatures)) fail("لقطة الحزمة المحفوظة غير مكتملة؛ تعذر إنشاء PDF");
+      // Separate, read-only rendition: never replace pdfContent or the delegate's frozen snapshot.
+      const approved = await approvedBundleSnapshot(database, bundle, snapshot, source => this.ports.signature(source));
+      const pdf = this.checkedPdf(await this.ports.render(approved));
+      return { name: `${bundle.bundleNumber}.pdf`, content: pdf.toString("base64") };
     }
     let pending = this.pendingPdfs.get(id);
     if (!pending) {

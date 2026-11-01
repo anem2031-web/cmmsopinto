@@ -1,3 +1,4 @@
+import { isInventoryLotsEnabled } from "../../_core/inventory-lots";
 import { catalogImportExportRouter } from "./catalogImportExport.router";
 import { catalogItemImageSchema, assertCatalogImageUpload, saveRequiredCatalogImage } from "./item-image";
 import { attachments } from "../../../drizzle/schema";
@@ -8,13 +9,13 @@ import { isCatalogItemCodeForNode, nextCatalogItemCode } from "../../_core/catal
 import { boundedDistinctCatalogCodeAliasEntityIds } from "../../_core/catalog-code-alias";
 import { isCatalogNodeCodeForParent, isHierarchicalCatalogNodeCode, nextCatalogChildCode, nextCatalogRootCode } from "../../_core/catalog-code-format";
 import { publishResolvedCatalogIdentity } from "../../_core/catalog-item-identity-publication";
-import { consolidateResolvedCatalogInventory } from "../../_core/catalog-item-inventory-consolidation";
 import { catalogAuditJson, catalogAuditRequestMeta, pickAuditValues } from "../../_core/catalog-audit";
+import { canShowCatalogBook, loadCatalogBookTotals } from "../../services/inventory-book-summary";
 import { findCatalogUnitByName, getActiveCatalogUnitCanonicalName } from "../../_core/catalog-unit-governance";
 import { executeCatalogTaxonomyMove, previewCatalogTaxonomyMove } from "../../services/catalog/catalogTaxonomyMove.service";
 import { router, catalogAdminProcedure, catalogProcedure, catalogItemLifecycleProcedure, catalogReadProcedure, catalogReferenceReadProcedure } from "../_shared/procedures";
 import { z } from "zod";
-import { eq, and, or, like, ne, count, desc, asc, inArray, sql, gte, lte } from "drizzle-orm";
+import { getTableColumns, eq, and, or, like, ne, count, desc, asc, inArray, sql, gte, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { APP_ROLE } from "@shared/roles";
 import { getDb } from "../../_core/db";
@@ -845,12 +846,15 @@ if (input?.search) {
       like(catalogItems.code, term),
       like(catalogItems.manufacturer, term),
       like(catalogItems.unit, term),
+      sql`EXISTS (SELECT 1 FROM inventory aliases WHERE aliases.linkedItemId=${catalogItems.id} AND aliases.itemName LIKE ${term})`,
+      isInventoryLotsEnabled() ? sql`EXISTS (SELECT 1 FROM inventory_lots aliases WHERE aliases.catalogItemId=${catalogItems.id} AND aliases.supplierItemName LIKE ${term})` : undefined,
+      sql`EXISTS (SELECT 1 FROM catalog_item_candidates aliases WHERE aliases.resolvedCatalogItemId=${catalogItems.id} AND aliases.itemName LIKE ${term})`,
       ...(aliasItemIds.length > 0 ? [inArray(catalogItems.id, aliasItemIds)] : []),
     )
   );
 }
 
-        let query = db.select().from(catalogItems);
+        let query = db.select({ ...getTableColumns(catalogItems), inventoryPageCount: sql<number>`(SELECT COUNT(*) FROM inventory book_pages WHERE book_pages.linkedItemId=${catalogItems.id})` }).from(catalogItems);
         if (conditions.length > 0) {
           query = query.where(and(...conditions)) as any;
         }
@@ -862,6 +866,8 @@ const results = await (query as any)
 
 // جلب الصور الرئيسية للأصناف (استعلام واحد لكل الأصناف بدل استعلام لكل صنف)
 const itemIds = results.map((item: any) => item.id);
+const showBook=isInventoryLotsEnabled() && canShowCatalogBook(ctx.user);
+const bookTotals = showBook ? await loadCatalogBookTotals(db, itemIds) : [];
 
 const allImages = itemIds.length > 0
   ? await db
@@ -884,6 +890,8 @@ for (const img of allImages) {
 
 const itemsWithImages = results.map((item: any) => ({
   ...item,
+  inventoryPageCount: showBook ? Number(item.inventoryPageCount || 0) : undefined,
+  inventoryBookTotals: showBook ? bookTotals.filter(row => Number(row.catalogItemId) === Number(item.id)) : undefined,
   primaryImageUrl: imagesByItemId.get(item.id)?.fileUrl || null,
 }));
 
@@ -1578,14 +1586,12 @@ create: catalogProcedure
             });
           }
 
-          // 2B-7: نشر الهوية أولاً داخل نفس Transaction، ثم توحيد Inventory في
-          // نفس المستودع إن كان للصنف سجل مخزون موجود. أي تعارض يلغي الحسم بالكامل.
+          // Publish the catalog identity in the existing transaction; stock pages
+          // retain their own quantities, units, lots and document references.
           await publishResolvedCatalogIdentity(tx, groupCandidates as any[], catalogItem.id);
-          const inventoryMerges = await consolidateResolvedCatalogInventory(
-            tx,
-            groupCandidates as any[],
-            catalogItem.id,
-          );
+          // Catalog is the master identity; historical inventory records/lots
+          // remain independent pages. Linking never relocates stock or documents.
+          const inventoryMerges: never[] = [];
 
           await tx.insert(catalogAuditLogs).values({
             userId: ctx.user.id,

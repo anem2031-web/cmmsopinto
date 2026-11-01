@@ -1,3 +1,4 @@
+import { InventoryBookPages } from "@/components/inventory/InventoryBooks";
 import CatalogExportButton from "@/components/catalog/CatalogExportButton";
 import CatalogImportButton from "@/components/catalog/CatalogImportButton";
 import React, { useState, useMemo, useEffect } from "react";
@@ -1028,6 +1029,9 @@ function ItemCard({
   onDuplicate: (item: any) => void;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const [bookOpen,setBookOpen] = useState(false);
+  const canReadBook = user && ["owner","admin","warehouse","maintenance_manager","senior_management","observer"].includes(user.role);
   return (
     <Card className={cn("hover:shadow-md transition-shadow", Number(item.isActive) !== 1 && "opacity-80 border-dashed")}>
       <CardContent className="p-4">
@@ -1052,6 +1056,7 @@ function ItemCard({
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <p className="font-semibold text-sm">{item.nameAr}</p>
+            {canReadBook && Number(item.inventoryPageCount)>0 && <Button variant="ghost" size="sm" aria-label="تفاصيل دفتر الصنف" aria-expanded={bookOpen} onClick={()=>setBookOpen(!bookOpen)}>{bookOpen ? <ChevronDown className="h-4 w-4"/> : <ChevronRight className="h-4 w-4"/>}</Button>}
             {Number(item.isActive) !== 1 && (
               <span className="text-[11px] font-medium rounded-full border px-2 py-0.5 text-muted-foreground">
                 معطّل
@@ -1059,6 +1064,9 @@ function ItemCard({
             )}
           </div>
           <p className="text-xs text-muted-foreground">{item.nameEn}</p>
+          {canReadBook && (item.inventoryBookTotals || []).map((total:any)=><p key={`${total.unit}:${total.isFrozen}`} className="text-xs">
+            {Number(total.isFrozen)?"تاريخ مجمّد":"الرصيد"}: {Number(total.quantity)} {total.unit || "—"} · وارد {Number(total.incoming)} · منصرف {Number(total.outgoing)}
+          </p>)}
           <div className="flex items-center justify-between">
             {item.code && (
               <span className="text-xs font-mono bg-primary/10 text-primary px-2 py-0.5 rounded">{item.code}</span>
@@ -1076,6 +1084,7 @@ function ItemCard({
           )}
         </div>
 
+        {bookOpen && canReadBook && <InventoryBookPages catalogItemId={Number(item.id)} />}
         <div className="grid grid-cols-2 gap-2 mt-3">
           <Button variant="secondary" size="sm" className="gap-1.5" onClick={() => onView(item)}>
             <Eye className="w-3.5 h-3.5" />

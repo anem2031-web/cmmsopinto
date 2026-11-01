@@ -1,3 +1,4 @@
+import { InventoryBooks } from "@/components/inventory/InventoryBooks";
 import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
@@ -366,6 +367,12 @@ export default function WarehouseReturn() {
                   </SelectContent>
                 </Select>
               </div>
+              {returnWarehouseId && <InventoryBooks warehouseId={Number(returnWarehouseId)} supplierReturn
+                onPick={async({lot,master})=>{setReturnLotInfo(null);setSelectedItem(null);
+                  try {const resolved=await resolveReturnLotMut.mutateAsync({warehouseId:Number(returnWarehouseId),trackingToken:lot.trackingToken});
+                    setSelectedItem({...resolved.item,itemName:master.nameAr || master.nameEn || resolved.item.itemName});
+                  } catch { /* The existing mutation error handler displays the server rejection. */ }
+                }} />}
               {returnWarehouseId ? (
                 <BarcodeScanner
                   onScan={(code) => {

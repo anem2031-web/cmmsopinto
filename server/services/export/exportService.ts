@@ -1149,6 +1149,31 @@ export async function generatePurchaseRequestPDF(
         </table>
     </div>`}
 
+    ${bundleSnapshot?.financialApprovals?.length ? `
+    <div class="section-title">اعتمادات الحسابات والإدارة العليا</div>
+    ${bundleSnapshot.financialApprovals.map(approval => `
+    <div class="finance-section" style="page-break-inside:avoid;">
+      <strong>${escapeHtml(approval.reference)}</strong>
+      <div class="signature-requests">الطلبات: ${escapeHtml(approval.poNumbers.join("، "))}</div>
+      <table class="signatures-table" style="margin-top:5px;">
+        <thead><tr><th>الصفة</th><th>الاسم</th><th>التوقيع / الاعتماد</th></tr></thead>
+        <tbody>
+          <tr><td>الحسابات</td><td>${escapeHtml(approval.accountingName)}</td>
+            <td>${sigImg(approval.accountingSignature)}<small>اعتماد إلكتروني: ${escapeHtml(approval.accountingAt)}</small></td></tr>
+          <tr><td>الإدارة العليا</td><td>${escapeHtml(approval.managementName)}</td>
+            <td>اعتماد إلكتروني مثبت<br><small>${escapeHtml(approval.managementAt)}</small></td></tr>
+        </tbody>
+      </table>
+      <div class="section-title">الشؤون المالية والإجراءات المحاسبية</div>
+      <p>${escapeHtml(approval.custodyLabel)}: <strong>${approval.custodyValue == null ? "غير مسجل" : `${fmtSAR(Number(approval.custodyValue))} ر.س`}</strong></p>
+      <p>ملاحظات مراجع الحسابات: ${escapeHtml(approval.notes || "—")}</p>
+      <table class="accounting-table"><tbody>
+        <tr><td class="label">رقم سند الصرف</td><td></td><td class="label">التاريخ</td><td></td></tr>
+        <tr><td class="label">المبلغ</td><td></td><td class="label">التوقيع</td><td></td></tr>
+      </tbody></table>
+    </div>`).join("")}
+    <small>تعرض بيانات العهد لكل دفعة كما اعتمدت؛ أرصدة العهد المتكررة لا تُجمع.</small>` : ""}
+
     <div class="footer-note">
         ملحوظة: أي شرح أو تعليق خارج حقول النموذج لا يُعتمد إلا بتوقيع الرئيس التنفيذي.
     </div>

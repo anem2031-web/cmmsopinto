@@ -1,3 +1,5 @@
+import { InventoryBooks, loadBookLots } from "@/components/inventory/InventoryBooks";
+import { planBookFifo } from "@shared/inventory-book";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
 import { useEffect, useMemo, useState, useRef } from "react";
@@ -191,7 +193,9 @@ export default function WarehouseTransfer() {
   }, [fromWarehouseId, inventoryList]);
 
   const remainingBalance = (item: any) => {
-    const alreadyInCart = cart.filter(c => c.inventoryId === item.id).reduce((s, c) => s + c.quantity, 0);
+    const alreadyInCart = cart.filter(c => item.bookFifo
+      ? sourceItems.some((source:any)=>Number(source.id)===c.inventoryId && Number(source.linkedItemId)===Number(item.linkedItemId) && String(source.issueUnit || source.unit || "")===String(item.unit))
+      : c.inventoryId === item.id).reduce((s, c) => s + c.quantity, 0);
     return (item.quantity || 0) - alreadyInCart;
   };
 
@@ -208,6 +212,7 @@ export default function WarehouseTransfer() {
     const q = searchQuery.trim().toLowerCase();
     return sourceItems
       .filter((item: any) => {
+        if (lotsEnabled && !materialHandoff && item.linkedItemId) return false;
         if (searchMode === "code" || searchMode === "qr") {
           return (
             String(item.internalCode ?? "").toLowerCase().includes(q) ||
@@ -217,7 +222,7 @@ export default function WarehouseTransfer() {
         return String(item.itemName ?? "").toLowerCase().includes(q);
       })
       .slice(0, 8);
-  }, [sourceItems, searchQuery, searchMode, fromWarehouseId]);
+  }, [sourceItems, searchQuery, searchMode, fromWarehouseId, lotsEnabled, materialHandoff]);
 
   const warehouseName = (id: number) =>
     (warehousesList as any[])?.find((w: any) => w.id === id)?.nameAr || `#${id}`;
@@ -293,7 +298,25 @@ export default function WarehouseTransfer() {
     }
   }
 
-  function addItemToCart() {
+  async function addItemToCart() {
+    if (foundItem?.bookFifo && !materialHandoff) {
+      try {
+        const lots = await loadBookLots(input => utils.client.inventory.bookPages.query(input), foundItem.linkedItemId, Number(fromWarehouseId));
+        const reserved = Object.fromEntries(cart.map(line => [`${line.inventoryId}:${lots.find(lot => lot.trackingToken === line.lotTrackingToken)?.lotId}`, line.quantity]));
+        const plan = planBookFifo(lots, Number(qty), foundItem.unit, reserved);
+        const next = [...cart];
+        for (const lot of plan) {
+          const existing = next.find(line => line.inventoryId === Number(lot.inventoryId) && line.lotTrackingToken === lot.trackingToken);
+          if (existing) { const index = next.indexOf(existing); next[index] = {...existing,quantity:Number((existing.quantity+lot.quantity).toFixed(3))}; }
+          else next.push({inventoryId:Number(lot.inventoryId),itemName:foundItem.itemName,unit:foundItem.unit,
+            balanceAtAddTime:Number(sourceItems.find((item:any)=>Number(item.id)===Number(lot.inventoryId))?.quantity || 0),
+            quantity:lot.quantity,lotTrackingToken:lot.trackingToken,lotCode:lot.lotCode,lotBalanceAtAddTime:Number(lot.balanceQuantity),notes:itemNotes.trim() || undefined});
+        }
+        if(next.length>MAX_ITEMS_PER_TRANSFER) throw Error(`الحد الأقصى ${MAX_ITEMS_PER_TRANSFER} بندًا؛ جزّئ الكمية المطلوبة`);
+        setCart(next);setFoundItem(null);setQty("");setTransferLotInfo(null);toast.success("تم توزيع الكمية من أقدم اللوتات المتاحة");
+      } catch(error:any) {toast.error(error.message);}
+      return;
+    }
     if(pmv2Prepared) return;
     if (materialHandoff && materialTransferPosted) {
       toast.error(materialHandoff?.source === "tickets" ? "تم تنفيذ التحويل؛ ارجع إلى مواد التذكرة لإعادة فحص المتبقي قبل تحويل جديد" : "تم تنفيذ تحويل مرتبط بهذا السياق بالفعل؛ ارجع إلى طلب PM V2 لإعادة فحص المتبقي قبل تحويل جديد");
@@ -702,6 +725,12 @@ export default function WarehouseTransfer() {
                       </div>
                     )}
 
+                    {lotsEnabled && fromWarehouseId && !materialHandoff && !pmv2Prepared && <InventoryBooks warehouseId={Number(fromWarehouseId)} search={searchMode === "qr" ? undefined : searchQuery}
+                      onFifo={(book,unit)=>{setFoundItem({id:0,linkedItemId:book.id,itemName:book.nameAr || book.nameEn,unit,
+                        quantity:book.totals.filter((row:any)=>!Number(row.isFrozen)&&row.unit===unit).reduce((sum:number,row:any)=>sum+Number(row.quantity),0),bookFifo:true});setTransferLotInfo(null);setQty("");}}
+                      onPick={async({lot,page,master})=>{try{const resolved=await resolveTransferLotMut.mutateAsync({fromWarehouseId:Number(fromWarehouseId),fromInventoryId:page.id,trackingToken:lot.trackingToken});
+                        selectItem({...page,quantity:Number(page.quantity),itemName:master.nameAr || master.nameEn});setTransferLotInfo(resolved);
+                      }catch(error:any){toast.error(error.message);}}} />}
                     {foundItem && (
                       <div className="space-y-3">
                         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
@@ -729,7 +758,7 @@ export default function WarehouseTransfer() {
                             <Label className="text-xs flex items-center gap-1">
                               <QrCode className="w-3.5 h-3.5" /> QR الدفعة / رقم اللوت *
                             </Label>
-                            {!transferLotInfo && (
+                            {!transferLotInfo && !foundItem?.bookFifo && (
                               <BarcodeScanner
                                 onScan={handleQRScan}
                                 placeholder="امسح QR الدفعة أو أدخل رقم اللوت المراد نقله..."
@@ -791,7 +820,7 @@ export default function WarehouseTransfer() {
                           className="w-full gap-2"
                           variant="outline"
                           onClick={addItemToCart}
-                          disabled={materialTransferPosted || resolveTransferLotMut.isPending || (lotsEnabled && !transferLotInfo)}
+                          disabled={materialTransferPosted || resolveTransferLotMut.isPending || (lotsEnabled && !foundItem?.bookFifo && !transferLotInfo)}
                         >
                           <Plus className="w-4 h-4" /> إضافة هذا الصنف للعملية
                         </Button>

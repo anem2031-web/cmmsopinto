@@ -634,7 +634,7 @@ export default function DocumentsCenter() {
                       <div className="flex gap-1.5">
                         {row.type === "delegate_pricing_bundle" ? <>
                           <Button size="sm" variant="outline" onClick={() => setSelectedBundleId(row.id)}>تفاصيل الحزمة</Button>
-                          {pdfAllowed && <Button size="sm" variant="outline" disabled={bundlePdf.isPending} onClick={() => bundlePdf.mutate({ id: row.id })}><Download className="w-3.5 h-3.5" />تنزيل PDF</Button>}
+                          {pdfAllowed && <Button size="sm" variant="outline" disabled={bundlePdf.isPending} onClick={() => bundlePdf.mutate({ id: row.id, approvedDocument: role !== "delegate" })}><Download className="w-3.5 h-3.5" />تنزيل PDF</Button>}
                         </> : <>
                         {row.reviewUrl && <Link href={row.reviewUrl} className="text-sm text-primary underline self-center px-2">بيانات المعاملة</Link>}
                         {pdfAllowed ? <>
@@ -682,7 +682,7 @@ export default function DocumentsCenter() {
             <p>المندوب: {bundleDetailQ.data.delegateName} — التاريخ: {relativeOrDate(bundleDetailQ.data.createdAt)}</p>
             <div className="overflow-x-auto"><Table><TableHeader><TableRow>{["الصنف", "طلب الشراء", "القسم", "الكمية", "الوحدة", "السعر", "المورد", "الإجمالي"].map(label => <TableHead key={label}>{label}</TableHead>)}</TableRow></TableHeader><TableBody>{bundleDetailQ.data.items.map((item: PricingBundleRow) => <TableRow key={item.id}><TableCell>{item.itemName}</TableCell><TableCell><Link href={`/purchase-orders/${item.purchaseOrderId}?itemId=${item.id}`} className="text-primary underline">{item.poNumber}</Link></TableCell><TableCell>{item.sectionName}</TableCell><TableCell>{item.quantity}</TableCell><TableCell>{item.unit}</TableCell><TableCell>{formatFinancialGrandTotal(item.estimatedUnitCost)}</TableCell><TableCell>{item.supplierName}</TableCell><TableCell>{formatFinancialGrandTotal(item.estimatedTotalCost)}</TableCell></TableRow>)}</TableBody></Table></div>
             <p>الإجمالي: {formatFinancialGrandTotal(bundleDetailQ.data.total)}</p>
-            {canOpenApprovalPdf(role, bundleDetailQ.data) ? <Button disabled={bundlePdf.isPending} onClick={() => bundlePdf.mutate({ id: bundleDetailQ.data!.id })}>تنزيل PDF</Button> : <p>{approvalPdfNotice()}</p>}
+            {canOpenApprovalPdf(role, bundleDetailQ.data) ? <Button disabled={bundlePdf.isPending} onClick={() => bundlePdf.mutate({ id: bundleDetailQ.data!.id, approvedDocument: role !== "delegate" })}>تنزيل PDF</Button> : <p>{approvalPdfNotice()}</p>}
           </div> : null}
           <Button variant="outline" onClick={() => setSelectedBundleId(null)}>إغلاق</Button>
         </DialogContent>

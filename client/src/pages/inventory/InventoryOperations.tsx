@@ -1,3 +1,4 @@
+import { InventoryBooks } from "@/components/inventory/InventoryBooks";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useTranslation } from "@/contexts/LanguageContext";
@@ -1298,6 +1299,9 @@ export default function InventoryOperations() {
                         <BarcodeScanner onScan={handleScanResolved} placeholder="امسح QR الدفعة أو أدخل رقم اللوت LOT-..." />
 
                         <div className="border-t pt-3 mt-3 space-y-2">
+                          <details className="rounded border p-3"><summary className="cursor-pointer font-medium">دفاتر أصناف المستودع — الرصيد والحركات الحالية</summary>
+                            <InventoryBooks warehouseId={Number(countDetail.operation.warehouseId)} search={periodicCountSearch} includeZero />
+                          </details>
                           <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(260px,0.75fr)]">
                             <div className="relative">
                               <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

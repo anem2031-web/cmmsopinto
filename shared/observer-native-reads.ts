@@ -115,6 +115,8 @@ export const OBSERVER_NATIVE_READ_PATHS = [
   "inventory.getTransactions",
   "inventory.issueCostAllocations",
   "inventory.list",
+  "inventory.books",
+  "inventory.bookPages",
   "inventory.catalogStock",
   "inventory.listLots",
   "inventory.lotSummaries",

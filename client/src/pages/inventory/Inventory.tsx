@@ -1,3 +1,5 @@
+import { InventoryBooks, loadBookLots } from "@/components/inventory/InventoryBooks";
+import { planBookFifo } from "@shared/inventory-book";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
 import { InventoryItemCard } from "@/components/inventory/InventoryItemCard";
@@ -300,6 +302,8 @@ export default function Inventory() {
   const [deliverToId, setDeliverToId] = useState("");
   const [deliverNotes, setDeliverNotes] = useState("");
   const [deliverLotInfo, setDeliverLotInfo] = useState<any>(null);
+  const [fifoLots, setFifoLots] = useState<any[]>([]);
+  const bookOperationKey = useRef<string | null>(null);
   const [deliverCostAllocations, setDeliverCostAllocations] = useState<IssueCostAllocationDraft[]>(() => [createIssueCostAllocationDraft()]);
   const [lotCodeSearch, setLotCodeSearch] = useState("");
   const [lotDialogItem, setLotDialogItem] = useState<any>(null);
@@ -388,9 +392,25 @@ export default function Inventory() {
           .some((node: any) => String(node?.id) === selectedCatalogNodeId),
       );
 
-  const totalWarehouseQuantity = categoryFilteredWarehouseItems.reduce(
-    (sum: number, item: any) => sum + (Number(item.quantity) || 0), 0
-  );
+  const totalWarehouseQuantity = Object.entries(categoryFilteredWarehouseItems.reduce((totals:Record<string,number>, item:any)=>{
+    const unit=String(item.issueUnit || item.unit || "وحدة غير محددة");totals[unit]=(totals[unit] || 0)+Number(item.quantity || 0);return totals;
+  },{})).map(([unit,quantity])=>`${Number(quantity).toLocaleString()} ${unit}`).join(" / ");
+
+  const bookNodeIds = useMemo(() => {
+    if (selectedCatalogNodeId === "all") return undefined;
+    const nodes = inventoryCatalogNodes as any[];
+    const byId = new Map(nodes.map(node => [Number(node.id), node]));
+    return nodes.filter(node => {
+      const seen = new Set<number>();
+      let current = node;
+      while (current && !seen.has(Number(current.id))) {
+        if (String(current.id) === selectedCatalogNodeId) return true;
+        seen.add(Number(current.id));
+        current = byId.get(Number(current.parentId));
+      }
+      return false;
+    }).map(node => Number(node.id));
+  }, [inventoryCatalogNodes, selectedCatalogNodeId]);
 
   const utils = trpc.useUtils();
   const updateMut = trpc.inventory.update.useMutation({
@@ -437,10 +457,27 @@ export default function Inventory() {
       toast.error(err.message);
     },
   });
+  const bookDeliverMut = trpc.purchaseOrders.deliverInventoryBook.useMutation({
+    onSuccess: (data: any) => { toast.success(`تم الصرف من ${data.deliveries.length} لوت — التكلفة ${Number(data.allocatedCostTotal).toFixed(2)} ر.س`);
+      utils.inventory.list.invalidate(); utils.inventory.books.invalidate(); utils.inventory.bookPages.invalidate();
+      setDeliverItem(null); setDeliverLotInfo(null); bookOperationKey.current = null;
+    }, onError: (error: any) => toast.error(error.message),
+  });
+  const openBookDelivery = async (book: any, unit: string) => {
+    try {
+      const lots = await loadBookLots(input => utils.client.inventory.bookPages.query(input), book.id, Number(selectedWarehouseId));
+      setFifoLots(lots); bookOperationKey.current = crypto.randomUUID();
+      setDeliverItem({ id: 0, linkedItemId: book.id, warehouseId: Number(selectedWarehouseId), itemName: book.nameAr || book.nameEn,
+        unit, quantity: lots.filter(lot => !Number(lot.isFrozen) && String(lot.issueUnit || lot.inventoryUnit || "") === unit).reduce((sum, lot) => sum + Number(lot.balanceQuantity), 0), bookFifo: true });
+      setDeliverLotInfo(null); setDeliverQty(""); setDeliverToId(""); setDeliverNotes(""); setDeliverCostAllocations([createIssueCostAllocationDraft()]);
+    } catch (error: any) { toast.error(error.message); }
+  };
+  const fifoUnitCost = (() => { try { const plan = planBookFifo(fifoLots, Number(deliverQty), deliverItem?.unit || "");
+    return plan.reduce((sum, lot) => sum + lot.quantity * Number(lot.issueUnitCost || 0), 0) / Number(deliverQty); } catch { return 0; } })();
   const deliverMut = trpc.purchaseOrders.deliverInventoryItem.useMutation({
     onSuccess: (data: any) => {
       toast.success(`تم التسليم بنجاح — سند ${data.deliveryNumber}${data.allocatedCostTotal != null ? ` — تكلفة اللوت المحملة ${Number(data.allocatedCostTotal).toFixed(2)} ر.س` : ""}`);
-      utils.inventory.list.invalidate();
+      utils.inventory.list.invalidate(); utils.inventory.books.invalidate(); utils.inventory.bookPages.invalidate();
       setDeliverItem(null);
       setDeliverQty("");
       setDeliverToId("");
@@ -477,7 +514,7 @@ export default function Inventory() {
   }
 
   // ── بحث تزايدي: يطابق أي حقل ظاهر في صف الصنف ──
-  const filteredItems = categoryFilteredWarehouseItems
+  const filteredItems = categoryFilteredWarehouseItems.filter((item: any) => !lotsEnabled || !item.linkedItemId || !item.warehouseId)
     .filter((item: any) => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.trim().toLowerCase();
@@ -596,7 +633,7 @@ export default function Inventory() {
         <Card className="border-blue-200 bg-blue-50/50">
           <CardContent className="p-3 text-center">
             <Package className="w-5 h-5 mx-auto text-blue-600 mb-1" />
-            <p className="text-2xl font-bold text-blue-800">{categoryFilteredWarehouseItems.length}</p>
+            <p className="text-2xl font-bold text-blue-800">{new Set(categoryFilteredWarehouseItems.map((item:any)=>item.linkedItemId ? `catalog:${item.linkedItemId}` : `inventory:${item.id}`)).size}</p>
             <p className="text-[10px] text-blue-600">{selectedCatalogNodeId === "all" ? t.inventory.currentStock : "أصناف التصنيف المحدد"}</p>
           </CardContent>
         </Card>
@@ -611,7 +648,7 @@ export default function Inventory() {
         <Card className="border-emerald-200 bg-emerald-50/50">
           <CardContent className="p-3 text-center">
             <ArrowDownUp className="w-5 h-5 mx-auto text-emerald-600 mb-1" />
-            <p className="text-2xl font-bold text-emerald-800">{totalWarehouseQuantity.toLocaleString()}</p>
+            <p className="text-2xl font-bold text-emerald-800">{totalWarehouseQuantity}</p>
             <p className="text-[10px] text-emerald-600">إجمالي الكميات بالمخزن المختار</p>
           </CardContent>
         </Card>
@@ -708,7 +745,15 @@ export default function Inventory() {
         </div>
       </div>
 
-      {isLoading ? (
+      {selectedWarehouseId && lotsEnabled && <InventoryBooks warehouseId={Number(selectedWarehouseId)} search={searchQuery} includeZero={!hideZeroStock} sort={sortBy} dateFrom={dateFrom} dateTo={dateTo}
+        nodeIds={bookNodeIds}
+        onFifo={isWarehouse && lotsEnabled ? openBookDelivery : undefined}
+        onPick={isWarehouse && lotsEnabled ? async ({lot,page,master}) => {
+          setDeliverItem({...page, quantity:Number(page.quantity), itemName:master.nameAr || master.nameEn});
+          setDeliverQty("");setDeliverToId("");setDeliverNotes("");setDeliverCostAllocations([createIssueCostAllocationDraft()]);
+          setDeliverLotInfo(null); resolveDeliveryLotMut.mutate({inventoryId:page.id,trackingToken:lot.trackingToken});
+        } : undefined} />}
+      {filteredItems.length===0 && !isLoading ? null : isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => <Card key={i}><CardContent className="p-4"><Skeleton className="h-20 w-full" /></CardContent></Card>)}
         </div>
@@ -987,7 +1032,7 @@ export default function Inventory() {
                 </p>
               </div>
 
-              {lotsEnabled && (
+              {lotsEnabled && !deliverItem.bookFifo && (
                 <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50/60 p-3">
                   <Label className="text-xs flex items-center gap-1">
                     <QrCode className="w-3.5 h-3.5" /> QR الدفعة *
@@ -1063,12 +1108,12 @@ export default function Inventory() {
                 )}
               </div>
 
-              {lotsEnabled && deliverLotInfo && (
+              {lotsEnabled && (deliverLotInfo || deliverItem.bookFifo) && (
                 <IssueCostAllocationEditor
                   value={deliverCostAllocations}
                   onChange={setDeliverCostAllocations}
                   totalQuantity={Number(deliverQty) || 0}
-                  lotUnitCost={Number(deliverLotInfo.issueUnitCost || 0)}
+                  lotUnitCost={deliverItem.bookFifo ? fifoUnitCost : Number(deliverLotInfo?.issueUnitCost || 0)}
                   unitLabel={deliverItem.unit || "وحدة"}
                 />
               )}
@@ -1103,7 +1148,7 @@ export default function Inventory() {
             <Button variant="outline" onClick={() => { setDeliverItem(null); setDeliverLotInfo(null); setDeliverCostAllocations([createIssueCostAllocationDraft()]); setLotCodeSearch(""); }}>إلغاء</Button>
             <Button
               className="gap-1.5"
-              disabled={deliverMut.isPending || resolveDeliveryLotMut.isPending || (lotsEnabled && !deliverLotInfo)}
+              disabled={deliverMut.isPending || bookDeliverMut.isPending || resolveDeliveryLotMut.isPending || (lotsEnabled && !deliverItem.bookFifo && !deliverLotInfo)}
               onClick={() => {
                 const qty = parseFloat(deliverQty);
                 if (!deliverQty || isNaN(qty) || qty <= 0) {
@@ -1114,11 +1159,11 @@ export default function Inventory() {
                   toast.error(`الكمية (${qty}) أكبر من الرصيد المتاح (${deliverItem.quantity})`);
                   return;
                 }
-                if (lotsEnabled && !deliverLotInfo) {
+                if (lotsEnabled && !deliverItem.bookFifo && !deliverLotInfo) {
                   toast.error("يجب مسح QR الدفعة قبل تأكيد الصرف");
                   return;
                 }
-                if (lotsEnabled && qty > Number(deliverLotInfo?.availableQuantity || 0)) {
+                if (lotsEnabled && !deliverItem.bookFifo && qty > Number(deliverLotInfo?.availableQuantity || 0)) {
                   toast.error(`الكمية (${qty}) أكبر من رصيد الدفعة الممسوحة (${deliverLotInfo?.availableQuantity || 0})`);
                   return;
                 }
@@ -1131,9 +1176,16 @@ export default function Inventory() {
                   toast.error(error?.message || "تحقق من توزيع تكلفة الصرف");
                   return;
                 }
+                if (deliverItem.bookFifo) {
+                  try { planBookFifo(fifoLots, qty, deliverItem.unit); } catch(error: any) { toast.error(error.message); return; }
+                  bookDeliverMut.mutate({catalogItemId:deliverItem.linkedItemId,warehouseId:deliverItem.warehouseId,
+                    operationKey:bookOperationKey.current!,deliveredToId:Number(deliverToId),deliveryQty:qty,deliveryUnit:deliverItem.unit,
+                    costAllocations,notes:deliverNotes || undefined});
+                  return;
+                }
                 deliverMut.mutate({
                   inventoryId:   deliverItem.id,
-                  deliveredToId: deliverToId ? parseInt(deliverToId) : undefined,
+                  deliveredToId: Number(deliverToId),
                   deliveryQty:   qty,
                   deliveryUnit:  deliverItem.unit || "قطعة",
                   lotTrackingToken: lotsEnabled ? deliverLotInfo?.trackingToken : undefined,

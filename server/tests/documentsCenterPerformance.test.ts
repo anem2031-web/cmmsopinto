@@ -107,7 +107,7 @@ describe("Pricing bundle paged read", () => {
       const q = dialect.sqlToQuery(statement); queries.push(q);
       if (q.sql.startsWith("SELECT COUNT")) return [[{ total: 80 }], []];
       if (q.sql.startsWith("SELECT b.delegateId")) return [[{ delegateId: 7, delegateName: "Own", count: 80 }], []];
-      if (q.sql.includes("FROM delegate_pricing_bundle_batches l")) return [[], []];
+      if (q.sql.startsWith("SELECT l.bundleId")) return [[], []];
       return [[{ id: 41, status: "archived", sentTotals: '["10"]', sentOrderIds: '[10]', sentOrderNumbers: '["PR-10"]' }], []];
     } };
     const service = new PricingBundleService({ database: async () => database } as any);

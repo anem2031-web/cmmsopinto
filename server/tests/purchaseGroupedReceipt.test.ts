@@ -46,6 +46,12 @@ import { receiptsV2Router } from "../routers/inventory/receipts.v2.router";
 const dialect = new MySqlDialect();
 function txFixture() {
   return {
+    // The existing supplier-return gate probes the database name even for an
+    // ordinary receipt. Keep this fixture outside that unrelated workflow.
+    execute: async (query:any) => {
+      if(dialect.sqlToQuery(query).sql.includes("SELECT DATABASE()")) return [[{databaseName:"isolated_receipt_fixture"}]];
+      throw Error("unexpected raw query in isolated grouped receipt fixture");
+    },
     select(fields: any) {
       const keys=Object.keys(fields); const read:any={keys,params:[],locked:false}; f.reads.push(read);
       const q:any={ from:()=>q, innerJoin:()=>q, orderBy:()=>q, limit:()=>q,

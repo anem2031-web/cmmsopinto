@@ -1154,6 +1154,7 @@ async function processReceiptItem(params: {
       Number(item.linkedItemId),
       receiptWarehouseId,
       tx,
+      isInventoryLotsEnabled() ? item.issueUnit : undefined,
     );
 
     if (matches.length > 1) {

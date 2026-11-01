@@ -121,6 +121,7 @@ const reasonLabel = (reason: string) => ({
 }[reason] || "اقتراح كتالوج");
 
 export default function CatalogItemCandidatesManager() {
+  const bookUtils = trpc.useUtils();
   const [suggestionsByCandidate, setSuggestionsByCandidate] = useState<Record<number, CatalogMatch[]>>({});
   const [pendingDuplicatesByCandidate, setPendingDuplicatesByCandidate] = useState<Record<number, PendingCandidateMatch[]>>({});
   const [checkingCandidateId, setCheckingCandidateId] = useState<number | null>(null);
@@ -175,6 +176,7 @@ export default function CatalogItemCandidatesManager() {
   const linkMut = trpc.catalog.itemCandidates.linkExisting.useMutation({
     onSuccess: () => {
       refetchCandidates();
+      bookUtils.inventory.books.invalidate(); bookUtils.inventory.bookPages.invalidate(); bookUtils.catalog.items.list.invalidate();
       setLinkCandidate(null);
       setLinkSearch("");
       toast.success("تم حسم المرشح وربطه بصنف كتالوج موجود");
@@ -310,7 +312,7 @@ export default function CatalogItemCandidatesManager() {
   const confirmLink = (catalogItemId: number, catalogName: string) => {
     if (!linkCandidate) return;
     const ok = window.confirm(
-      `ربط «${linkCandidate.itemName}» بصنف الكتالوج «${catalogName}»؟\n\nإذا كان للصنف رصيد موجود في نفس المستودع فسيتم توحيد سجل المخزون معه، مع بقاء أرقام الدفعات والسندات والحركات وتاريخها كما هي.`,
+      `ربط «${linkCandidate.itemName}» بدفتر صنف الكتالوج «${catalogName}»؟\n\nيبقى كل سجل مخزون ولوت مستقلًا بكمياته ووحدته وتاريخه. لا تُدمج الأرصدة أو تُنقل الحركات عند الربط.`,
     );
     if (!ok) return;
     linkMut.mutate({ candidateId: linkCandidate.id, catalogItemId });

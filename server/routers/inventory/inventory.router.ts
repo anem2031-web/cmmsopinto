@@ -11,8 +11,10 @@ import { issueCostAllocationsSchema } from "./issue-cost-allocation.schema";
 import { isItTeamRole, MAINTENANCE_RESPONSIBLE_DEPARTMENT } from "@shared/roles";
 import { createCatalogStockProcedure } from "./catalog-stock.procedure";
 import { shouldExposeTicketMaterialLink } from "@shared/ticketMaterialDelivery";
+import { createInventoryBookProcedures } from "./books.procedure";
 
 export const inventoryRouter = router({
+  ...createInventoryBookProcedures(db.getDb),
   catalogStock: createCatalogStockProcedure(db.getDb),
   list: inventoryReadProcedure.query(async () => {
     return db.getInventoryItems();

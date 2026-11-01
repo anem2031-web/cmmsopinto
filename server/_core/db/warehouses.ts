@@ -1,3 +1,4 @@
+import { activeBookStockUnit } from "../inventory-book-policy";
 // ============================================================
 // db/warehouses.ts — إدارة المخازن (رئيسي/فرعي) + التحويل الفعلي بينها
 // البند 7 من العصف الذهني (2026-08-05). راجع docs/CHANGELOG_TECHNICAL.md
@@ -241,7 +242,9 @@ export async function createWarehouseTransfer(params: {
       destRows = await tx
         .select()
         .from(inventory)
-        .where(and(eq(inventory.warehouseId, params.toWarehouseId), eq(inventory.linkedItemId, source.linkedItemId)))
+         .where(and(eq(inventory.warehouseId, params.toWarehouseId), eq(inventory.linkedItemId, source.linkedItemId),
+          lotsEnabled ? activeBookStockUnit(String(source.issueUnit || source.unit || "")) : undefined))
+        .orderBy(inventory.id)
         .limit(1);
     }
     if (destRows.length === 0 && (!lotsEnabled || !source.linkedItemId) && source.internalCode) {

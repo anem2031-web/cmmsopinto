@@ -51,7 +51,7 @@ const managementQueries = [
 const managementMutations = ["tickets.create", "tickets.createTicket", "tickets.update", "tickets.submitForTriage", "tickets.confirmCompletion", "improvementIdeas.decide", "ai.analyze"];
 const warehouseQueries = [
   ...paths("supplierReturns", "status list delegates valuePreview"),
-  ...paths("inventory", "list taxonomy lotSummaries listLots getTransactions issueCostAllocations scanBarcode getItemSummary getPurchaseHistory getLedger"),
+  ...paths("inventory", "list books bookPages taxonomy lotSummaries listLots getTransactions issueCostAllocations scanBarcode getItemSummary getPurchaseHistory getLedger"),
   ...paths("inventoryCount", "searchCandidates uncountedItems countDiscrepancies"),
   ...paths("warehouseReceipts", "list getById getForPrint getByPO searchInventory"),
   ...paths("warehouseReceiptsV2", "purchaseReceiptContext checkDuplicate findSimilarItems listV2 getByIdV2 scanBarcode searchInventory"),
@@ -78,7 +78,7 @@ const warehouseQueries = [
  * warehouse workflow mutations remain exclusive to the warehouse role.
  */
 const warehouseOversightQueries = [
-  ...paths("inventory", "list taxonomy lotSummaries listLots getTransactions issueCostAllocations getItemSummary getPurchaseHistory getLedger"),
+  ...paths("inventory", "list books bookPages taxonomy lotSummaries listLots getTransactions issueCostAllocations getItemSummary getPurchaseHistory getLedger"),
   ...paths("inventoryCount", "searchCandidates uncountedItems countDiscrepancies listOperations operationDetails listSettlements settlementDetails lotTrackingStatus"),
   ...paths("transfers", "listCards getBatchDetail"),
   ...paths("warehouseIssueBatches", "list getById"),
@@ -99,7 +99,7 @@ const warehouseMutations = [
   ...paths("warehouseIssueBatches", "resolveLot create"),
   ...paths("warehouse", "create confirmDeliveryToWarehouse confirmDeliveryToRequester"),
   "transfers.resolveLot", "transfers.createBatch", "disposal.resolveLot", "disposal.create",
-  ...paths("purchaseOrders", "confirmDeliveryToRequester incrementPrintCount confirmDeliveryToWarehouse deliverInventoryItem"),
+  ...paths("purchaseOrders", "confirmDeliveryToRequester incrementPrintCount confirmDeliveryToWarehouse deliverInventoryItem deliverInventoryBook"),
   ...paths("operationalIssues", "addToPurchaseDraft approve issue returnMaterial createPrepared issuePrepared"),
   ...paths("ticketTeamExecution", "prepareSupply issue transferFromForm request resolve provide purchaseReceipt returnMaterial"),
   ...paths("pmv2.warehouse", "resolveMaterialIdentity prepareTransferHandoff preparePurchaseHandoff linkPurchaseOrder linkConfirmedTransfers issueReadyRequirement linkConfirmedDelivery confirmPendingReturn"),

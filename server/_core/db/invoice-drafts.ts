@@ -329,6 +329,7 @@ export async function processApprovedReceiptItems(
           Number(item.catalogItemId),
           await getReceiptWarehouseId(),
           writer,
+          lotsEnabled ? String(item.purchaseUnit || "قطعة") : undefined,
         );
         if (matches.length > 1) {
           throw new Error("يوجد أكثر من سجل مخزون قديم لنفس صنف الكتالوج داخل المستودع. لن ينشئ النظام سجلًا جديدًا؛ يجب معالجة التكرار القديم بشكل مستقل.");
@@ -1006,6 +1007,9 @@ export async function searchInventoryCountCandidates(params: {
         like(catalogItems.code, term),
         like(catalogItems.nameAr, term),
         like(catalogItems.nameEn, term),
+      sql`EXISTS (SELECT 1 FROM inventory aliases WHERE aliases.linkedItemId=${catalogItems.id} AND aliases.itemName LIKE ${term})`,
+      isInventoryLotsEnabled() ? sql`EXISTS (SELECT 1 FROM inventory_lots aliases WHERE aliases.catalogItemId=${catalogItems.id} AND aliases.supplierItemName LIKE ${term})` : undefined,
+      sql`EXISTS (SELECT 1 FROM catalog_item_candidates aliases WHERE aliases.resolvedCatalogItemId=${catalogItems.id} AND aliases.itemName LIKE ${term})`,
       ];
       if (barcodeCatalogItemIds.size > 0) {
         textConditions.push(inArray(catalogItems.id, Array.from(barcodeCatalogItemIds)));
@@ -1087,6 +1091,9 @@ export async function searchInventoryCountCandidates(params: {
       like(catalogItems.code, term),
       like(catalogItems.nameAr, term),
       like(catalogItems.nameEn, term),
+      sql`EXISTS (SELECT 1 FROM inventory aliases WHERE aliases.linkedItemId=${catalogItems.id} AND aliases.itemName LIKE ${term})`,
+      isInventoryLotsEnabled() ? sql`EXISTS (SELECT 1 FROM inventory_lots aliases WHERE aliases.catalogItemId=${catalogItems.id} AND aliases.supplierItemName LIKE ${term})` : undefined,
+      sql`EXISTS (SELECT 1 FROM catalog_item_candidates aliases WHERE aliases.resolvedCatalogItemId=${catalogItems.id} AND aliases.itemName LIKE ${term})`,
       like(inventory.itemName, term),
       like(inventory.itemNameAr, term),
       like(inventory.itemNameEn, term),

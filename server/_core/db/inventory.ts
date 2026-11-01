@@ -51,6 +51,7 @@ import { ENV } from '../env';
 import { getDb } from "./client";
 import { calculateInventoryValue, calculateMovementTotal, normalizeInventoryQuantity } from "../inventory-costing";
 import { operationalIssuesEnabled } from "../../services/operational-issues/feature";
+import { activeBookStockUnit } from "../inventory-book-policy";
 
 // ============================================================
 // INVENTORY
@@ -66,9 +67,19 @@ export async function getInventoryMatchesByCatalogItemAndWarehouse(
   catalogItemId: number,
   warehouseId: number,
   tx?: any,
+  issueUnit?: string,
 ) {
   const db = tx || await getDb();
   if (!db) return [];
+
+  if (issueUnit != null) {
+    if (!tx) throw new Error("اختيار سجل دفتر الاستلام يتطلب معاملة قائمة");
+    const [masters] = await tx.execute(sql`SELECT id FROM catalog_items WHERE id=${catalogItemId} FOR UPDATE`);
+    if(!masters.length) throw new Error("صنف الكتالوج غير موجود");
+    return tx.select({ id: inventory.id, warehouseId: inventory.warehouseId, linkedItemId: inventory.linkedItemId })
+      .from(inventory).where(and(eq(inventory.linkedItemId, catalogItemId), eq(inventory.warehouseId, warehouseId), activeBookStockUnit(issueUnit)))
+      .orderBy(asc(inventory.id)).limit(1);
+  }
 
   return db.select({
     id: inventory.id,

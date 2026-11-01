@@ -27,6 +27,7 @@ import { storagePut } from "../../_core/storage";
 import { prepareIdeaExecution, linkCreatedExecution, validateDirectIdeaPurchaseContext, assertNotTrackedIdeaSource } from "../../services/improvement-ideas/execution";
 import { findKnownInactiveCatalogUnitNames } from "../../_core/catalog-unit-governance";
 import { assertPurchaseCatalogBaseUnits } from "../../services/purchase-catalog-units";
+import { createBookIssueProcedure, inventoryDeliveryInput } from "../inventory/book-issue.procedure";
 import { assertCanViewPurchaseOrder, filterVisiblePurchaseOrders, assertCanPerformPOAction, assertCanPerformItemPOAction, assertPOItemAssignedToDelegate, isItemAssignedToPODelegate, assertCanPerformItemStatusPOAction, assertCanResolveReturnedPOItem, assertCanRequestDelegateChange, assertCanResolveDelegateChange } from "../../_core/authz/guard";
 import { OWN_REQUESTS_ONLY_ROLES } from "../../_core/authz/policy";
 import { computeActionablePOs, getDelegateItemActionMode } from "./actionable";
@@ -731,6 +732,192 @@ export async function submitPricedBatchForPO(
     itemCount: readyItems.length,
     ...(replacementCompensation ? { replacementCompensation } : {}),
     pricingDocumentArchived,
+  };
+}
+
+async function finishInventoryLine(snapshot: any, ctx: any) {
+  const { input, context, linkToTicket, deliveryResult } = snapshot;
+  const invItem = { quantity: snapshot.quantityBefore };
+  const actualRecipient = { name: snapshot.actualRecipientName };
+  let ticketStatus: string | null = null;
+  if (linkToTicket && context?.purchaseOrderId && context.ticketId) {
+    ticketStatus = await syncAndNotifyTicketMaterialDelivery({
+      purchaseOrderId: context.purchaseOrderId,
+      ticketId: context.ticketId,
+      actorId: ctx.user.id,
+      actualRecipientId: input.deliveredToId,
+      actualRecipientName: (actualRecipient as any).name || "فني",
+    });
+  }
+
+  await db.createAuditLog({
+    userId: ctx.user.id,
+    action: linkToTicket
+      ? "deliver_ticket_material_from_inventory"
+      : "deliver_inventory_item",
+    entityType: "inventory",
+    entityId: input.inventoryId,
+    newValues: {
+      deliveredToId: input.deliveredToId,
+      assignedTechnicianId: linkToTicket
+        ? (context?.assignedTechnicianId ?? null)
+        : null,
+      purchaseOrderItemId: linkToTicket
+        ? (context?.purchaseOrderItemId ?? null)
+        : null,
+      ticketId: linkToTicket ? (context?.ticketId ?? null) : null,
+      deliveryQty: input.deliveryQty,
+      remainingQuantity: Math.max(
+        0,
+        Number(invItem.quantity) - input.deliveryQty
+      ),
+      lotId: deliveryResult.lotId ?? null,
+      inventoryTransactionId: deliveryResult.inventoryTransactionId ?? null,
+      costAllocationCount: deliveryResult.costAllocationCount ?? 0,
+      allocatedCostTotal: deliveryResult.allocatedCostTotal ?? null,
+    },
+  });
+
+  return ticketStatus;
+}
+
+async function deliverInventoryLine(
+  input: z.infer<typeof inventoryDeliveryInput>,
+  ctx: any,
+  outerTx?: any,
+  afterCommit?: Array<() => Promise<any>>,
+  markedPurchaseItems?: Set<number>
+) {
+  const invItem = await db.getInventoryItemById(input.inventoryId, outerTx);
+  if (!invItem)
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "الصنف غير موجود في المخزون",
+    });
+
+  if (input.deliveryQty > invItem.quantity) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `الكمية المطلوبة (${input.deliveryQty}) أكبر من الرصيد (${invItem.quantity})`,
+    });
+  }
+
+  // QR/Lot هو هوية الوارد الفعلية. نحلّه قبل تقرير ربط البلاغ حتى لا نعتمد
+  // على Inventory مجمّع قد يحتوي Lots قادمة من طلبات شراء مختلفة.
+  const database = await db.getDb();
+  if (!database)
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "تعذر الاتصال بقاعدة البيانات",
+    });
+  const scannedLot = input.lotTrackingToken
+    ? await resolveInventoryLotForIssue({
+        tx: outerTx || database,
+        trackingToken: input.lotTrackingToken,
+        inventoryId: input.inventoryId,
+        inventoryCatalogItemId: (invItem as any).linkedItemId ?? null,
+      })
+    : null;
+  const context = scannedLot
+    ? scannedLot.purchaseOrderItemId
+      ? await getInventoryTicketDeliveryContext(
+          input.inventoryId,
+          scannedLot.purchaseOrderItemId
+        )
+      : null
+    : await getInventoryTicketDeliveryContext(input.inventoryId);
+  const linkedTicketForRecipient = context?.ticketId
+    ? await db.getTicketById(context.ticketId)
+    : null;
+  const actualRecipient = await assertActualDeliveryRecipient(
+    input.deliveredToId,
+    linkedTicketForRecipient
+  );
+  const contextSnapshot = context
+    ? {
+        ticketId: context.ticketId,
+        ticketStatus: context.ticketStatus,
+        maintenancePath: context.maintenancePath,
+        assignedTechnicianId: context.assignedTechnicianId,
+        purchaseOrderItemId: context.purchaseOrderItemId,
+        purchaseOrderItemStatus: context.purchaseOrderItemStatus,
+      }
+    : null;
+  const pendingTicketMaterial =
+    !!contextSnapshot && isPendingTicketMaterialLink(contextSnapshot);
+  const linkToTicket =
+    !!contextSnapshot && shouldExposeTicketMaterialLink(contextSnapshot);
+
+  if (pendingTicketMaterial && !context?.assignedTechnicianId) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "لا يمكن تسليم مواد البلاغ قبل وجود فني مسند له",
+    });
+  }
+
+  const markDelivered =
+    linkToTicket &&
+    (!context?.purchaseOrderItemId ||
+      !markedPurchaseItems?.has(context.purchaseOrderItemId));
+  if (markDelivered && context?.purchaseOrderItemId)
+    markedPurchaseItems?.add(context.purchaseOrderItemId);
+  const deliveryResult = await db.issueDelivery(
+    {
+      inventoryId: input.inventoryId,
+      quantity: input.deliveryQty,
+      unit: input.deliveryUnit,
+      performedById: ctx.user.id,
+      deliveredToId: input.deliveredToId,
+      purchaseOrderItemId: linkToTicket
+        ? (context?.purchaseOrderItemId ?? undefined)
+        : undefined,
+      ticketId: linkToTicket ? (context?.ticketId ?? undefined) : undefined,
+      ticketItemId: linkToTicket
+        ? (context?.ticketItemId ?? undefined)
+        : undefined,
+      ticketNumber: linkToTicket
+        ? (context?.ticketNumber ?? undefined)
+        : undefined,
+      assignedTechnicianId: linkToTicket
+        ? (context?.assignedTechnicianId ?? undefined)
+        : undefined,
+      assignedTechnicianName: linkToTicket
+        ? (context?.assignedTechnicianName ?? undefined)
+        : undefined,
+      notes:
+        input.notes ||
+        (linkToTicket ? "تسليم مادة مرتبطة ببلاغ" : "تسليم من المخزون العام"),
+      markPurchaseOrderItemDelivered: markDelivered,
+      lotTrackingToken: input.lotTrackingToken,
+      costAllocations: input.costAllocations,
+    },
+    outerTx
+  );
+
+  const followUp = {
+    input,
+    context,
+    linkToTicket,
+    deliveryResult,
+    quantityBefore: invItem.quantity,
+    actualRecipientName: actualRecipient.name,
+  };
+  const finish = Object.assign(() => finishInventoryLine(followUp, ctx), {
+    resumeData: followUp,
+  });
+  let ticketStatus: string | null = null;
+  if (afterCommit) afterCommit.push(finish);
+  else ticketStatus = await finish();
+
+  return {
+    success: true,
+    ...deliveryResult,
+    linkedToTicket: linkToTicket,
+    ticketStatus,
+    remainingQuantity: Math.max(
+      0,
+      Number(invItem.quantity) - input.deliveryQty
+    ),
   };
 }
 
@@ -2650,122 +2837,9 @@ list: protectedProcedure.input(z.object({
   // المستلم إلزامي. عند وجود حلقة ربط مع بلاغ B يُحدَّث بند الطلب ويُفتح
   // مسار الإصلاح بعد اكتمال تسليم جميع الأصناف الفعالة، بينما يبقى الرصيد
   // الزائد في المخزون دون ربط لاحق بالبلاغ القديم.
-  deliverInventoryItem: warehouseProcedure.input(z.object({
-    inventoryId:   z.number(),
-    deliveredToId: z.number(),
-    deliveryQty:   z.number().positive(),
-    deliveryUnit:  z.string().min(1, "الوحدة مطلوبة"),
-    lotTrackingToken: z.string().trim().min(1).optional(),
-    costAllocations: issueCostAllocationsSchema.optional(),
-    notes:         z.string().optional(),
-  })).mutation(async ({ input, ctx }) => {
-    const invItem = await db.getInventoryItemById(input.inventoryId);
-    if (!invItem) throw new TRPCError({ code: "NOT_FOUND", message: "الصنف غير موجود في المخزون" });
+  deliverInventoryItem: warehouseProcedure.input(inventoryDeliveryInput).mutation(async ({ input, ctx }) => deliverInventoryLine(input, ctx)),
 
-    if (input.deliveryQty > invItem.quantity) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: `الكمية المطلوبة (${input.deliveryQty}) أكبر من الرصيد (${invItem.quantity})`,
-      });
-    }
-
-    // QR/Lot هو هوية الوارد الفعلية. نحلّه قبل تقرير ربط البلاغ حتى لا نعتمد
-    // على Inventory مجمّع قد يحتوي Lots قادمة من طلبات شراء مختلفة.
-    const database = await db.getDb();
-    if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر الاتصال بقاعدة البيانات" });
-    const scannedLot = input.lotTrackingToken
-      ? await resolveInventoryLotForIssue({
-          tx: database,
-          trackingToken: input.lotTrackingToken,
-          inventoryId: input.inventoryId,
-          inventoryCatalogItemId: (invItem as any).linkedItemId ?? null,
-        })
-      : null;
-    const context = scannedLot
-      ? (scannedLot.purchaseOrderItemId
-          ? await getInventoryTicketDeliveryContext(input.inventoryId, scannedLot.purchaseOrderItemId)
-          : null)
-      : await getInventoryTicketDeliveryContext(input.inventoryId);
-    const linkedTicketForRecipient = context?.ticketId ? await db.getTicketById(context.ticketId) : null;
-    const actualRecipient = await assertActualDeliveryRecipient(input.deliveredToId, linkedTicketForRecipient);
-    const contextSnapshot = context ? {
-      ticketId: context.ticketId,
-      ticketStatus: context.ticketStatus,
-      maintenancePath: context.maintenancePath,
-      assignedTechnicianId: context.assignedTechnicianId,
-      purchaseOrderItemId: context.purchaseOrderItemId,
-      purchaseOrderItemStatus: context.purchaseOrderItemStatus,
-    } : null;
-    const pendingTicketMaterial = !!contextSnapshot && isPendingTicketMaterialLink(contextSnapshot);
-    const linkToTicket = !!contextSnapshot && shouldExposeTicketMaterialLink(contextSnapshot);
-
-    if (pendingTicketMaterial && !context?.assignedTechnicianId) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: "لا يمكن تسليم مواد البلاغ قبل وجود فني مسند له",
-      });
-    }
-
-    const deliveryResult = await db.issueDelivery({
-      inventoryId: input.inventoryId,
-      quantity: input.deliveryQty,
-      unit: input.deliveryUnit,
-      performedById: ctx.user.id,
-      deliveredToId: input.deliveredToId,
-      purchaseOrderItemId: linkToTicket ? context?.purchaseOrderItemId ?? undefined : undefined,
-      ticketId: linkToTicket ? context?.ticketId ?? undefined : undefined,
-      ticketItemId: linkToTicket ? context?.ticketItemId ?? undefined : undefined,
-      ticketNumber: linkToTicket ? context?.ticketNumber ?? undefined : undefined,
-      assignedTechnicianId: linkToTicket ? context?.assignedTechnicianId ?? undefined : undefined,
-      assignedTechnicianName: linkToTicket ? context?.assignedTechnicianName ?? undefined : undefined,
-      notes: input.notes || (linkToTicket ? "تسليم مادة مرتبطة ببلاغ" : "تسليم من المخزون العام"),
-      markPurchaseOrderItemDelivered: linkToTicket,
-      lotTrackingToken: input.lotTrackingToken,
-      costAllocations: input.costAllocations,
-    });
-
-    let ticketStatus: string | null = null;
-    if (
-      linkToTicket &&
-      context?.purchaseOrderId &&
-      context.ticketId
-    ) {
-      ticketStatus = await syncAndNotifyTicketMaterialDelivery({
-        purchaseOrderId: context.purchaseOrderId,
-        ticketId: context.ticketId,
-        actorId: ctx.user.id,
-        actualRecipientId: input.deliveredToId,
-        actualRecipientName: (actualRecipient as any).name || "فني",
-      });
-    }
-
-    await db.createAuditLog({
-      userId: ctx.user.id,
-      action: linkToTicket ? "deliver_ticket_material_from_inventory" : "deliver_inventory_item",
-      entityType: "inventory",
-      entityId: input.inventoryId,
-      newValues: {
-        deliveredToId: input.deliveredToId,
-        assignedTechnicianId: linkToTicket ? context?.assignedTechnicianId ?? null : null,
-        purchaseOrderItemId: linkToTicket ? context?.purchaseOrderItemId ?? null : null,
-        ticketId: linkToTicket ? context?.ticketId ?? null : null,
-        deliveryQty: input.deliveryQty,
-        remainingQuantity: Math.max(0, Number(invItem.quantity) - input.deliveryQty),
-        lotId: deliveryResult.lotId ?? null,
-        inventoryTransactionId: deliveryResult.inventoryTransactionId ?? null,
-          costAllocationCount: deliveryResult.costAllocationCount ?? 0,
-          allocatedCostTotal: deliveryResult.allocatedCostTotal ?? null,
-      },
-    });
-
-    return {
-      success: true,
-      ...deliveryResult,
-      linkedToTicket: linkToTicket,
-      ticketStatus,
-      remainingQuantity: Math.max(0, Number(invItem.quantity) - input.deliveryQty),
-    };
-  }),
+  deliverInventoryBook: createBookIssueProcedure(db.getDb,deliverInventoryLine,finishInventoryLine),
 
   pendingPurchaseItems: protectedProcedure.query(async ({ ctx }) => {
     const isAdminOrOwner = ctx.user.role === "admin" || ctx.user.role === "owner";
