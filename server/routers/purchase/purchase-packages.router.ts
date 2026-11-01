@@ -22,6 +22,7 @@ import { localizeMasterDataReferences } from "../../services/translation/localiz
 import { purchaseDocumentPermission } from "../../_core/authz/purchase-document";
 import { loadDocumentListPort } from "../../_core/db/document-list";
 import { groupReadRows } from "../../_core/authz/read-batch";
+import { assertLegacyApprovalOutsideUnifiedBundle } from "../../services/delegate-pricing-bundles/unified-feature";
 
 // ============================================================
 // [PB] راوتر حزمة الشراء — حاوية عليا فوق طلبات الشراء (2026-08-29)
@@ -635,6 +636,7 @@ export const purchasePackagesRouter = router({
       custodyBalance: z.string().trim().min(1, "إجمالي رصيد العهد مطلوب"),
     }))
     .mutation(async ({ input, ctx }) => {
+      await assertLegacyApprovalOutsideUnifiedBundle(await db.getDb(),{submissionId:input.submissionId});
       const custodyValue = Number(input.custodyBalance);
       if (!Number.isFinite(custodyValue) || custodyValue <= 0) {
         throw new TRPCError({
@@ -798,6 +800,7 @@ export const purchasePackagesRouter = router({
       })).optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      await assertLegacyApprovalOutsideUnifiedBundle(await db.getDb(),{submissionId:input.submissionId});
       if (ctx.user.role === "executive_director") {
         throw new TRPCError({ code: "FORBIDDEN", message: "المدير التنفيذي لديه صلاحية استعراض فقط" });
       }

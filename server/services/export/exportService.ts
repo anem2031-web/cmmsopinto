@@ -888,6 +888,7 @@ export async function generatePurchaseRequestPDF(
       poNumber: item.__poNumber ?? po.poNumber,
       sectionName: item.sectionName || "—",
       supplierName: item.supplierName || "—",
+      approvalRejectionReason:bundleSnapshot?item.approvalRejectionReason:null,
     };
   });
 
@@ -920,7 +921,7 @@ export async function generatePurchaseRequestPDF(
       <tr>
         <td>${r.serial}</td>
         ${isMultiOrderDoc ? `<td style="font-size: 0.85em;">${escapeHtml(r.poNumber)}</td>` : ""}
-        <td style="text-align: right;">${escapeHtml(r.itemName)}${bundleSnapshot ? `<small style="display:block;">المورد: ${escapeHtml(r.supplierName)}</small>` : ""}</td>
+        <td style="text-align: right;">${escapeHtml(r.itemName)}${bundleSnapshot ? `<small style="display:block;">المورد: ${escapeHtml(r.supplierName)}</small>` : ""}${r.approvalRejectionReason?`<small style="display:block;color:#b91c1c;">غير معتمد: ${escapeHtml(r.approvalRejectionReason)}</small>`:""}</td>
         ${bundleSnapshot ? `<td>${escapeHtml(r.sectionName)}</td>` : ""}
         <td>${r.qty}</td>
         <td>${escapeHtml(r.unit)}</td>
@@ -932,7 +933,7 @@ export async function generatePurchaseRequestPDF(
   const compensationRows = bundleSnapshot?.compensations ?? (compensationDb && batchId
     ? await replacementDocumentForBatch(compensationDb, batchId, purchaseOrderId) : []);
   const supplierCreditsUsed = compensationRows.reduce((sum, item) => sum + Number(item.creditAllocated), 0);
-  const requestedCustody = Math.max(0, grandTotal - supplierCreditsUsed);
+  const requestedCustody = Math.max(0, (bundleSnapshot?.approvedTotal!=null?Number(bundleSnapshot.approvedTotal):grandTotal) - supplierCreditsUsed);
   const compensationHtml = compensationRows.length ? `<div class="info-card" style="margin-bottom:8px;border-color:#d69e2e;page-break-inside:avoid;">
       <strong>تعويض مرتجع مورد — العهدة المطلوبة هي فرق السعر فقط</strong>
       ${compensationRows.map(c => `<div style="margin-top:4px;border-top:1px solid #e2e8f0;padding-top:4px;">
@@ -1034,7 +1035,7 @@ export async function generatePurchaseRequestPDF(
         <div class="meta-col">
             <div class="info-card">
                 <div class="info-row">
-                    <div class="info-label">المبلغ الإجمالي:</div>
+                    <div class="info-label">${bundleSnapshot?.approvedTotal!=null?'إجمالي التسعير الأصلي:':'المبلغ الإجمالي:'}</div>
                     <div class="info-value" style="font-weight: bold; color: #2b6cb0;">${fmtSAR(grandTotal)} ر.س</div>
                 </div>
             </div>
@@ -1067,6 +1068,7 @@ export async function generatePurchaseRequestPDF(
         </tbody>
     </table>
 
+    ${bundleSnapshot?.approvedTotal!=null?`<div class="info-card" style="margin-bottom:8px;">إجمالي الأصناف المعتمدة بعد قرارات الرفض: <strong>${fmtSAR(Number(bundleSnapshot.approvedTotal))} ر.س</strong></div>`:""}
     ${compensationHtml}
 
     <div class="declaration-box">
@@ -1161,7 +1163,7 @@ export async function generatePurchaseRequestPDF(
           <tr><td>الحسابات</td><td>${escapeHtml(approval.accountingName)}</td>
             <td>${sigImg(approval.accountingSignature)}<small>اعتماد إلكتروني: ${escapeHtml(approval.accountingAt)}</small></td></tr>
           <tr><td>الإدارة العليا</td><td>${escapeHtml(approval.managementName)}</td>
-            <td>اعتماد إلكتروني مثبت<br><small>${escapeHtml(approval.managementAt)}</small></td></tr>
+            <td>${sigImg(approval.managementSignature||"")}اعتماد إلكتروني مثبت<br><small>${escapeHtml(approval.managementAt)}</small></td></tr>
         </tbody>
       </table>
       <div class="section-title">الشؤون المالية والإجراءات المحاسبية</div>

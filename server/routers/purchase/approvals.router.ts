@@ -13,6 +13,7 @@ import { createTranslatedProcurementComment, queuePurchaseTranslation } from "./
 import { approveReplacementAccounting, approveReplacementManagement } from "../../supplier-return-followup/pricing-bridge";
 import { assertNoReplacementOrder, assertSingleReplacementRejection, returnReplacementToDelegate } from "../../supplier-return-followup/repricing";
 import { ReturnFollowupError } from "../../supplier-return-followup/policy";
+import { assertLegacyApprovalOutsideUnifiedBundle } from "../../services/delegate-pricing-bundles/unified-feature";
 
 /**
  * أرشفة نسخة PDF معتمدة من دفعة تسعير — قسم "الوثائق المالية المعتمدة"
@@ -102,6 +103,7 @@ export const approvalsRouter = router({
     rejectedItemIds: z.array(z.number()).optional(),
     rejectionReason: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
+    await assertLegacyApprovalOutsideUnifiedBundle(await db.getDb(),{poId:input.id});
     const po = await db.getPurchaseOrderById(input.id);
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
     // ✅ إصلاح: لم يكن هناك أي تحقق من مرحلة الطلب سابقًا — أي محاسب يقدر
@@ -207,6 +209,7 @@ export const approvalsRouter = router({
     rejectedItemIds: z.array(z.number()).optional(),
     rejectionReason: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
+    await assertLegacyApprovalOutsideUnifiedBundle(await db.getDb(),{batchId:input.batchId});
     const batch = await db.getPOPricingBatchById(input.batchId);
     if (!batch) throw new TRPCError({ code: "NOT_FOUND", message: "دفعة التسعير غير موجودة" });
 
@@ -387,6 +390,7 @@ export const approvalsRouter = router({
   })).mutation(async ({ input, ctx }) => {
     const item = await db.getPOItemById(input.itemId);
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "الصنف غير موجود" });
+    if(item.batchId)await assertLegacyApprovalOutsideUnifiedBundle(await db.getDb(),{batchId:item.batchId});
 
     const po = await db.getPurchaseOrderById(item.purchaseOrderId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
@@ -483,6 +487,7 @@ export const approvalsRouter = router({
     rejectedItemIds: z.array(z.number()).optional(),
     rejectionReason: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
+    await assertLegacyApprovalOutsideUnifiedBundle(await db.getDb(),{batchId:input.batchId});
     if (ctx.user.role === "executive_director") {
       throw new TRPCError({ code: "FORBIDDEN", message: "المدير التنفيذي لديه صلاحية استعراض فقط" });
     }
@@ -619,6 +624,7 @@ export const approvalsRouter = router({
     rejectedItemIds: z.array(z.number()).optional(),
     rejectionReason: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
+    await assertLegacyApprovalOutsideUnifiedBundle(await db.getDb(),{poId:input.id});
     const po = await db.getPurchaseOrderById(input.id);
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
     // ✅ الحارس المركزي: يستبدل الفحص اليدوي لاستثناء executive_director (نفس
@@ -782,6 +788,7 @@ export const approvalsRouter = router({
     // سابقًا. القاعدة (accountant فقط بـpending_accounting، senior_management
     // فقط بـpending_management، admin/owner دائمًا) معرَّفة الآن بـpolicy.ts فقط.
     assertCanPerformPOAction("reject", ctx.user, poReject);
+    await assertLegacyApprovalOutsideUnifiedBundle(await db.getDb(),{poId:input.id,pendingOnly:true});
     await db.withTransaction(tx => assertNoReplacementOrder(tx, poReject.id));
 
     await db.updatePurchaseOrder(input.id, { status: "rejected", rejectedById: ctx.user.id, rejectedAt: new Date(), rejectionReason: input.reason });

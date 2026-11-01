@@ -138,10 +138,10 @@ const constructionMutations = [
 
 /** Exposed for coverage tests; final ownership/stage checks remain mandatory. */
 export const BUSINESS_ROLE_CAPABILITIES: Record<BusinessRole, { query: readonly string[]; mutation: readonly string[] }> = {
-  accountant: { query: [...sharedQueries, ...costQueries, "attachments.listByType", ...paths("delegatePricingBundles", "status list listPage detail")],
-    mutation: [...sharedMutations, ...paths("purchaseOrders", "approveAccounting approveAccountingBatch rejectAccountingBatchItem reject"), "purchasePackages.approveAccountingSubmission", "delegatePricingBundles.pdf"] },
-  senior_management: { query: [...sharedQueries, ...documentQueries, ...settlementReviewQueries, ...warehouseOversightQueries, ...costQueries, ...managementQueries, "attachments.listByType", "technicians.list", ...paths("delegatePricingBundles", "status list listPage detail")],
-    mutation: [...sharedMutations, ...documentMutations, ...settlementReviewMutations, ...managementMutations, ...paths("purchaseOrders", "approveManagement approveManagementBatch reject"), "purchasePackages.approveManagementSubmission", "delegatePricingBundles.pdf"] },
+  accountant: { query: [...sharedQueries, ...costQueries, "attachments.listByType", ...paths("delegatePricingBundles", "status list listPage detail approvalQueue approvalDetail")],
+    mutation: [...sharedMutations, ...paths("purchaseOrders", "approveAccounting approveAccountingBatch rejectAccountingBatchItem reject"), "purchasePackages.approveAccountingSubmission", ...paths("delegatePricingBundles","pdf approveAccounting")] },
+  senior_management: { query: [...sharedQueries, ...documentQueries, ...settlementReviewQueries, ...warehouseOversightQueries, ...costQueries, ...managementQueries, "attachments.listByType", "technicians.list", ...paths("delegatePricingBundles", "status list listPage detail approvalQueue approvalDetail")],
+    mutation: [...sharedMutations, ...documentMutations, ...settlementReviewMutations, ...managementMutations, ...paths("purchaseOrders", "approveManagement approveManagementBatch reject"), "purchasePackages.approveManagementSubmission", ...paths("delegatePricingBundles","pdf approveManagement")] },
   executive_director: { query: [...sharedQueries, ...documentQueries, ...costQueries, ...managementQueries, "technicians.list"],
     mutation: [...sharedMutations, ...documentMutations, ...managementMutations] },
   warehouse: { query: [...sharedQueries, ...documentQueries, ...settlementReviewQueries, ...costQueries, ...warehouseQueries],

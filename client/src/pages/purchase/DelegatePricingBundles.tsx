@@ -13,11 +13,12 @@ import { Loader2 } from "lucide-react";
 import { PricingBundleRows } from "@/components/purchase/PricingBundleRows";
 import { toast } from "sonner";
 import { canOpenApprovalPdf, approvalPdfNotice } from "@/lib/approvalPdfAccess";
+import { UnifiedBundleApproval } from "@/components/purchase/UnifiedBundleApproval";
 export default function DelegatePricingBundles() {
   const { user } = useAuth(); const { language, dir } = useTranslation(); const text = pricingBundleText[language];
   const allowed = !!user && canReadPricingBundles(user);
   const status = trpc.delegatePricingBundles.status.useQuery(undefined, { enabled: allowed, retry: false });
-  return <div dir={dir} className="p-6 space-y-5"><h1 className="text-2xl font-bold">{text.title}</h1>{!allowed ? <p role="alert">{text.forbidden}</p> : status.error ? <p role="alert">{status.error.message}</p> : status.isLoading ? <p>{text.load}</p> : status.data?.enabled ? <PricingBundlesContent /> : <p>{text.disabled}</p>}</div>;
+  return <div dir={dir} className="p-6 space-y-5"><h1 className="text-2xl font-bold">{text.title}</h1>{!allowed ? <p role="alert">{text.forbidden}</p> : status.error ? <p role="alert">{status.error.message}</p> : status.isLoading ? <p>{text.load}</p> : status.data?.enabled ? <>{('approvalEnabled' in status.data)&&status.data.approvalEnabled&&<UnifiedBundleApproval/>}<PricingBundlesContent /></> : <p>{text.disabled}</p>}</div>;
 }
 export function PricingBundlesContent() {
   const { user } = useAuth(); const { language } = useTranslation(); const text = pricingBundleText[language]; const utils = trpc.useUtils();

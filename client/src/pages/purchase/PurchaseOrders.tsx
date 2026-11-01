@@ -2,10 +2,11 @@ import { PricingBundleLink, PricingBundleAddButton } from "@/components/purchase
 import { DelegateSupplyRows } from "@/components/purchase/DelegateSupplyRows";
 import { DelegateCompletedItems, completedLabels } from "@/components/purchase/DelegateCompletedItems";
 import { SupplierReturns } from "@/components/purchase/SupplierReturns";
+import { BundleApprovalCards } from "@/components/purchase/UnifiedBundleApproval";
 import { trpc } from "@/lib/trpc";
 import { independentReadOptions } from "@/lib/read-transport";
 import { readHistoryEntryState, writeHistoryEntryState } from "@/lib/backStack";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -163,12 +164,16 @@ export default function PurchaseOrders() {
   // «بانتظار إجرائي» فقط، مع إبقاء الطلبات المفردة القديمة كما هي.
   const isPackageSubmissionActionRole =
     user?.role === "accountant" || user?.role === "senior_management";
+  const unifiedApprovalQ=trpc.delegatePricingBundles.approvalQueue.useQuery(undefined,{enabled:isPackageSubmissionActionRole,retry:false,...independentReadOptions});
+  const unifiedApprovalItems=unifiedApprovalQ.data?.items||[];
+  const unifiedSubmissionIds=new Set(unifiedApprovalItems.flatMap((row:any)=>row.submissionIds));
+  const unifiedOrderIds=new Set(unifiedApprovalItems.flatMap((row:any)=>row.coveredOrderIds));
   const { data: actionableSubmissions, isLoading: actionableSubmissionsLoading } =
     trpc.purchasePackages.actionableSubmissionsForMe.useQuery(undefined, {
       enabled: isPackageSubmissionActionRole,
       ...independentReadOptions,
     });
-  const actionableSubmissionItems = actionableSubmissions?.items ?? [];
+  const actionableSubmissionItems = (actionableSubmissions?.items ?? []).filter((row:any)=>!unifiedSubmissionIds.has(Number(row.submissionId)));
 
   const actionableSubmissionOrderIds = useMemo(() => {
     const ids = new Set<number>();
@@ -387,6 +392,7 @@ export default function PurchaseOrders() {
   const standaloneActionableItems = useMemo(() =>
     actionableItems.filter((it: any) => {
       const id = Number(it.id);
+      if(isPackageSubmissionActionRole&&unifiedOrderIds.has(id))return false;
       if (isPackageSubmissionActionRole && actionableSubmissionOrderIds.has(id)) return false;
       if (isDelegatePricingActionRole && it.actionMode === "estimate" && delegatePricingPackagedOrderIds.has(id)) return false;
       if (isReviewerGroupingActionRole && it.status === "pending_review" && reviewerPackagedOrderIds.has(id)) return false;
@@ -400,15 +406,18 @@ export default function PurchaseOrders() {
     isPackageSubmissionActionRole,
     isDelegatePricingActionRole,
     isReviewerGroupingActionRole,
+    unifiedApprovalQ.data,
   ]);
 
   const actionableDisplayCount =
     standaloneActionableItems.length +
+    unifiedApprovalItems.length +
     (isPackageSubmissionActionRole ? actionableSubmissionItems.length : 0) +
     (isDelegatePricingActionRole ? delegatePricingPackages.length : 0) +
     (isReviewerGroupingActionRole ? reviewerActionablePackages.length : 0);
   const actionableViewLoading =
     actionableLoading ||
+    (isPackageSubmissionActionRole&&unifiedApprovalQ.isLoading)||
     (isPackageSubmissionActionRole && actionableSubmissionsLoading) ||
     (isDelegatePricingActionRole && delegatePendingEstimateItemsLoading) ||
     (needsActionablePackageCards && actionablePackageCardsLoading);
@@ -779,6 +788,7 @@ export default function PurchaseOrders() {
       {/* ── قائمة "بانتظار إجرائي" ────────────────────────────────── */}
       {view === "actionable" && (
         <div className="space-y-2">
+          {isPackageSubmissionActionRole&&unifiedApprovalQ.error&&<p role="alert">{unifiedApprovalQ.error.message}</p>}
           {actionableViewLoading ? (
             <>
               <Skeleton className="h-20 w-full" />
@@ -793,6 +803,8 @@ export default function PurchaseOrders() {
             </Card>
           ) : (
             <>
+              {isPackageSubmissionActionRole&&<><BundleApprovalCards items={unifiedApprovalItems}/>
+                {unifiedApprovalQ.data?.nextId&&<Link href="/delegate-pricing-bundles" className="text-primary underline">عرض بقية حزم التسعير للاعتماد</Link>}</>}
               {isReviewerGroupingActionRole && reviewerActionablePackages.map((pkg: any) => (
                 <PurchaseBatchCard
                   key={`review-package:${pkg.id}`}

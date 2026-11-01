@@ -6,6 +6,8 @@ import { hasOwnPurchaseDocumentApproval, isPurchasePdfApprover, PURCHASE_PDF_APP
 import { documentDayBoundary, documentSearchPattern, type DocumentListPageInput } from "../../../shared/document-list";
 import { supplierReturnDatabaseEnabled } from "../../supplier-return-followup/feature";
 import { approvedBundleCondition, approvedBundleSnapshot } from "./approved-document";
+import { initializeUnifiedApproval, unifiedBundleApprovalsEnabled } from "./unified-feature";
+import type { UnifiedApprovalPorts } from "./unified-approval";
 export interface PricingBundlePorts {
   database(): Promise<any>;
   submitPO(poId: number, actor: PricingBundleActor, options: { selectedItemIds: number[]; tx: any; purchasePackageSubmissionId?: number; skipArchive: true; bundleId: number; delegateSignatureSnapshot?: string | null }): Promise<any>;
@@ -13,6 +15,8 @@ export interface PricingBundlePorts {
   render(snapshot: PricingBundleSnapshot): Promise<Buffer>;
   signature(source: string | null): Promise<string>;
   sync(poId: number, actorId: number, batchId: number): Promise<void>;
+  finishUnifiedSend?(actor: PricingBundleActor, bundleId:number):Promise<void>;
+  unified?:UnifiedApprovalPorts;
 }
 const fail = (message: string, code: "BAD_REQUEST" | "CONFLICT" | "FORBIDDEN" | "NOT_FOUND" = "BAD_REQUEST"): never => { throw new TRPCError({ code, message }); };
 const json = (value: any) => typeof value === "string" ? JSON.parse(value) : value;
@@ -40,10 +44,12 @@ export class PricingBundleService {
       b.accountingApprovedById,b.accountingApprovedAt,b.managementApprovedById,b.managementApprovedAt,
       s.id AS actualPackageSubmissionId,s.accountingApprovedById AS submissionAccountingApprovedById,s.accountingApprovedAt AS submissionAccountingApprovedAt,
       s.managementApprovedById AS submissionManagementApprovedById,s.managementApprovedAt AS submissionManagementApprovedAt,
+      ${unifiedBundleApprovalsEnabled()?sql`a.status AS unifiedStatus,a.accountingApprovedById AS unifiedAccountingId,a.accountingApprovedAt AS unifiedAccountingAt,a.managementApprovedById AS unifiedManagementId,a.managementApprovedAt AS unifiedManagementAt,`:sql``}
       p.id AS actualOrderId
       FROM delegate_pricing_bundle_batches l LEFT JOIN po_pricing_batches b ON b.id=l.pricingBatchId
       LEFT JOIN purchase_orders p ON p.id=l.purchaseOrderId
       LEFT JOIN purchase_package_submissions s ON s.id=l.purchasePackageSubmissionId
+      ${unifiedBundleApprovalsEnabled()?sql`LEFT JOIN delegate_pricing_bundle_approvals a ON a.bundleId=l.bundleId`:sql``}
       WHERE l.bundleId IN (${sql.join(ids.map(id => sql`${id}`), sql`,`)})`);
   }
   private permission(actor: PricingBundleActor, bundle: any, purchaseOrderIds: number[], approvals: any[] = []) {
@@ -54,12 +60,14 @@ export class PricingBundleService {
     const linked = approvals.filter(row => Number(row.bundleId) === Number(bundle.id));
     if (!expected.size || linked.length !== expected.size || new Set(linked.map(row => Number(row.purchaseOrderId))).size !== expected.size) return blocked;
     for (const row of linked) {
+      const unifiedApproval=row.unifiedStatus?{accountingApprovedById:row.unifiedAccountingId,accountingApprovedAt:row.unifiedAccountingAt,
+        managementApprovedById:row.unifiedManagementId,managementApprovedAt:row.unifiedManagementAt}:null;
       if (!expected.has(Number(row.purchaseOrderId)) || Number(row.actualOrderId) !== Number(row.purchaseOrderId)
         || Number(row.actualBatchId) !== Number(row.pricingBatchId) || Number(row.actualPurchaseOrderId) !== Number(row.purchaseOrderId)
-        || !hasOwnPurchaseDocumentApproval(actor, row)) return blocked;
+        || !hasOwnPurchaseDocumentApproval(actor, unifiedApproval||row)) return blocked;
       if (row.purchasePackageSubmissionId != null) {
         if (Number(row.actualSubmissionId) !== Number(row.purchasePackageSubmissionId) || Number(row.actualPackageSubmissionId) !== Number(row.purchasePackageSubmissionId)
-          || !hasOwnPurchaseDocumentApproval(actor, { accountingApprovedById: row.submissionAccountingApprovedById, accountingApprovedAt: row.submissionAccountingApprovedAt,
+          || !hasOwnPurchaseDocumentApproval(actor, unifiedApproval||{ accountingApprovedById: row.submissionAccountingApprovedById, accountingApprovedAt: row.submissionAccountingApprovedAt,
             managementApprovedById: row.submissionManagementApprovedById, managementApprovedAt: row.submissionManagementApprovedAt })) return blocked;
       } else if (row.actualSubmissionId != null) return blocked;
     }
@@ -259,14 +267,15 @@ export class PricingBundleService {
       await tx.execute(sql`UPDATE delegate_pricing_bundles SET status='archived',openDelegateId=NULL,sentAt=CURRENT_TIMESTAMP,revision=revision+1,snapshotJson=${JSON.stringify(compensations.length ? { ...snapshot, compensations } : snapshot)},pdfContent=NULL WHERE id=${id}`);
       await this.audit(tx, actor.id, id, "pricing_bundle_sent", { itemIds: snapshot.rows.map(item => item.id) });
       await this.audit(tx, actor.id, id, "pricing_bundle_archived", { automatic: true });
+      await initializeUnifiedApproval(tx,id);
     });
     // Durable per-PO finalization retries existing notifications/audit/ticket sync, never accounting submission.
-    try { return { success: true, effectsDone: await this.finish(actor, id) }; }
+    try { return {success:true,effectsDone:await this.finish(actor,id)}; }
     catch (error) { console.error("[PricingBundle] finalization is pending", error); return { success: true, effectsDone: false }; }
   }
   async finish(actor: PricingBundleActor, id: number) {
     this.write(actor);
-    return (await this.ports.database()).transaction(async (tx: any) => {
+    const done=await (await this.ports.database()).transaction(async (tx: any) => {
       const bundle = await this.header(tx, actor, id, true);
       if (bundle.status === "open") fail("الحزمة لم تُرسل");
       if (bundle.effectsDone) return true;
@@ -279,6 +288,8 @@ export class PricingBundleService {
         await tx.execute(sql`UPDATE delegate_pricing_bundles SET effectsDone=1 WHERE id=${id}`); return true;
       } catch (error) { console.error("[PricingBundle] linked workflow finalization requires retry", error); return false; }
     });
+    if(unifiedBundleApprovalsEnabled()&&this.ports.finishUnifiedSend)await this.ports.finishUnifiedSend(actor,id);
+    return done;
   }
   async pdf(actor: PricingBundleActor, id: number, approvedDocument = false) {
     this.read(actor); if (actor.role === "observer") fail("المراقب لا يستطيع التصدير", "FORBIDDEN");

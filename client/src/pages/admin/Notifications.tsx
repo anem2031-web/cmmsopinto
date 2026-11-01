@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { useLocation } from "wouter";
 import { ticketTeamNotificationPath } from "@shared/maintenance-team-tickets/warehouse-navigation";
+import { pricingBundleApprovalNotificationPath } from "@shared/delegate-pricing-bundles";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -382,7 +383,8 @@ export default function Notifications() {
               )}
               onClick={() => {
                 if (!n.isRead) markReadMut.mutate({ id: n.id });
-                if (ticketTeamNotificationPath(n.eventKey, n.relatedTicketId)) setLocation(ticketTeamNotificationPath(n.eventKey, n.relatedTicketId)!);
+                if(pricingBundleApprovalNotificationPath(n.eventKey))setLocation(pricingBundleApprovalNotificationPath(n.eventKey)!);
+                else if (ticketTeamNotificationPath(n.eventKey, n.relatedTicketId)) setLocation(ticketTeamNotificationPath(n.eventKey, n.relatedTicketId)!);
                 else if (n.relatedTicketId) setLocation(`/tickets/${n.relatedTicketId}`);
                 else if (n.relatedPoId) setLocation(`/purchase-orders/${n.relatedPoId}`);
               }}
@@ -453,12 +455,12 @@ export default function Notifications() {
                         onClick={(e) => {
                           e.stopPropagation();
                           if (!n.isRead) markReadMut.mutate({ id: n.id });
-                          setLocation(`/purchase-orders/${n.relatedPoId}`);
+                          setLocation(pricingBundleApprovalNotificationPath(n.eventKey)??`/purchase-orders/${n.relatedPoId}`);
                         }}
                         className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
                       >
                         <ShoppingCart className="w-3 h-3" />
-                        {t.notifications.viewPO}
+                        {pricingBundleApprovalNotificationPath(n.eventKey)?'فتح حزمة التسعير':t.notifications.viewPO}
                       </button>
                     )}
                   </div>

@@ -1,4 +1,9 @@
 export const PRICING_BUNDLE_LIMIT = 20;
+export function pricingBundleApprovalNotificationPath(eventKey:unknown):string|null {
+  if(typeof eventKey!=='string')return null;const match=/^dpb_approval:([1-9][0-9]*)$/.exec(eventKey);
+  if(!match||!Number.isSafeInteger(Number(match[1])))return null;
+  return `/delegate-pricing-bundles?approval=${match[1]}`;
+}
 export type PricingBundleActor = { id: number; role: string; isActive: number; name?: string | null };
 export type PricingBundleRow = {
   id: number; purchaseOrderId: number; poNumber: string; packageId: number | null;
@@ -6,14 +11,16 @@ export type PricingBundleRow = {
   siteId: number | null; sectionId: number | null; ticketId: number | null; ticketItemId: number | null;
   quantity: number; unit: string; estimatedUnitCost: string; estimatedTotalCost: string;
   supplierName: string; delegateId: number; status: string;
+  approvalRejectionReason?:string;
 };
 export type PricingBundleSnapshot = {
   number: string; submittedAt: string; delegate: { id: number; name: string; signature: string; signatureSource?: string | null };
   rows: PricingBundleRow[];
+  approvedTotal?:string;
   /** Download-only approved variant; never written over the delegate snapshot. */
   financialApprovals?: Array<{
     reference: string; poNumbers: string[]; accountingName: string; accountingAt: string;
-    accountingSignature: string; managementName: string; managementAt: string;
+    accountingSignature: string; managementName: string; managementAt: string; managementSignature?:string;
     custodyLabel: string; custodyValue: string | null; notes: string;
   }>;
   compensations?: Array<{

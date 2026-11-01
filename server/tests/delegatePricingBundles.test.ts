@@ -21,12 +21,13 @@ function extract(file: string, name: string) {
 const submitCode = extract("server/routers/purchase/purchase-orders.router.ts", "submitPricedBatchForPO");
 function fixture() {
   let state: any = { bundles: [], members: [], links: [], batches: [], submissions: [], items: Array.from({ length: 25 }, (_, index) => ({ id: index + 1, purchaseOrderId: index < 2 ? 101 : index % 2 ? 102 : 103, poNumber: index < 2 ? "PR-101" : index % 2 ? "PR-102" : "PR-103", packageId: index < 2 ? null : index % 2 ? 9 : 10, purchaseOrderStatus: "pending_estimate", delegateId: 11, catalogItemId: 55, itemName: `Material ${index + 1}`, sectionId: index + 1, sectionName: `Section ${index + 1}`, siteId: 1, siteName: "Site", categoryName: "Category", ticketId: index + 30, ticketItemId: index + 40, quantity: index === 0 ? 50 : 2, unit: "piece", estimatedUnitCost: "10.00", estimatedTotalCost: index === 0 ? "500.00" : "20.00", supplierName: `Supplier ${index + 1}`, status: "estimated", batchId: null })) };
-  const flags = { renderFail: false, batchFailPo: 0, syncFail: false, replacementOrderId: 0 }; let queue = Promise.resolve(); let transactionDepth = 0;
+  const flags = { renderFail: false, batchFailPo: 0, syncFail: false, replacementOrderId: 0, unifiedInitFail:false }; let queue = Promise.resolve(); let transactionDepth = 0;
   const queries: string[] = [];
   const tx: any = { execute: async (statement: any) => {
     const parsed = new MySqlDialect().sqlToQuery(statement), q = parsed.sql.replace(/\s+/g, " ").trim(), p: any[] = parsed.params; queries.push(q);
     const rows = (values: any[]) => [structuredClone(values), []];
     if (q === "SELECT DATABASE() AS databaseName") return rows([{ databaseName: "copycmms2" }]);
+    if(q.startsWith('INSERT INTO delegate_pricing_bundle_approvals')){if(flags.unifiedInitFail)throw Error('unified approval table unavailable');state.unifiedApprovals??=[];state.unifiedApprovals.push({bundleId:p[0],status:'pending_accounting'});return [{affectedRows:1}];}
     if (q.startsWith("SELECT purchaseOrderId FROM supplier_return_replacement_plans")) return rows(p.includes(flags.replacementOrderId) ? [{ purchaseOrderId: flags.replacementOrderId }] : []);
     if (q.startsWith("SELECT id FROM users")) return rows(p[0] === 11 ? [{ id: 11 }] : []);
     if (q.startsWith("SELECT i.*,p.poNumber")) return rows(state.items.filter((i: any) => i.id === p[0]));
@@ -93,6 +94,15 @@ function fixture() {
 beforeEach(() => vi.stubEnv("DELEGATE_PRICING_BUNDLES_ENABLED", "true"));
 afterEach(() => vi.unstubAllEnvs());
 describe("Pricing bundle → existing accounting batches, isolated with no database", () => {
+  it('initializes unified approval atomically with the original send only when rollout is enabled',async()=>{
+    const f=fixture();vi.stubEnv('DELEGATE_PRICING_BUNDLE_APPROVALS_ENABLED','true');const id=await f.add(1,3);await f.service.send(actor,id,2);
+    expect(f.state().unifiedApprovals).toEqual([{bundleId:id,status:'pending_accounting'}]);expect(f.state().batches).toHaveLength(2);
+    await f.service.send(actor,id,2);expect(f.state().unifiedApprovals).toHaveLength(1);expect(f.state().batches).toHaveLength(2);
+  });
+  it('rolls back every accounting batch and the archive if unified initialization fails during send',async()=>{
+    const f=fixture();vi.stubEnv('DELEGATE_PRICING_BUNDLE_APPROVALS_ENABLED','true');f.flags.unifiedInitFail=true;const id=await f.add(1,3);
+    await expect(f.service.send(actor,id,2)).rejects.toThrow('unified approval table unavailable');expect(f.state().batches).toHaveLength(0);expect(f.state().submissions).toHaveLength(0);expect(f.state().bundles[0].status).toBe('open');
+  });
   it("rejects a replacement purchase in a purchase package before creating accounting documents", async () => {
     const f = fixture(); const id = await f.add(3); f.flags.replacementOrderId = 103;
     await expect(f.service.send(actor, id, 1)).rejects.toThrow("دفعة مستقلة");
