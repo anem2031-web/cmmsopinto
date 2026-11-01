@@ -17,7 +17,8 @@ import { TRPCError } from "@trpc/server";
 import { createBundleReplacementAdapter } from "../services/delegate-pricing-bundles/replacement-approval-adapter";
 import { pricingBundleApprovalNotificationPath } from "../../shared/delegate-pricing-bundles";
 import { getDelegateItemActionMode } from "../routers/purchase/actionable";
-import { PricingBundleService } from '../services/delegate-pricing-bundles/service';
+import { assertPOVisible } from "../_core/authz/engine";
+import { PricingBundleService } from "../services/delegate-pricing-bundles/service";
 const { DatabaseSync } = createRequire(import.meta.url)(
   "node:sqlite"
 ) as typeof import("node:sqlite");
@@ -182,7 +183,7 @@ function fixture() {
       return run;
     },
   };
-  const guards = vi.fn(async () => (po: any) => {
+  const guards = vi.fn(async (_actor?: any) => (po: any) => {
     if (Number(po.requestedById) === 666)
       throw new TRPCError({ code: "FORBIDDEN" });
   });
@@ -230,6 +231,217 @@ function fixture() {
     stageGuard,
   };
 }
+describe("DPB live regressions: absent units and committed approvals", () => {
+  it("resumes a stored follow-up through a fresh RPC after reload without repeating any decision or funding", async () => {
+    const f = fixture();
+    f.guards.mockImplementation(
+      async actor => po =>
+        assertPOVisible({ role: actor.role, userId: actor.id }, po)
+    );
+    f.finish.mockRejectedValueOnce(Error("Notification offline"));
+    expect(
+      (await f.service.approve(accountant, "accounting", input())).effectsDone
+    ).toBe(false);
+    const writes = f.updateItem.mock.calls.length;
+    const replacements = f.replacement.mock.calls.length;
+    const revision = f.get("delegate_pricing_bundle_approvals").revision;
+    const api = router({
+      delegatePricingBundles: createPricingBundlesRouter(
+        { database: async () => f.database, unified: f.ports } as any,
+        () => true
+      ),
+    });
+    const caller = (user: any) =>
+      api.createCaller({ user, req: { headers: {} }, res: {} } as any)
+        .delegatePricingBundles;
+    const result = await caller(accountant).resumeApproval({
+      id: 24,
+      stage: "accounting",
+    });
+    expect(result.effectsDone).toBe(true);
+    expect(
+      f.get("delegate_pricing_bundle_approvals").accountingEffectsDone
+    ).toBe(1);
+    await caller(accountant).resumeApproval({ id: 24, stage: "accounting" });
+    expect(f.get("delegate_pricing_bundle_approvals").revision).toBe(revision);
+    expect(f.updateItem).toHaveBeenCalledTimes(writes);
+    expect(f.replacement).toHaveBeenCalledTimes(replacements);
+    expect(f.finish).toHaveBeenCalledTimes(2);
+    await expect(
+      caller(accountant).resumeApproval({ id: 24, stage: "management" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      caller(management).resumeApproval({ id: 24, stage: "accounting" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    for (const role of [
+      "delegate",
+      "observer",
+      "warehouse",
+      "executive_director",
+      "technician",
+    ])
+      await expect(
+        caller({ ...accountant, role }).resumeApproval({
+          id: 24,
+          stage: "accounting",
+        })
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    f.memory.exec("INSERT INTO users VALUES(9,'accountant',1,'Other',NULL)");
+    await expect(
+      caller({ ...accountant, id: 9 }).resumeApproval({
+        id: 24,
+        stage: "accounting",
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      caller(accountant).resumeApproval({ id: 999, stage: "accounting" })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    f.memory.exec("UPDATE users SET isActive=0 WHERE id=7");
+    await expect(
+      caller(accountant).resumeApproval({ id: 24, stage: "accounting" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+  it.each([null, "", "—"])(
+    "accepts an unchanged absent unit represented as %j without rewriting the frozen document",
+    async unit => {
+      const f = fixture();
+      f.snapshot.rows[0].unit = "—";
+      f.memory
+        .prepare(
+          "UPDATE delegate_pricing_bundles SET snapshotJson=? WHERE id=24"
+        )
+        .run(JSON.stringify(f.snapshot));
+      f.memory
+        .prepare("UPDATE purchase_order_items SET unit=? WHERE id=1")
+        .run(unit);
+      const before = f.get("delegate_pricing_bundles");
+      const result = await f.service.approve(accountant, "accounting", input());
+      expect(result.effectsDone).toBe(true);
+      expect(result.status).toBe("pending_management");
+      expect(f.get("delegate_pricing_bundles").snapshotJson).toBe(
+        before.snapshotJson
+      );
+      expect(f.get("delegate_pricing_bundles").pdfContent).toEqual(
+        before.pdfContent
+      );
+      expect(f.get("purchase_order_items", 1).unit).toBe(unit);
+    }
+  );
+  it.each(["حبة", "كرتون", "قطعة "])(
+    "continues to deny a real quoted unit change to %s",
+    async unit => {
+      const f = fixture();
+      f.memory
+        .prepare("UPDATE purchase_order_items SET unit=? WHERE id=1")
+        .run(unit);
+      await expect(
+        f.service.approve(accountant, "accounting", input())
+      ).rejects.toThrow("تغيرت بيانات صنف");
+      expect(f.updateItem).not.toHaveBeenCalled();
+    }
+  );
+  const useRealVisibility = (f: ReturnType<typeof fixture>) => {
+    f.guards.mockImplementation(
+      async actor => po =>
+        assertPOVisible({ role: actor.role, userId: actor.id }, po)
+    );
+  };
+  it("completes accounting and management with the real central policy, including a parent with a foreign accounting batch", async () => {
+    const f = fixture();
+    useRealVisibility(f);
+    const result = await f.service.approve(accountant, "accounting", {
+      ...input(),
+      rejections: [{ itemId: 1, reason: "السعر مرتفع ويحتاج إعادة مراجعة" }],
+    });
+    expect(result.effectsDone).toBe(true);
+    expect(f.get("purchase_orders", 101).status).toBe("rejected");
+    expect(f.get("purchase_orders", 102).status).toBe("pending_management");
+    expect(f.get("purchase_orders", 103).status).toBe("pending_accounting");
+    // Original PO access stays restricted; only the exact DPB decision is readable.
+    expect(() =>
+      assertPOVisible(
+        { role: "accountant", userId: 7 },
+        f.get("purchase_orders", 102)
+      )
+    ).toThrow();
+    expect(
+      (await f.service.detail(accountant, 24)).accountingApprovedById
+    ).toBe(7);
+    expect((await f.service.detail(management, 24)).status).toBe(
+      "pending_management"
+    );
+    expect(() =>
+      assertPOVisible(
+        { role: "senior_management", userId: 8 },
+        f.get("purchase_orders", 103)
+      )
+    ).toThrow();
+    const replay = await f.service.approve(accountant, "accounting", {
+      ...input(),
+      rejections: [{ itemId: 1, reason: "السعر مرتفع ويحتاج إعادة مراجعة" }],
+    });
+    expect(replay.replayed).toBe(true);
+    expect(replay.effectsDone).toBe(true);
+    const writes = f.updateItem.mock.calls.length;
+    await expect(
+      f.service.approve(accountant, "accounting", { ...input(2), revision: 1 })
+    ).rejects.toThrow("تغيرت مرحلة");
+    expect(f.updateItem).toHaveBeenCalledTimes(writes);
+    const approved = await f.service.approve(management, "management", {
+      ...input(3),
+      revision: 1,
+    });
+    expect(approved.effectsDone).toBe(true);
+    expect(approved.status).toBe("approved");
+    expect(f.get("purchase_order_items", 1).status).toBe("rejected");
+    expect(f.get("purchase_order_items", 2).status).toBe("approved");
+    expect(f.get("purchase_order_items", 99).status).toBe("estimated");
+    expect(f.get("po_pricing_batches", 99).status).toBe("pending_accounting");
+  });
+  it("does not grant a different accountant access or follow-up after the original actor completes accounting", async () => {
+    const f = fixture();
+    useRealVisibility(f);
+    await f.service.approve(accountant, "accounting", input());
+    f.memory.exec(
+      "INSERT INTO users VALUES(9,'accountant',1,'Other accountant',NULL)"
+    );
+    const other = { ...accountant, id: 9 };
+    await expect(f.service.detail(other, 24)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await expect(
+      f.service.finish(other, 24, "accounting")
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect((await f.service.detail(accountant, 24)).bundleNumber).toBe(
+      f.snapshot.number
+    );
+    await expect(f.service.detail(other, 24)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    expect(f.finish).toHaveBeenCalledTimes(1);
+  });
+  it("rechecks active identity and keeps missing-parent and infrastructure failures visible on committed reads/replays", async () => {
+    const f = fixture();
+    useRealVisibility(f);
+    await f.service.approve(accountant, "accounting", input());
+    f.memory.exec("UPDATE users SET isActive=0 WHERE id=7");
+    await expect(f.service.detail(accountant, 24)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await expect(
+      f.service.finish(accountant, 24, "accounting")
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    f.memory.exec("UPDATE users SET isActive=1 WHERE id=7");
+    f.guards.mockRejectedValueOnce(Error("Read infrastructure offline"));
+    await expect(f.service.detail(accountant, 24)).rejects.toThrow(
+      "Read infrastructure offline"
+    );
+    f.memory.exec("DELETE FROM purchase_orders WHERE id=101");
+    await expect(f.service.detail(accountant, 24)).rejects.toThrow(
+      "أحد طلبات الحزمة غير موجود"
+    );
+  });
+});
 describe("Unified DPB approval is atomic while item workflow links remain independent", () => {
   it("approves 8 items / 3 POs / 2 PBs in two decisions, stores the free custody once, and preserves each original source reference", async () => {
     const f = fixture();
@@ -376,15 +588,44 @@ describe("Unified DPB approval is atomic while item workflow links remain indepe
     });
     expect(await visible()).toHaveLength(1);
   });
-  it('uses DPB approval ownership for the real PDF service, including rejected child batches, while retaining the delegate bytes and fresh parent denial',async()=>{
-    const f=fixture();await f.service.approve(accountant,'accounting',{...input(),rejections:[{itemId:1,reason:'رفض الصنف الأول من الحسابات'}]});
-    await f.service.approve(management,'management',{...input(2),revision:1,custodyBalance:undefined});
-    const render=vi.fn(async(snapshot:any)=>Buffer.from('%PDF-financial-'+JSON.stringify(snapshot)));
-    const pdf=new PricingBundleService({database:async()=>f.database,render,signature:async(source:string|null)=>source?'data:'+source:''} as any);
-    await expect(pdf.pdf({...accountant,id:99},24,true)).rejects.toMatchObject({code:'FORBIDDEN'});
-    const result=await pdf.pdf(management,24,true);expect(result.name).toBe(f.snapshot.number+'.pdf');expect(render.mock.calls[0][0].approvedTotal).toBe('2325.00');
-    expect(Buffer.from((await pdf.pdf({id:11,role:'delegate',isActive:1},24,true)).content,'base64').toString()).toBe('%PDF-delegate-original');
-    f.memory.exec('DELETE FROM po_pricing_batches WHERE id=13');await expect(pdf.pdf(management,24,true)).rejects.toMatchObject({code:'FORBIDDEN'});expect(render).toHaveBeenCalledTimes(1);
+  it("uses DPB approval ownership for the real PDF service, including rejected child batches, while retaining the delegate bytes and fresh parent denial", async () => {
+    const f = fixture();
+    await f.service.approve(accountant, "accounting", {
+      ...input(),
+      rejections: [{ itemId: 1, reason: "رفض الصنف الأول من الحسابات" }],
+    });
+    await f.service.approve(management, "management", {
+      ...input(2),
+      revision: 1,
+      custodyBalance: undefined,
+    });
+    const render = vi.fn(async (snapshot: any) =>
+      Buffer.from("%PDF-financial-" + JSON.stringify(snapshot))
+    );
+    const pdf = new PricingBundleService({
+      database: async () => f.database,
+      render,
+      signature: async (source: string | null) =>
+        source ? "data:" + source : "",
+    } as any);
+    await expect(
+      pdf.pdf({ ...accountant, id: 99 }, 24, true)
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const result = await pdf.pdf(management, 24, true);
+    expect(result.name).toBe(f.snapshot.number + ".pdf");
+    expect(render.mock.calls[0][0].approvedTotal).toBe("2325.00");
+    expect(
+      Buffer.from(
+        (await pdf.pdf({ id: 11, role: "delegate", isActive: 1 }, 24, true))
+          .content,
+        "base64"
+      ).toString()
+    ).toBe("%PDF-delegate-original");
+    f.memory.exec("DELETE FROM po_pricing_batches WHERE id=13");
+    await expect(pdf.pdf(management, 24, true)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    expect(render).toHaveBeenCalledTimes(1);
   });
   it("rolls back every earlier item, batch, signature and balance if a later item writer fails", async () => {
     const f = fixture();

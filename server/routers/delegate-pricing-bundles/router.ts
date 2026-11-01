@@ -22,6 +22,7 @@ export function createPricingBundlesRouter(ports: PricingBundlePorts, enabled: (
     approvalDetail: protectedProcedure.input(z.object({id})).query(({ctx,input})=>approvalAvailable().detail(ctx.user,input.id)),
     approveAccounting: accountantProcedure.input(approvalInput).mutation(({ctx,input})=>approvalAvailable().approve(ctx.user,'accounting',input)),
     approveManagement: managementProcedure.input(approvalInput.omit({custodyBalance:true})).mutation(({ctx,input})=>approvalAvailable().approve(ctx.user,'management',input)),
+    resumeApproval: protectedProcedure.input(z.object({id,stage:z.enum(['accounting','management'])})).mutation(({ctx,input})=>approvalAvailable().resumeApproval(ctx.user,input.id,input.stage)),
     list: protectedProcedure.query(({ ctx }) => { if (!canReadPricingBundles(ctx.user)) throw new TRPCError({ code: "FORBIDDEN" }); return enabled() ? service.list(ctx.user) : []; }),
     listPage: protectedProcedure.input(documentListPageInput).query(({ ctx, input }) => {
       if (!canReadPricingBundles(ctx.user)) throw new TRPCError({ code: "FORBIDDEN" });

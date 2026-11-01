@@ -1,6 +1,6 @@
 import type { PricingBundleRow } from "@shared/delegate-pricing-bundles";
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { useTranslation } from "@/contexts/LanguageContext";
@@ -16,9 +16,13 @@ import { canOpenApprovalPdf, approvalPdfNotice } from "@/lib/approvalPdfAccess";
 import { UnifiedBundleApproval } from "@/components/purchase/UnifiedBundleApproval";
 export default function DelegatePricingBundles() {
   const { user } = useAuth(); const { language, dir } = useTranslation(); const text = pricingBundleText[language];
+  const reviewRequested = new URLSearchParams(useSearch()).has("approval") &&
+    !!user && ["owner", "admin", "accountant", "senior_management"].includes(user.role);
   const allowed = !!user && canReadPricingBundles(user);
   const status = trpc.delegatePricingBundles.status.useQuery(undefined, { enabled: allowed, retry: false });
-  return <div dir={dir} className="p-6 space-y-5"><h1 className="text-2xl font-bold">{text.title}</h1>{!allowed ? <p role="alert">{text.forbidden}</p> : status.error ? <p role="alert">{status.error.message}</p> : status.isLoading ? <p>{text.load}</p> : status.data?.enabled ? <>{('approvalEnabled' in status.data)&&status.data.approvalEnabled&&<UnifiedBundleApproval/>}<PricingBundlesContent /></> : <p>{text.disabled}</p>}</div>;
+  return <div dir={dir} className="p-6 space-y-5"><h1 className="text-2xl font-bold">{reviewRequested ? "مراجعة حزمة التسعير" : text.title}</h1>{!allowed ? <p role="alert">{text.forbidden}</p> : status.error ? <p role="alert">{status.error.message}</p> : status.isLoading ? <p>{text.load}</p> : status.data?.enabled ? reviewRequested ? (
+    ('approvalEnabled' in status.data) && status.data.approvalEnabled ? <UnifiedBundleApproval selectedOnly /> : <p role="alert">اعتماد الحزمة الموحد غير مفعّل</p>
+  ) : <>{('approvalEnabled' in status.data)&&status.data.approvalEnabled&&<UnifiedBundleApproval/>}<PricingBundlesContent /></> : <p>{text.disabled}</p>}</div>;
 }
 export function PricingBundlesContent() {
   const { user } = useAuth(); const { language } = useTranslation(); const text = pricingBundleText[language]; const utils = trpc.useUtils();

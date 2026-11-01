@@ -5,7 +5,7 @@ import { pricingBundleText } from "../../client/src/i18n/pricingBundles";
 const state = vi.hoisted(() => ({ language: "ar", role: "delegate", enabled: true, status: "open", member: false, pending: "", approved: false }));
 vi.mock("../../client/src/_core/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: 11, role: state.role, isActive: 1 } }) }));
 vi.mock("../../client/src/contexts/LanguageContext", () => ({ useTranslation: () => ({ language: state.language, dir: state.language === "en" ? "ltr" : "rtl" }) }));
-vi.mock("wouter", () => ({ Link: ({ href, children, ...props }: any) => <a href={href} {...props}>{children}</a> }));
+vi.mock("wouter", () => ({ useSearch: () => "", Link: ({ href, children, ...props }: any) => <a href={href} {...props}>{children}</a> }));
 vi.mock("../../client/src/lib/trpc", () => {
   const proxy = (path = ""): any => new Proxy(() => {}, { get(_target, key) {
     if (key === "useUtils") return () => proxy("utils");

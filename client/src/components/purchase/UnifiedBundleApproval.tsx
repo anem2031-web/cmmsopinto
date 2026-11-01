@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useSearch } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -42,8 +42,13 @@ export function BundleApprovalCards({
     </>
   );
 }
-export function UnifiedBundleApproval() {
+export function UnifiedBundleApproval({
+  selectedOnly = false,
+}: {
+  selectedOnly?: boolean;
+}) {
   const { user } = useAuth();
+  const [, setLocation] = useLocation();
   const allowed =
     !!user &&
     ["owner", "admin", "accountant", "senior_management"].includes(user.role);
@@ -54,7 +59,7 @@ export function UnifiedBundleApproval() {
   const [afterId, setAfterId] = useState(0);
   const queue = trpc.delegatePricingBundles.approvalQueue.useQuery(
     { afterId },
-    { enabled: allowed, retry: false }
+    { enabled: allowed && !selectedOnly, retry: false }
   );
   const detail = trpc.delegatePricingBundles.approvalDetail.useQuery(
     { id: selected },
@@ -67,8 +72,10 @@ export function UnifiedBundleApproval() {
     fingerprint: string;
     stage: "accounting" | "management";
     payload: any;
+    resumeOnly?: boolean;
   } | null>(null);
   const [pendingFollowup, setPendingFollowup] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   useEffect(() => {
     if (requestedId > 0) {
       setSelected(requestedId);
@@ -83,30 +90,107 @@ export function UnifiedBundleApproval() {
     setNotes("");
     setReasons({});
   }, [data?.id, data?.revision]);
-  const success = async (result: any) => {
-    setPendingFollowup(!result.effectsDone);
-    if (result.effectsDone)
-      toast.success("تم حفظ قرارات الحزمة وتحديث أصنافها");
-    else
-      toast.warning(
-        "تم تثبيت القرار؛ يلزم استكمال متابعة المسارات دون إعادة الاعتماد"
-      );
-    await Promise.all([
+  const refresh = () =>
+    Promise.all([
       utils.delegatePricingBundles.invalidate(),
       utils.purchaseOrders.invalidate(),
       utils.purchasePackages.invalidate(),
     ]);
+  const accounting =
+    trpc.delegatePricingBundles.approveAccounting.useMutation();
+  const management =
+    trpc.delegatePricingBundles.approveManagement.useMutation();
+  const resume = trpc.delegatePricingBundles.resumeApproval.useMutation();
+  const busy =
+    submitting ||
+    accounting.isPending ||
+    management.isPending ||
+    resume.isPending;
+  const runOperation = async (op: NonNullable<typeof operation.current>) => {
+    setSubmitting(true);
+    let committed = pendingFollowup || op.resumeOnly === true;
+    try {
+      // Retry only the exact committed operation. Never create another decision
+      // or repeat a financial writer because a notification/sync failed.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const result = await (op.resumeOnly
+          ? resume.mutateAsync(op.payload)
+          : op.stage === "accounting"
+            ? accounting.mutateAsync(op.payload)
+            : management.mutateAsync(op.payload));
+        committed = true;
+        if (operation.current !== op) return;
+        if (result.effectsDone) {
+          setPendingFollowup(false);
+          toast.success(
+            result.status === "rejected"
+              ? "تم حفظ رفض الحزمة"
+              : op.stage === "accounting"
+                ? "تم الاعتماد والإرسال للإدارة العليا"
+                : "تم اعتماد الحزمة وإتاحتها للمندوب"
+          );
+          void refresh().catch(() =>
+            toast.warning("تم حفظ القرار؛ حدّث القائمة لإظهار الحالة الجديدة")
+          );
+          if (selectedOnly) setLocation("/purchase-orders");
+          return;
+        }
+      }
+      setPendingFollowup(true);
+      toast.warning(
+        "تم حفظ القرار، وتعذّر إتمام الإرسال الآن. أعد محاولة الإرسال من الزر نفسه دون إعادة الاعتماد"
+      );
+      void refresh().catch(() => {});
+    } catch (error) {
+      if (operation.current === op) {
+        setPendingFollowup(committed);
+        toast.error(
+          error instanceof Error ? error.message : "تعذر إرسال قرار الحزمة"
+        );
+      }
+    } finally {
+      setSubmitting(false);
+    }
   };
-  const accounting = trpc.delegatePricingBundles.approveAccounting.useMutation({
-    onSuccess: success,
-    onError: error => toast.error(error.message),
-  });
-  const management = trpc.delegatePricingBundles.approveManagement.useMutation({
-    onSuccess: success,
-    onError: error => toast.error(error.message),
-  });
-  const busy = accounting.isPending || management.isPending;
+  useEffect(() => {
+    if (
+      !allowed ||
+      !data ||
+      data.id !== selected ||
+      submitting ||
+      operation.current
+    )
+      return;
+    const stage =
+      data.accountingApprovedById === user?.id &&
+      data.accountingEffectsDone === false
+        ? "accounting"
+        : data.managementApprovedById === user?.id &&
+            data.managementEffectsDone === false
+          ? "management"
+          : null;
+    if (!stage) return;
+    operation.current = {
+      fingerprint: `resume:${data.id}:${stage}`,
+      stage,
+      payload: { id: data.id, stage },
+      resumeOnly: true,
+    };
+    void runOperation(operation.current);
+  }, [
+    allowed,
+    data?.id,
+    data?.revision,
+    data?.accountingEffectsDone,
+    data?.managementEffectsDone,
+    selected,
+    user?.id,
+  ]);
   const submit = () => {
+    if (busy) return;
+    if (pendingFollowup && operation.current) {
+      return runOperation(operation.current);
+    }
     if (!data) return;
     const stage =
       data.status === "pending_accounting" ? "accounting" : "management";
@@ -132,9 +216,7 @@ export function UnifiedBundleApproval() {
         stage,
         payload: { ...input, operationKey: crypto.randomUUID() },
       };
-    stage === "accounting"
-      ? accounting.mutate(operation.current.payload)
-      : management.mutate(operation.current.payload);
+    return runOperation(operation.current);
   };
   if (!allowed) return null;
   const canApprove =
@@ -143,39 +225,73 @@ export function UnifiedBundleApproval() {
       ["owner", "admin", "accountant"].includes(user!.role)) ||
       (data.status === "pending_management" &&
         ["owner", "admin", "senior_management"].includes(user!.role)));
+  const managementView =
+    data?.status === "pending_management" || user?.role === "senior_management";
+  const displayedItems = (data?.items || []).filter(
+    (item: any) =>
+      !managementView || !["rejected", "cancelled"].includes(item.currentStatus)
+  );
+  const displayedTotal =
+    displayedItems.reduce(
+      (sum: number, item: any) =>
+        sum + Math.round(Number(item.estimatedTotalCost) * 100),
+      0
+    ) / 100;
+  const acceptedTotal =
+    displayedItems
+      .filter(
+        (item: any) =>
+          !["rejected", "cancelled"].includes(item.currentStatus) &&
+          !(item.id in reasons)
+      )
+      .reduce(
+        (sum: number, item: any) =>
+          sum + Math.round(Number(item.estimatedTotalCost) * 100),
+        0
+      ) / 100;
   return (
     <section className="space-y-4">
-      <h2 className="font-bold text-lg">حزم التسعير بانتظار الاعتماد</h2>
-      {queue.error && <p role="alert">{queue.error.message}</p>}
-      <BundleApprovalCards
-        items={queue.data?.items || []}
-        onSelect={id => {
-          setSelected(id);
-          setPendingFollowup(false);
-          operation.current = null;
-        }}
-      />
-      <div className="flex gap-2">
+      {selectedOnly && (
         <Button
           variant="outline"
-          disabled={!afterId}
-          onClick={() => setAfterId(0)}
+          disabled={busy}
+          onClick={() => setLocation("/purchase-orders")}
         >
-          البداية
+          رجوع إلى بانتظار إجرائي
         </Button>
-        <Button
-          variant="outline"
-          disabled={!queue.data?.nextId}
-          onClick={() => setAfterId(queue.data!.nextId!)}
-        >
-          الحزم التالية
-        </Button>
-      </div>
+      )}
+      {!selectedOnly && (
+        <>
+          <h2 className="font-bold text-lg">حزم التسعير بانتظار الاعتماد</h2>
+          {queue.error && <p role="alert">{queue.error.message}</p>}
+          <BundleApprovalCards items={queue.data?.items || []} />
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              disabled={!afterId}
+              onClick={() => setAfterId(0)}
+            >
+              البداية
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!queue.data?.nextId}
+              onClick={() => setAfterId(queue.data!.nextId!)}
+            >
+              الحزم التالية
+            </Button>
+          </div>
+        </>
+      )}
+      {selectedOnly && detail.isLoading && (
+        <p role="status">جارٍ تحميل تفاصيل الحزمة…</p>
+      )}
       {detail.error && <p role="alert">{detail.error.message}</p>}
       {data && (
         <Card>
           <CardHeader>
             <CardTitle dir="ltr">{data.bundleNumber}</CardTitle>
+            <p>المندوب: {data.delegateName || "—"}</p>
           </CardHeader>
           <CardContent className="space-y-4">
             <p>
@@ -208,7 +324,7 @@ export function UnifiedBundleApproval() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.items.map((item: any) => (
+                  {displayedItems.map((item: any) => (
                     <tr key={item.id}>
                       <td className="p-2 border">{item.itemName}</td>
                       <td className="p-2 border">
@@ -241,7 +357,9 @@ export function UnifiedBundleApproval() {
                         )[item.currentStatus] || "قيد المتابعة"}
                       </td>
                       <td className="p-2 border">
-                        {canApprove && item.currentStatus === "estimated" ? (
+                        {canApprove &&
+                        !pendingFollowup &&
+                        item.currentStatus === "estimated" ? (
                           <div className="space-y-2">
                             <label className="flex gap-2">
                               <input
@@ -291,7 +409,7 @@ export function UnifiedBundleApproval() {
                 <strong>{data.custodyBalance} ر.س</strong>
               </p>
             )}
-            {canApprove && (
+            {canApprove && !pendingFollowup && (
               <div className="space-y-3">
                 {data.status === "pending_accounting" && (
                   <label className="block">
@@ -313,58 +431,31 @@ export function UnifiedBundleApproval() {
                   disabled={busy}
                   onChange={event => setNotes(event.target.value)}
                 />
-                <Button disabled={busy} onClick={submit}>
-                  {busy ? "جارٍ حفظ القرار…" : "تأكيد قرارات الحزمة"}
-                </Button>
               </div>
             )}
-            {pendingFollowup && operation.current && (
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() => {
-                  const op = operation.current!;
-                  op.stage === "accounting"
-                    ? accounting.mutate(op.payload)
-                    : management.mutate(op.payload);
-                }}
-              >
-                استكمال متابعة القرار المحفوظ
+            {(canApprove || (pendingFollowup && operation.current)) && (
+              <Button disabled={busy} onClick={submit}>
+                {busy
+                  ? "جارٍ حفظ القرار والإرسال…"
+                  : pendingFollowup
+                    ? "إعادة محاولة الإرسال"
+                    : Object.keys(reasons).length > 0 && acceptedTotal === 0
+                      ? "تأكيد رفض الحزمة"
+                      : data.status === "pending_accounting"
+                        ? "اعتماد وإرسال للإدارة العليا"
+                        : "اعتماد وإرسال للمندوب"}
               </Button>
             )}
             <p>
-              إجمالي تسعير الحزمة الأصلي:{" "}
-              <strong>
-                {(
-                  data.items.reduce(
-                    (sum: number, item: any) =>
-                      sum + Math.round(Number(item.estimatedTotalCost) * 100),
-                    0
-                  ) / 100
-                ).toFixed(2)}{" "}
-                ر.س
-              </strong>
+              إجمالي الحزمة للمراجعة:{" "}
+              <strong>{displayedTotal.toFixed(2)} ر.س</strong>
             </p>
-            <p>
-              إجمالي الأصناف المقبولة بعد قرارات الرفض:{" "}
-              <strong>
-                {(
-                  data.items
-                    .filter(
-                      (item: any) =>
-                        !["rejected", "cancelled"].includes(
-                          item.currentStatus
-                        ) && !(item.id in reasons)
-                    )
-                    .reduce(
-                      (sum: number, item: any) =>
-                        sum + Math.round(Number(item.estimatedTotalCost) * 100),
-                      0
-                    ) / 100
-                ).toFixed(2)}{" "}
-                ر.س
-              </strong>
-            </p>
+            {Object.keys(reasons).length > 0 && (
+              <p>
+                إجمالي الأصناف المقبولة بعد قرارات الرفض:{" "}
+                <strong>{acceptedTotal.toFixed(2)} ر.س</strong>
+              </p>
+            )}
             {data.accountingNotes && (
               <p>ملاحظات الحسابات: {data.accountingNotes}</p>
             )}

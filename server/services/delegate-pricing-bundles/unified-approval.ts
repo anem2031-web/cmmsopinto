@@ -63,6 +63,10 @@ const ids = (values: number[]) =>
     values.map(id => sql`${id}`),
     sql`,`
   );
+// Frozen DPB rows use an em dash for an absent unit. This is display metadata,
+// not a conversion or an authorization to change a real unit.
+const quoteUnit = (value: unknown) =>
+  value == null || value === "" || value === "—" ? null : value;
 export class UnifiedBundleApprovalService {
   constructor(private ports: UnifiedApprovalPorts) {}
   private role(actor: Actor, stage?: Stage) {
@@ -117,7 +121,45 @@ export class UnifiedBundleApprovalService {
     );
     if (orders.length !== poIds.length) no("أحد طلبات الحزمة غير موجود");
     const guard = await this.ports.readGuard(actor);
-    for (const order of orders) guard(order);
+    // The accountant's ordinary PO visibility ends at pending_accounting.
+    // A committed decision may only be read/replayed by its exact approver in
+    // this DPB scope. Keep every other parent/identity check and the central
+    // guard; this projection must never escape to PO lists or new decisions.
+    const ownCommittedAccounting =
+      actor.role === "accountant" &&
+      Number(root.accountingApprovedById) === actor.id &&
+      !!root.accountingApprovedAt &&
+      !!root.accountingOperationKey &&
+      !!root.accountingRequestHash &&
+      root.status !== "pending_accounting";
+    const managementScope =
+      actor.role === "senior_management" &&
+      ((root.status === "pending_management" &&
+        Number(root.accountingApprovedById) > 0 &&
+        !!root.accountingApprovedAt) ||
+        (Number(root.managementApprovedById) === actor.id &&
+          !!root.managementApprovedAt &&
+          !!root.managementOperationKey &&
+          !!root.managementRequestHash));
+    const scopedPhase = ownCommittedAccounting
+      ? "pending_accounting"
+      : managementScope
+        ? "pending_management"
+        : null;
+    if (scopedPhase) {
+      const [currentActor] = await rows(
+        tx,
+        sql`SELECT id,role,isActive FROM users WHERE id=${actor.id}`
+      );
+      if (
+        !currentActor ||
+        currentActor.role !== actor.role ||
+        Number(currentActor.isActive) !== 1
+      )
+        no("الحساب غير نشط أو تغير دوره", "FORBIDDEN");
+    }
+    for (const order of orders)
+      guard(scopedPhase ? { ...order, status: scopedPhase } : order);
     const batchIds = links
       .map(row => Number(row.pricingBatchId))
       .sort((a, b) => a - b);
@@ -257,7 +299,7 @@ export class UnifiedBundleApprovalService {
         Number(item.estimatedUnitCost) !== Number(original.estimatedUnitCost) ||
         Number(item.estimatedTotalCost) !==
           Number(original.estimatedTotalCost) ||
-        item.unit !== original.unit ||
+        quoteUnit(item.unit) !== quoteUnit(original.unit) ||
         item.itemName !== original.itemName
       )
         no("تغيرت بيانات صنف بعد إرسال التسعير؛ لا يمكن اعتماد لقطة مختلفة");
@@ -289,6 +331,7 @@ export class UnifiedBundleApprovalService {
       id: Number(c.root.bundleId),
       bundleNumber: c.root.bundleNumber,
       delegateId: Number(c.root.delegateId),
+      delegateName: c.snapshot.delegate.name,
       status: c.root.status,
       revision: Number(c.root.revision),
       custodyBalance: c.root.custodyBalance,
@@ -296,6 +339,8 @@ export class UnifiedBundleApprovalService {
       managementNotes: c.root.managementNotes,
       accountingApprovedById: c.root.accountingApprovedById,
       managementApprovedById: c.root.managementApprovedById,
+      accountingEffectsDone: Number(c.root.accountingEffectsDone) === 1,
+      managementEffectsDone: Number(c.root.managementEffectsDone) === 1,
       rejections: rejected(c.root),
       items: c.snapshot.rows.map((row: any) => ({
         ...row,
@@ -708,22 +753,52 @@ export class UnifiedBundleApprovalService {
       return { ...result, effectsDone: false };
     }
   }
+  async resumeApproval(actor: Actor, id: number, stage: Stage) {
+    this.role(actor, stage);
+    const result = await this.finish(actor, id, stage);
+    return { id, status: result.status, effectsDone: true };
+  }
   async finish(actor: Actor, id: number, stage: Stage | "send") {
     const database = await this.ports.database();
-    await database.transaction(async (tx: any) => {
+    return database.transaction(async (tx: any) => {
+      const [currentActor] = await rows(
+        tx,
+        sql`SELECT id,role,isActive FROM users WHERE id=${actor.id}`
+      );
+      if (
+        !currentActor ||
+        currentActor.role !== actor.role ||
+        Number(currentActor.isActive) !== 1
+      )
+        no("الحساب غير نشط أو تغير دوره", "FORBIDDEN");
+      if (stage !== "send") this.role(actor, stage);
       // Lock the durable marker only. Follow-up writers use their own existing transactions.
       await rows(
         tx,
         sql`SELECT bundleId FROM delegate_pricing_bundle_approvals WHERE bundleId=${id} FOR UPDATE`
       );
       const c = await this.context(tx, id, actor);
+      const decidedBy =
+        stage === "accounting"
+          ? c.root.accountingApprovedById
+          : stage === "management"
+            ? c.root.managementApprovedById
+            : c.root.delegateId;
+      const decidedAt =
+        stage === "accounting"
+          ? c.root.accountingApprovedAt
+          : stage === "management"
+            ? c.root.managementApprovedAt
+            : c.snapshot.submittedAt;
+      if (Number(decidedBy) !== actor.id || !decidedAt)
+        no("استكمال المتابعة متاح لصاحب القرار المحفوظ فقط", "FORBIDDEN");
       const done =
         stage === "send"
           ? c.root.sendEffectsDone
           : stage === "accounting"
             ? c.root.accountingEffectsDone
             : c.root.managementEffectsDone;
-      if (Number(done) === 1) return;
+      if (Number(done) === 1) return { status: c.root.status };
       await this.ports.finish(c, actor, stage);
       if (stage === "send")
         await tx.execute(
@@ -737,6 +812,7 @@ export class UnifiedBundleApprovalService {
         await tx.execute(
           sql`UPDATE delegate_pricing_bundle_approvals SET managementEffectsDone=1 WHERE bundleId=${id}`
         );
+      return { status: c.root.status };
     });
   }
 }
