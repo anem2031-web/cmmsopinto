@@ -703,7 +703,9 @@ export async function generatePurchaseRequestPDF(
 
   // المندوب لا يحتاج يشوف صفوف اعتماد الحسابات/الرئيس التنفيذي ولا قسم الشؤون المالية
   // بنسخته من المستند — هذي أقسام داخلية خاصة بدورة الاعتماد المحاسبي فقط
-  const isDelegateViewer = requestingUser?.role === "delegate";
+  const approvedBundleApprovals = bundleSnapshot?.financialApprovals || [];
+  const isApprovedBundle = approvedBundleApprovals.length > 0;
+  const isDelegateViewer = requestingUser?.role === "delegate" && !isApprovedBundle;
 
   // تقليل ارتفاع صفوف الجداول بنسبة 10% للنسخة الكاملة (دور الحسابات وما بعده) —
   // نسخة المندوب تبقى بالارتفاع الأصلي.
@@ -847,7 +849,8 @@ export async function generatePurchaseRequestPDF(
     const rowsHtml = Array.from(groups.values()).map(group => {
       const label = group.role === "requester" ? "مقدّم الطلب" : "مراجع الطلب";
       const requestNumbers = Array.from(group.requestNumbers);
-      return `<tr><td style="font-weight: bold; background-color: #f7fafc;">${label}</td><td>${escapeHtml(group.name)}<span class="signature-requests">الطلبات: ${requestNumbers.map(escapeHtml).join("، ")}</span></td><td>${sigImg(group.signature)}</td></tr>`;
+      const showRequestReferences = !isApprovedBundle || new Set(bundleSnapshot.rows.map(row => row.purchaseOrderId)).size > 1;
+      return `<tr><td style="font-weight: bold; background-color: #f7fafc;">${label}</td><td>${escapeHtml(group.name)}${showRequestReferences ? `<span class="signature-requests">الطلبات: ${requestNumbers.map(escapeHtml).join("، ")}</span>` : ""}</td><td>${sigImg(group.signature)}</td></tr>`;
     }).join("");
     const warnings: string[] = [];
     if (missingRequesters.size) warnings.push(`طلبات بلا مقدّم محدد: ${Array.from(missingRequesters).map(escapeHtml).join("، ")}`);
@@ -916,13 +919,15 @@ export async function generatePurchaseRequestPDF(
   // [PB] عمود رقم الطلب يظهر فقط في وضع الدفعة الفرعية (أصناف من عدة طلبات).
   // في الوضع العادي لا يُضاف إطلاقًا، فيبقى المستند مطابقًا لما هو عليه اليوم.
   const isMultiOrderDoc = !!packageSubmissionId || !!bundleSnapshot;
+  const showBundleSection = !!bundleSnapshot && !isApprovedBundle;
+  const hasRejectedQuoteTotal = bundleSnapshot?.approvedTotal != null && Number(bundleSnapshot.approvedTotal) !== grandTotal;
 
   const rowsHtml = rows.map(r => `
       <tr>
         <td>${r.serial}</td>
         ${isMultiOrderDoc ? `<td style="font-size: 0.85em;">${escapeHtml(r.poNumber)}</td>` : ""}
-        <td style="text-align: right;">${escapeHtml(r.itemName)}${bundleSnapshot ? `<small style="display:block;">المورد: ${escapeHtml(r.supplierName)}</small>` : ""}${r.approvalRejectionReason?`<small style="display:block;color:#b91c1c;">غير معتمد: ${escapeHtml(r.approvalRejectionReason)}</small>`:""}</td>
-        ${bundleSnapshot ? `<td>${escapeHtml(r.sectionName)}</td>` : ""}
+        <td style="text-align: right;">${escapeHtml(r.itemName)}${showBundleSection ? `<small style="display:block;">المورد: ${escapeHtml(r.supplierName)}</small>` : ""}${r.approvalRejectionReason?`<small style="display:block;color:#b91c1c;">غير معتمد: ${escapeHtml(r.approvalRejectionReason)}</small>`:""}</td>
+        ${showBundleSection ? `<td>${escapeHtml(r.sectionName)}</td>` : ""}
         <td>${r.qty}</td>
         <td>${escapeHtml(r.unit)}</td>
         <td>${r.unitCost > 0 ? fmtSAR(r.unitCost) + " ر.س" : "—"}</td>
@@ -942,6 +947,42 @@ export async function generatePurchaseRequestPDF(
         قيمة المرتجع الأصلية: ${fmtSAR(Number(c.originalPurchaseValue))} ر.س · رصيد المرتجع المستخدم: ${fmtSAR(Number(c.creditAllocated))} ر.س · سعر البديل شامل الضريبة: ${fmtSAR(Number(c.total))} ر.س · فرق العهدة: <strong>${fmtSAR(Number(c.additionalFunding))} ر.س</strong>
       </div>`).join("")}
     </div>` : "";
+
+  // Approved DPB uses the existing PB financial form, in its original position.
+  // Multiple historical approval scopes stay separate; never sum their balances.
+  const approvedAccountingRows = approvedBundleApprovals.map(approval => `
+    <tr><td style="font-weight:bold;background-color:#f7fafc;">الحسابات</td>
+      <td>${escapeHtml(approval.accountingName)}</td>
+      <td>${sigImg(approval.accountingSignature)}<small class="signature-requests">اعتماد إلكتروني: ${escapeHtml(approval.accountingAt)}</small></td></tr>`).join("");
+  const approvedFinanceHtml = approvedBundleApprovals.map(approval => {
+    const balance = approval.custodyValue == null ? null : Number(approval.custodyValue);
+    const words = balance == null ? "" : amountToArabicCurrencyPhrase(balance);
+    const balanceFont = words ? +(Math.max(5.5, Math.min(baseCustodyFS, baseCustodyFS * (100 / Math.max(words.length + 40, 100))))).toFixed(2) : baseCustodyFS;
+    return `
+    <div class="approved-finance-group" style="page-break-inside:avoid;">
+    <div class="section-title">الشؤون المالية والإجراءات المحاسبية</div>
+    <div class="finance-section" style="page-break-inside:avoid;">
+      ${approvedBundleApprovals.length > 1 ? `<div class="signature-requests">${escapeHtml(approval.reference)} — الطلبات: ${escapeHtml(approval.poNumbers.join("، "))}</div>` : ""}
+      <div class="line-input" style="white-space:nowrap;overflow:hidden;font-size:${balanceFont}pt;">
+        ${escapeHtml(approval.custodyLabel)}: ${balance == null ? '<span class="dotted-line"></span>' : `<strong>${fmtSAR(balance)}</strong>`} ريال${words ? ` <strong>${escapeHtml(words)}</strong>` : ""}.
+      </div>
+      <div class="line-input">ملاحظات مراجع الحسابات: ${approval.notes ? escapeHtml(approval.notes) : '<span class="dotted-line" style="min-width:320px;"></span>'}</div>
+      <table class="signatures-table" style="margin-top:5.7px;margin-bottom:${ceoTableMarginBottom}px;">
+        <tbody>
+          <tr><td style="font-weight:bold;background-color:#f7fafc;width:25%;">رئيس الحسابات</td><td style="width:40%;"></td><td style="width:35%;"></td></tr>
+          <tr style="height:${ceoRowHeight}px;">
+            <td style="font-weight:bold;background-color:#f7fafc;width:25%;font-size:${ceoFontSize}pt;height:${ceoRowHeight}px;">الرئيس التنفيذي</td>
+            <td style="width:40%;font-size:${ceoFontSize}pt;height:${ceoRowHeight}px;">${escapeHtml(approval.managementName)}</td>
+            <td style="width:35%;height:${ceoRowHeight}px;">${sigImg(approval.managementSignature || "")}<small class="signature-requests">اعتماد إلكتروني مثبت: ${escapeHtml(approval.managementAt)}</small></td>
+          </tr>
+        </tbody>
+      </table>
+      <table class="accounting-table">
+        <tr><td class="label">رقم سند الصرف</td><td></td><td class="label">التاريخ</td><td></td></tr>
+        <tr><td class="label">المبلغ</td><td></td><td class="label">التوقيع</td><td></td></tr>
+      </table>
+    </div></div>`;
+  }).join("");
 
   const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -1035,7 +1076,7 @@ export async function generatePurchaseRequestPDF(
         <div class="meta-col">
             <div class="info-card">
                 <div class="info-row">
-                    <div class="info-label">${bundleSnapshot?.approvedTotal!=null?'إجمالي التسعير الأصلي:':'المبلغ الإجمالي:'}</div>
+                    <div class="info-label">${hasRejectedQuoteTotal?'إجمالي التسعير الأصلي:':'المبلغ الإجمالي:'}</div>
                     <div class="info-value" style="font-weight: bold; color: #2b6cb0;">${fmtSAR(grandTotal)} ر.س</div>
                 </div>
             </div>
@@ -1051,8 +1092,8 @@ export async function generatePurchaseRequestPDF(
             <tr>
                 <th style="width: 5%;">م</th>
                 ${isMultiOrderDoc ? `<th style="width: 12%;">رقم الطلب</th>` : ""}
-                <th style="width: ${bundleSnapshot ? "23%" : isMultiOrderDoc ? "33%" : "45%"};">المادة المطلوبة</th>
-                ${bundleSnapshot ? `<th style="width: 10%;">القسم المستفيد</th>` : ""}
+                <th style="width: ${showBundleSection ? "23%" : isMultiOrderDoc ? "33%" : "45%"};">المادة المطلوبة</th>
+                ${showBundleSection ? `<th style="width: 10%;">القسم المستفيد</th>` : ""}
                 <th style="width: 8%;">الكمية</th>
                 <th style="width: 10%;">الوحدة</th>
                 <th style="width: 15%;">السعر التقديري</th>
@@ -1062,13 +1103,13 @@ export async function generatePurchaseRequestPDF(
         <tbody>
             ${rowsHtml}
             <tr class="total-row">
-                <td colspan="${bundleSnapshot ? 7 : isMultiOrderDoc ? 6 : 5}" style="text-align: left; padding-left: 15px;">الإجمالي الكلي</td>
+                <td colspan="${showBundleSection ? 7 : isMultiOrderDoc ? 6 : 5}" style="text-align: left; padding-left: 15px;">الإجمالي الكلي</td>
                 <td>${fmtSAR(grandTotal)} ر.س</td>
             </tr>
         </tbody>
     </table>
 
-    ${bundleSnapshot?.approvedTotal!=null?`<div class="info-card" style="margin-bottom:8px;">إجمالي الأصناف المعتمدة بعد قرارات الرفض: <strong>${fmtSAR(Number(bundleSnapshot.approvedTotal))} ر.س</strong></div>`:""}
+    ${hasRejectedQuoteTotal?`<div class="info-card" style="margin-bottom:8px;">إجمالي الأصناف المعتمدة بعد قرارات الرفض: <strong>${fmtSAR(Number(bundleSnapshot!.approvedTotal))} ر.س</strong></div>`:""}
     ${compensationHtml}
 
     <div class="declaration-box">
@@ -1102,7 +1143,7 @@ export async function generatePurchaseRequestPDF(
                 <td>${escapeHtml(delegateName)}</td>
                 <td>${sigImg(bundleSnapshot ? bundleSnapshot.delegate.signature : delegateSig)}</td>
             </tr>
-            ${isDelegateViewer ? "" : `
+            ${isApprovedBundle ? approvedAccountingRows : isDelegateViewer ? "" : `
             <tr>
                 <td style="font-weight: bold; background-color: #f7fafc;">الحسابات</td>
                 <td>${escapeHtml(accountingApproverName)}</td>
@@ -1112,7 +1153,7 @@ export async function generatePurchaseRequestPDF(
     </table>
     ${bundleSnapshot ? groupedBundleSignatures?.warningsHtml : ""}
 
-    ${isDelegateViewer ? "" : `
+    ${isDelegateViewer || isApprovedBundle ? "" : `
     <div class="section-title">الشؤون المالية والإجراءات المحاسبية</div>
     <div class="finance-section">
         <div class="line-input" style="white-space: nowrap; overflow: hidden; font-size: ${custodyFS}pt;">
@@ -1151,30 +1192,7 @@ export async function generatePurchaseRequestPDF(
         </table>
     </div>`}
 
-    ${bundleSnapshot?.financialApprovals?.length ? `
-    <div class="section-title">اعتمادات الحسابات والإدارة العليا</div>
-    ${bundleSnapshot.financialApprovals.map(approval => `
-    <div class="finance-section" style="page-break-inside:avoid;">
-      <strong>${escapeHtml(approval.reference)}</strong>
-      <div class="signature-requests">الطلبات: ${escapeHtml(approval.poNumbers.join("، "))}</div>
-      <table class="signatures-table" style="margin-top:5px;">
-        <thead><tr><th>الصفة</th><th>الاسم</th><th>التوقيع / الاعتماد</th></tr></thead>
-        <tbody>
-          <tr><td>الحسابات</td><td>${escapeHtml(approval.accountingName)}</td>
-            <td>${sigImg(approval.accountingSignature)}<small>اعتماد إلكتروني: ${escapeHtml(approval.accountingAt)}</small></td></tr>
-          <tr><td>الإدارة العليا</td><td>${escapeHtml(approval.managementName)}</td>
-            <td>${sigImg(approval.managementSignature||"")}اعتماد إلكتروني مثبت<br><small>${escapeHtml(approval.managementAt)}</small></td></tr>
-        </tbody>
-      </table>
-      <div class="section-title">الشؤون المالية والإجراءات المحاسبية</div>
-      <p>${escapeHtml(approval.custodyLabel)}: <strong>${approval.custodyValue == null ? "غير مسجل" : `${fmtSAR(Number(approval.custodyValue))} ر.س`}</strong></p>
-      <p>ملاحظات مراجع الحسابات: ${escapeHtml(approval.notes || "—")}</p>
-      <table class="accounting-table"><tbody>
-        <tr><td class="label">رقم سند الصرف</td><td></td><td class="label">التاريخ</td><td></td></tr>
-        <tr><td class="label">المبلغ</td><td></td><td class="label">التوقيع</td><td></td></tr>
-      </tbody></table>
-    </div>`).join("")}
-    <small>تعرض بيانات العهد لكل دفعة كما اعتمدت؛ أرصدة العهد المتكررة لا تُجمع.</small>` : ""}
+    ${approvedFinanceHtml}
 
     <div class="footer-note">
         ملحوظة: أي شرح أو تعليق خارج حقول النموذج لا يُعتمد إلا بتوقيع الرئيس التنفيذي.

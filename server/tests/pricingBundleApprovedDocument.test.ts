@@ -45,6 +45,16 @@ function fixture() {
   const service=new PricingBundleService({database:async()=>database,render,signature} as any);
   return {memory,snapshot,database,signature,queries,render,service};
 }
+function renderHarness() {
+  let html = "";
+  const file="server/services/export/exportService.ts";
+  const source=ts.createSourceFile(file,fs.readFileSync(file,"utf8"),ts.ScriptTarget.Latest,true);
+  const fn=source.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==="generatePurchaseRequestPDF")!;
+  const code=ts.transpileModule(`(${fn.getText(source).replace(/^export /,"")})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+  const render=vm.runInNewContext(code,{db:new Proxy({},{get:()=>()=>{throw Error("Live DB forbidden");}}),getSignatureDataUrl:async()=>"",readAccountingSignature,
+    escapeHtml:(value:any)=>String(value).replaceAll("<","&lt;"),fmtSAR:(n:number)=>n.toFixed(2),amountToArabicCurrencyPhrase:(n:number)=>String(n),htmlToPdf:async(value:string)=>{html=value;return Buffer.from("%PDF-test");}});
+  return {render,html:()=>html};
+}
 describe("Document-center DPB approved PDF, without changing delegate files or workflow",()=>{
   it("keeps all eight frozen rows and groups the three request approvals into their two actual financial scopes, without summing custody balances",async()=>{
     const f=fixture();const original=JSON.stringify(f.snapshot);
@@ -97,19 +107,43 @@ describe("Document-center DPB approved PDF, without changing delegate files or w
     const result=await approvedBundleSnapshot(f.database,{id:24},f.snapshot,f.signature);
     expect(result.financialApprovals?.every(row=>row.accountingSignature==="")).toBe(true);expect(f.signature.mock.calls.every(([source])=>source===null)).toBe(true);
   });
-  it("renders the additional financial section only for the approved snapshot, preserving original totals, row ordering and PR references",async()=>{
-    const f=fixture();const approved=await approvedBundleSnapshot(f.database,{id:24},f.snapshot,f.signature);let html="";
-    const file="server/services/export/exportService.ts";const source=ts.createSourceFile(file,fs.readFileSync(file,"utf8"),ts.ScriptTarget.Latest,true);
-    const fn=source.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==="generatePurchaseRequestPDF")!;
-    const code=ts.transpileModule(`(${fn.getText(source).replace(/^export /,"")})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
-    const render=vm.runInNewContext(code,{db:new Proxy({},{get:()=>()=>{throw Error("Live DB forbidden");}}),getSignatureDataUrl:async()=>"",readAccountingSignature,
-      escapeHtml:(value:any)=>String(value).replaceAll("<","&lt;"),fmtSAR:(n:number)=>n.toFixed(2),amountToArabicCurrencyPhrase:(n:number)=>String(n),htmlToPdf:async(value:string)=>{html=value;return Buffer.from("%PDF-test");}});
-    await render(0,11,undefined,undefined,approved);
-    expect(html).toContain("اعتمادات الحسابات والإدارة العليا");expect(html).toContain("Frozen accountant");expect(html).toContain("Actual manager");expect(html).toContain("اعتماد إلكتروني مثبت");
+  it("renders the PB reference form for approved DPB, preserving separate legacy financial scopes and all original rows",async()=>{
+    const f=fixture();const approved=await approvedBundleSnapshot(f.database,{id:24},f.snapshot,f.signature);
+    const h=renderHarness();await h.render(0,11,undefined,undefined,approved);const html=h.html();
+    expect(html).not.toContain("اعتمادات الحسابات والإدارة العليا");expect(html).toContain("Frozen accountant");expect(html).toContain("Actual manager");expect(html).toContain("اعتماد إلكتروني مثبت");
+    expect(html).toContain("رئيس الحسابات");expect(html).toContain("الرئيس التنفيذي");
+    expect(html).not.toContain("القسم المستفيد</th>");expect(html).not.toContain("المورد:");
+    expect(html.match(/<div class="section-title">الشؤون المالية والإجراءات المحاسبية/g)).toHaveLength(2);
+    const body=html.slice(html.indexOf("<body>"));
+    expect(body.indexOf("الحسابات</td>")).toBeLessThan(body.indexOf("الشؤون المالية والإجراءات المحاسبية"));
+    expect(body.indexOf("الرئيس التنفيذي")).toBeLessThan(body.indexOf("رقم سند الصرف"));
     expect(html).toContain("45538.00");expect(html).not.toContain("91076");expect(html).toContain("170.00");
     expect(approved.rows.map(row=>row.itemName).every(name=>html.includes(name))).toBe(true);
-    fs.mkdirSync("tools/pricing-bundle-approved-document/artifacts",{recursive:true});fs.writeFileSync("tools/pricing-bundle-approved-document/artifacts/approved-preview.html",html);
-    await render(0,11,undefined,undefined,f.snapshot);
-    expect(html).not.toContain("اعتمادات الحسابات والإدارة العليا");expect(html).not.toContain("الشؤون المالية والإجراءات المحاسبية</div>");expect(html).toContain("170.00");
+    fs.mkdirSync("tools/pricing-bundle-approved-document/artifacts",{recursive:true});fs.writeFileSync("tools/pricing-bundle-approved-document/artifacts/approved-preview.html",html.replace(/[ \t]+$/gm,""));
+    await h.render(0,11,undefined,undefined,f.snapshot);const delegateHtml=h.html();
+    expect(delegateHtml).not.toContain("اعتمادات الحسابات والإدارة العليا");expect(delegateHtml).not.toContain("الشؤون المالية والإجراءات المحاسبية</div>");expect(delegateHtml).toContain("170.00");
+    expect(delegateHtml).toContain("القسم المستفيد</th>");expect(delegateHtml).toContain("المورد:");
+  });
+  it("uses one standard finance block and one custody balance for a unified approval without a duplicate approval appendix",async()=>{
+    const f=fixture();const legacy=await approvedBundleSnapshot(f.database,{id:24},f.snapshot,f.signature);
+    const approved={...legacy,approvedTotal:"170.00",financialApprovals:[{...legacy.financialApprovals![0],reference:f.snapshot.number,poNumbers:["PR-101","PR-102","PR-103"],managementSignature:"data:image/png;base64,test-management",notes:"ملاحظات الاعتماد"}]};
+    const original=JSON.stringify(approved);const h=renderHarness();await h.render(0,11,undefined,undefined,approved);const html=h.html();
+    expect(html.match(/<div class="section-title">الشؤون المالية والإجراءات المحاسبية/g)).toHaveLength(1);
+    expect(html.match(/45538\.00/g)).toHaveLength(1);
+    expect(html).toContain("test-management");expect(html).toContain("ملاحظات الاعتماد");
+    expect(html).not.toContain("إجمالي الأصناف المعتمدة بعد قرارات الرفض");
+    expect(html).toContain("المبلغ الإجمالي:");expect(html).toContain('colspan="6"');
+    const table=html.slice(html.indexOf('<table class="items-table">'),html.indexOf('<div class="declaration-box">'));
+    expect(table.match(/<th /g)).toHaveLength(7);
+    expect(JSON.stringify(approved)).toBe(original);
+  });
+  it("preserves rejection evidence and approved totals without rewriting or dropping frozen rows",async()=>{
+    const f=fixture();const legacy=await approvedBundleSnapshot(f.database,{id:24},f.snapshot,f.signature);
+    const approved={...legacy,approvedTotal:"160.00",rows:legacy.rows.map((row,index)=>index===1?{...row,approvalRejectionReason:"رفض بسبب السعر"}:row)};
+    const original=JSON.stringify(approved);const h=renderHarness();await h.render(0,11,undefined,undefined,approved);const html=h.html();
+    expect(html).toContain("غير معتمد: رفض بسبب السعر");expect(html).toContain("إجمالي التسعير الأصلي:");
+    expect(html).toContain("170.00");expect(html).toContain("160.00");
+    expect(approved.rows.every(row=>html.includes(row.itemName))).toBe(true);
+    expect(JSON.stringify(approved)).toBe(original);
   });
 });

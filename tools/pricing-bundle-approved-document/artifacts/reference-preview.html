@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>طلب مشتريات وصرف عهدة مالية - شركة تولان الدولية</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+        @page { size: A4; margin: 5mm 12mm; background-color: #fafbfc; }
+        body {
+            margin: 0; padding: 0;
+            font-family: 'Times New Roman', serif;
+            color: #2d3748;
+            background-color: #fafbfc;
+            line-height: 1.154;
+            font-size: 10.8pt;
+        }
+        .header-container { border-bottom: 2px solid #2b6cb0; padding-bottom: 5.13px; margin-bottom: 8.55px; }
+        .company-name { font-size: 16.2pt; font-weight: bold; color: #1a365d; margin: 0 0 1.71px 0; }
+        .doc-title {
+            font-size: 12.96pt; font-weight: bold; color: #2b6cb0; margin: 0;
+            background-color: #ebf8ff; display: inline-block; padding: 1.71px 10px; border-radius: 4px;
+        }
+        .meta-grid { display: table; width: 100%; margin-bottom: 8.55px; border-collapse: separate; border-spacing: 10px 0; }
+        .meta-col { display: table-cell; width: 50%; vertical-align: top; }
+        .info-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 5.13px 10px; }
+        .info-row { display: table; width: 100%; }
+        .info-label { display: table-cell; font-weight: bold; color: #4a5568; width: 30%; font-size: 10.26pt; }
+        .info-value { display: table-cell; color: #1a202c; width: 70%; font-size: 10.8pt; }
+        .intro-text {
+            background-color: #f7fafc; border-right: 4px solid #2b6cb0; padding: 5.13px 10px; margin-bottom: 8.55px;
+            font-size: 10.26pt; color: #2d3748;
+        }
+        table.items-table { width: 100%; border-collapse: collapse; margin-bottom: 8.55px; background: #ffffff; }
+        table.items-table th {
+            background-color: #2b6cb0; color: #ffffff; font-weight: bold; text-align: center;
+            padding: 3.078px; font-size: 10.26pt; border: 1px solid #2b6cb0;
+        }
+        table.items-table td { border: 1px solid #cbd5e0; padding: 3.078px; text-align: center; font-size: 10.26pt; }
+        table.items-table tr:nth-child(even) { background-color: #f7fafc; }
+        .total-row { background-color: #ebf8ff !important; font-weight: bold; }
+        .total-row td { border-top: 2px solid #2b6cb0 !important; color: #1a365d; }
+        .declaration-box {
+            background-color: #f0fff4; border: 1px dashed #38a169; color: #22543d;
+            padding: 4.28px 10px; border-radius: 4px; margin-bottom: 8.55px; font-size: 9.72pt; font-weight: bold;
+        }
+        .section-title {
+            font-size: 11.34pt; font-weight: bold; color: #1a365d; border-bottom: 1px solid #cbd5e0;
+            padding-bottom: 1.71px; margin-top: 6.84px; margin-bottom: 5.13px;
+        }
+        table.signatures-table { width: 100%; border-collapse: collapse; margin-bottom: 8.55px; background: #ffffff; }
+        table.signatures-table th { background-color: #4a5568; color: #ffffff; font-weight: bold; padding: 3.078px; font-size: 9.72pt; border: 1px solid #4a5568; }
+        table.signatures-table td { border: 1px solid #cbd5e0; padding: 3.078px 7.2px; font-size: 10.26pt; height: 18.468px; }
+        .signature-requests { display: block; margin-top: 2px; color: #4a5568; font-size: 8.64pt; font-weight: normal; }
+        .signature-warning { margin: -4px 0 6px; color: #744210; background: #fffaf0; border: 1px solid #fbd38d; border-radius: 4px; padding: 4px 7px; font-size: 9pt; }
+        /* التوقيع الإلكتروني: يُقصّ ارتفاعه ليناسب الصف بلا تمديده أو كسر التنسيق */
+        /* حجم صورة التوقيع × 3 (كانت صغيرة جدًا) — الصف يتمدد تلقائيًا لاستيعابها */
+        .sig-img { max-height: 25.1px; max-width: 100%; object-fit: contain; display: block; margin: 0 auto; }
+        .finance-section { background-color: #ffffff; border: 1px solid #cbd5e0; border-radius: 6px; padding: 6.84px; margin-bottom: 6.84px; }
+        .line-input { margin-bottom: 5.13px; font-size: 10.26pt; }
+        .dotted-line { border-bottom: 1px dotted #718096; display: inline-block; min-width: 150px; }
+        table.accounting-table { width: 100%; border-collapse: collapse; margin-top: 3.42px; }
+        table.accounting-table td { border: 1px solid #cbd5e0; padding: 3.078px; font-size: 9.72pt; width: 25%; }
+        table.accounting-table .label { background-color: #edf2f7; font-weight: bold; color: #4a5568; }
+        .footer-note {
+            font-size: 8.64pt; color: #e53e3e; background-color: #fff5f5; padding: 3.42px 10px;
+            border-radius: 4px; border-right: 3px solid #e53e3e; font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header-container">
+        <div class="company-name">شركة تولان الدولية</div>
+        <div class="doc-title">طلب مشتريات وصرف عهدة مالية</div>
+    </div>
+
+    <div class="meta-grid">
+        <div class="meta-col">
+            <div class="info-card">
+                <div class="info-row">
+                    <div class="info-label">التاريخ:</div>
+                    <div class="info-value">2026-11-01 م</div>
+                </div>
+                <div class="info-row" style="margin-top: 4px;">
+                    <div class="info-label">رقم دفعة الإرسال:</div>
+                    <div class="info-value" style="font-weight: bold;">DPB-DEMO-000001</div>
+                </div>
+            </div>
+        </div>
+        <div class="meta-col">
+            <div class="info-card">
+                <div class="info-row">
+                    <div class="info-label">المبلغ الإجمالي:</div>
+                    <div class="info-value" style="font-weight: bold; color: #2b6cb0;">600.00 ر.س</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="intro-text">
+        الرجاء التكرم بالإيعاز لمن يلزم بصرف عُهدة قدرها <strong>(ستمائة ريال فقط لا غير)</strong>، لتوريد خدمات / شراء الآتي:
+    </div>
+
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th style="width: 5%;">م</th>
+                <th style="width: 12%;">رقم الطلب</th>
+                <th style="width: 33%;">المادة المطلوبة</th>
+
+                <th style="width: 8%;">الكمية</th>
+                <th style="width: 10%;">الوحدة</th>
+                <th style="width: 15%;">السعر التقديري</th>
+                <th style="width: 17%;">القيمة التقديرية</th>
+            </tr>
+        </thead>
+        <tbody>
+
+      <tr>
+        <td>1</td>
+        <td style="font-size: 0.85em;">PR-DEMO-1</td>
+        <td style="text-align: right;">صنف تجريبي 1</td>
+
+        <td>1</td>
+        <td>قطعة</td>
+        <td>100.00 ر.س</td>
+        <td>100.00 ر.س</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td style="font-size: 0.85em;">PR-DEMO-2</td>
+        <td style="text-align: right;">صنف تجريبي 2</td>
+
+        <td>2</td>
+        <td>قطعة</td>
+        <td>100.00 ر.س</td>
+        <td>200.00 ر.س</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td style="font-size: 0.85em;">PR-DEMO-3</td>
+        <td style="text-align: right;">صنف تجريبي 3</td>
+
+        <td>3</td>
+        <td>قطعة</td>
+        <td>100.00 ر.س</td>
+        <td>300.00 ر.س</td>
+      </tr>
+            <tr class="total-row">
+                <td colspan="6" style="text-align: left; padding-left: 15px;">الإجمالي الكلي</td>
+                <td>600.00 ر.س</td>
+            </tr>
+        </tbody>
+    </table>
+
+
+
+
+    <div class="declaration-box">
+        ☑ نحن الموقعين أدناه نؤكد بأن هذه الأصناف لا توجد بالمستودع (خاص بكادر المشتريات).
+    </div>
+
+    <div class="section-title">مسار الاعتماد والتوقيعات</div>
+    <table class="signatures-table">
+        <thead>
+            <tr>
+                <th style="width: 25%;">الصفة</th>
+                <th style="width: 40%;">الاسم</th>
+                <th style="width: 35%;">التوقيع / الاعتماد</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td style="font-weight: bold; background-color: #f7fafc;">مقدّم الطلب</td><td>مقدّم طلب تجريبي<span class="signature-requests">الطلبات: PR-DEMO-1، PR-DEMO-2، PR-DEMO-3</span></td><td><img src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22160%22%20height%3D%2232%22%3E%3Ctext%20x%3D%2280%22%20y%3D%2223%22%20text-anchor%3D%22middle%22%20font-size%3D%2218%22%20font-family%3D%22serif%22%3E%D8%AA%D9%88%D9%82%D9%8A%D8%B9%20%D8%AA%D8%AC%D8%B1%D9%8A%D8%A8%D9%8A%3C%2Ftext%3E%3C%2Fsvg%3E" alt="التوقيع" class="sig-img" /></td></tr><tr><td style="font-weight: bold; background-color: #f7fafc;">مراجع الطلب</td><td>مراجع طلب تجريبي<span class="signature-requests">الطلبات: PR-DEMO-1، PR-DEMO-2، PR-DEMO-3</span></td><td><img src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22160%22%20height%3D%2232%22%3E%3Ctext%20x%3D%2280%22%20y%3D%2223%22%20text-anchor%3D%22middle%22%20font-size%3D%2218%22%20font-family%3D%22serif%22%3E%D8%AA%D9%88%D9%82%D9%8A%D8%B9%20%D8%AA%D8%AC%D8%B1%D9%8A%D8%A8%D9%8A%3C%2Ftext%3E%3C%2Fsvg%3E" alt="التوقيع" class="sig-img" /></td></tr>
+            <tr>
+                <td style="font-weight: bold; background-color: #f7fafc;">اسم مستلم العهدة</td>
+                <td>مندوب تجريبي</td>
+                <td><img src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22160%22%20height%3D%2232%22%3E%3Ctext%20x%3D%2280%22%20y%3D%2223%22%20text-anchor%3D%22middle%22%20font-size%3D%2218%22%20font-family%3D%22serif%22%3E%D8%AA%D9%88%D9%82%D9%8A%D8%B9%20%D8%AA%D8%AC%D8%B1%D9%8A%D8%A8%D9%8A%3C%2Ftext%3E%3C%2Fsvg%3E" alt="التوقيع" class="sig-img" /></td>
+            </tr>
+
+    <tr><td style="font-weight:bold;background-color:#f7fafc;">الحسابات</td>
+      <td>محاسب تجريبي</td>
+      <td><img src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22160%22%20height%3D%2232%22%3E%3Ctext%20x%3D%2280%22%20y%3D%2223%22%20text-anchor%3D%22middle%22%20font-size%3D%2218%22%20font-family%3D%22serif%22%3E%D8%AA%D9%88%D9%82%D9%8A%D8%B9%20%D8%AA%D8%AC%D8%B1%D9%8A%D8%A8%D9%8A%3C%2Ftext%3E%3C%2Fsvg%3E" alt="التوقيع" class="sig-img" /><small class="signature-requests">اعتماد إلكتروني: 2026-11-01 12:00:00</small></td></tr>
+        </tbody>
+    </table>
+
+
+
+
+
+    <div class="approved-finance-group" style="page-break-inside:avoid;">
+    <div class="section-title">الشؤون المالية والإجراءات المحاسبية</div>
+    <div class="finance-section" style="page-break-inside:avoid;">
+
+      <div class="line-input" style="white-space:nowrap;overflow:hidden;font-size:10.26pt;">
+        إجمالي رصيد العهد التي على المندوب: <strong>265.00</strong> ريال <strong>(مئتان وخمسة وستون ريال فقط لا غير)</strong>.
+      </div>
+      <div class="line-input">ملاحظات مراجع الحسابات: <span class="dotted-line" style="min-width:320px;"></span></div>
+      <table class="signatures-table" style="margin-top:5.7px;margin-bottom:5.56px;">
+        <tbody>
+          <tr><td style="font-weight:bold;background-color:#f7fafc;width:25%;">رئيس الحسابات</td><td style="width:40%;"></td><td style="width:35%;"></td></tr>
+          <tr style="height:22.16px;">
+            <td style="font-weight:bold;background-color:#f7fafc;width:25%;font-size:12.31pt;height:22.16px;">الرئيس التنفيذي</td>
+            <td style="width:40%;font-size:12.31pt;height:22.16px;">إدارة عليا (تجريبي)</td>
+            <td style="width:35%;height:22.16px;"><img src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22160%22%20height%3D%2232%22%3E%3Ctext%20x%3D%2280%22%20y%3D%2223%22%20text-anchor%3D%22middle%22%20font-size%3D%2218%22%20font-family%3D%22serif%22%3E%D8%AA%D9%88%D9%82%D9%8A%D8%B9%20%D8%AA%D8%AC%D8%B1%D9%8A%D8%A8%D9%8A%3C%2Ftext%3E%3C%2Fsvg%3E" alt="التوقيع" class="sig-img" /><small class="signature-requests">اعتماد إلكتروني مثبت: 2026-11-01 12:05:00</small></td>
+          </tr>
+        </tbody>
+      </table>
+      <table class="accounting-table">
+        <tr><td class="label">رقم سند الصرف</td><td></td><td class="label">التاريخ</td><td></td></tr>
+        <tr><td class="label">المبلغ</td><td></td><td class="label">التوقيع</td><td></td></tr>
+      </table>
+    </div></div>
+
+    <div class="footer-note">
+        ملحوظة: أي شرح أو تعليق خارج حقول النموذج لا يُعتمد إلا بتوقيع الرئيس التنفيذي.
+    </div>
+
+</body>
+</html>
