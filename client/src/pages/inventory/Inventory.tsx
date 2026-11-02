@@ -1,4 +1,5 @@
 import { InventoryBooks, loadBookLots } from "@/components/inventory/InventoryBooks";
+import { InventoryQuantitySummary } from "@/components/inventory/InventoryQuantitySummary";
 import { planBookFifo } from "@shared/inventory-book";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
@@ -392,9 +393,9 @@ export default function Inventory() {
           .some((node: any) => String(node?.id) === selectedCatalogNodeId),
       );
 
-  const totalWarehouseQuantity = Object.entries(categoryFilteredWarehouseItems.reduce((totals:Record<string,number>, item:any)=>{
+  const totalWarehouseQuantities = Object.entries(categoryFilteredWarehouseItems.reduce((totals:Record<string,number>, item:any)=>{
     const unit=String(item.issueUnit || item.unit || "وحدة غير محددة");totals[unit]=(totals[unit] || 0)+Number(item.quantity || 0);return totals;
-  },{})).map(([unit,quantity])=>`${Number(quantity).toLocaleString()} ${unit}`).join(" / ");
+  },{})).map(([unit,quantity])=>({unit,quantity:Number(quantity)}));
 
   const bookNodeIds = useMemo(() => {
     if (selectedCatalogNodeId === "all") return undefined;
@@ -645,13 +646,7 @@ export default function Inventory() {
           </CardContent>
         </Card>
         {/* إجمالي الكميات بالمخزن المختار — للعرض فقط، محسوب تلقائيًا ولا يقبل أي تعديل يدوي */}
-        <Card className="border-emerald-200 bg-emerald-50/50">
-          <CardContent className="p-3 text-center">
-            <ArrowDownUp className="w-5 h-5 mx-auto text-emerald-600 mb-1" />
-            <p className="text-2xl font-bold text-emerald-800">{totalWarehouseQuantity}</p>
-            <p className="text-[10px] text-emerald-600">إجمالي الكميات بالمخزن المختار</p>
-          </CardContent>
-        </Card>
+        <InventoryQuantitySummary totals={totalWarehouseQuantities} />
       </div>
 
       {/* خانة البحث الذكية + الترتيب + فلتر التاريخ */}
@@ -745,7 +740,7 @@ export default function Inventory() {
         </div>
       </div>
 
-      {selectedWarehouseId && lotsEnabled && <InventoryBooks warehouseId={Number(selectedWarehouseId)} search={searchQuery} includeZero={!hideZeroStock} sort={sortBy} dateFrom={dateFrom} dateTo={dateTo}
+      {selectedWarehouseId && lotsEnabled && <InventoryBooks layout="table" warehouseId={Number(selectedWarehouseId)} search={searchQuery} includeZero={!hideZeroStock} sort={sortBy} dateFrom={dateFrom} dateTo={dateTo}
         nodeIds={bookNodeIds}
         onFifo={isWarehouse && lotsEnabled ? openBookDelivery : undefined}
         onPick={isWarehouse && lotsEnabled ? async ({lot,page,master}) => {
