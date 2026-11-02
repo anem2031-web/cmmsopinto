@@ -925,7 +925,7 @@ export async function generatePurchaseRequestPDF(
   const rowsHtml = rows.map(r => `
       <tr>
         <td>${r.serial}</td>
-        ${isMultiOrderDoc ? `<td style="font-size: 0.85em;">${escapeHtml(r.poNumber)}</td>` : ""}
+        ${isMultiOrderDoc ? `<td class="po-number-cell"><span class="po-number-fit"><span class="po-number-text">${escapeHtml(r.poNumber)}</span></span></td>` : ""}
         <td style="text-align: right;">${escapeHtml(r.itemName)}${showBundleSection ? `<small style="display:block;">المورد: ${escapeHtml(r.supplierName)}</small>` : ""}${r.approvalRejectionReason?`<small style="display:block;color:#b91c1c;">غير معتمد: ${escapeHtml(r.approvalRejectionReason)}</small>`:""}</td>
         ${showBundleSection ? `<td>${escapeHtml(r.sectionName)}</td>` : ""}
         <td>${r.qty}</td>
@@ -1022,6 +1022,9 @@ export async function generatePurchaseRequestPDF(
             padding: ${rowPad}px; font-size: ${FS(8.55)}pt; border: 1px solid #2b6cb0;
         }
         table.items-table td { border: 1px solid #cbd5e0; padding: ${rowPad}px; text-align: center; font-size: ${FS(8.55)}pt; }
+        table.items-table td.po-number-cell { font-size: 0.85em; direction: ltr; white-space: nowrap; }
+        .po-number-fit { display: block; width: 0; min-width: 100%; }
+        .po-number-text { display: inline-block; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
         table.items-table tr:nth-child(even) { background-color: #f7fafc; }
         .total-row { background-color: #ebf8ff !important; font-weight: bold; }
         .total-row td { border-top: 2px solid #2b6cb0 !important; color: #1a365d; }
@@ -1198,6 +1201,22 @@ export async function generatePurchaseRequestPDF(
         ملحوظة: أي شرح أو تعليق خارج حقول النموذج لا يُعتمد إلا بتوقيع الرئيس التنفيذي.
     </div>
 
+    ${isMultiOrderDoc ? `<script>
+      function fitPurchaseOrderNumbers() {
+        document.querySelectorAll('.po-number-text').forEach(function(label) {
+          label.style.fontSize = '';
+          var available = label.parentElement.clientWidth;
+          var width = label.getBoundingClientRect().width;
+          if (available > 0 && width > available) {
+            var size = parseFloat(getComputedStyle(label).fontSize);
+            label.style.fontSize = (size * available / width * 0.98) + 'px';
+          }
+        });
+      }
+      fitPurchaseOrderNumbers();
+      document.fonts.ready.then(fitPurchaseOrderNumbers);
+      window.addEventListener('beforeprint', fitPurchaseOrderNumbers);
+    </script>` : ""}
 </body>
 </html>`;
 

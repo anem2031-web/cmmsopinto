@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Eye, Printer, FileStack } from "lucide-react";
+import { Eye, Printer, FileStack, Download } from "lucide-react";
 import { toast } from "sonner";
 import { APPROVED_PRICING_DOCUMENT_TITLE } from "@shared/approved-pricing-documents";
+import { downloadPricingBundlePdf } from "@/lib/downloadPricingBundlePdf";
 
 export default function ApprovedPricingDocuments() {
   const [search, setSearch] = useState(""), [debounced, setDebounced] = useState("");
@@ -14,6 +15,12 @@ export default function ApprovedPricingDocuments() {
   useEffect(() => { const timer = setTimeout(() => { setDebounced(search); setPage(1); }, 300); return () => clearTimeout(timer); }, [search]);
   const query = trpc.approvedPricingDocuments.listPage.useQuery({page,pageSize:20,search:debounced,sort:"newest"}, {retry:false});
   const pdf = trpc.approvedPricingDocuments.pdf.useMutation();
+  const download = async (id: number) => {
+    setBusy(id);
+    try { downloadPricingBundlePdf(await pdf.mutateAsync({id})); }
+    catch (error: any) { toast.error(error.message || "تعذر تنزيل الوثيقة"); }
+    finally { setBusy(null); }
+  };
   const open = async (id: number) => {
     // Reserve a window during the click so popup blocking does not lose the PDF.
     const preview = window.open("", "_blank");
@@ -36,7 +43,7 @@ export default function ApprovedPricingDocuments() {
       <Table><TableHeader><TableRow><TableHead className="text-start">رقم الحزمة</TableHead><TableHead className="text-start">المندوب</TableHead><TableHead className="text-start">تاريخ الاعتماد</TableHead><TableHead className="text-start">الإجمالي المعتمد</TableHead><TableHead className="text-start">الإجراءات</TableHead></TableRow></TableHeader>
         <TableBody>{query.data?.rows.map(row => <TableRow key={row.id}>
           <TableCell className="font-mono">{row.bundleNumber}</TableCell><TableCell>{row.delegateName}</TableCell><TableCell>{row.approvedAt ? new Date(row.approvedAt).toLocaleDateString("ar-SA") : "—"}</TableCell><TableCell>{row.total.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} ر.س</TableCell>
-          <TableCell><div className="flex gap-2"><Button variant="outline" size="sm" disabled={busy !== null} onClick={() => open(row.id)}><Eye className="w-4 h-4 me-1" />استعراض</Button><Button variant="outline" size="sm" disabled={busy !== null} onClick={() => open(row.id)}><Printer className="w-4 h-4 me-1" />طباعة</Button></div></TableCell>
+          <TableCell><div className="flex gap-2"><Button variant="outline" size="sm" disabled={busy !== null} onClick={() => open(row.id)}><Eye className="w-4 h-4 me-1" />استعراض</Button><Button variant="outline" size="sm" disabled={busy !== null} onClick={() => open(row.id)}><Printer className="w-4 h-4 me-1" />طباعة</Button><Button variant="outline" size="sm" disabled={busy !== null} onClick={() => download(row.id)}><Download className="w-4 h-4 me-1" />تنزيل PDF</Button></div></TableCell>
         </TableRow>)}{!query.data?.rows.length && <TableRow><TableCell colSpan={5}>لا توجد حزم تسعير معتمدة.</TableCell></TableRow>}</TableBody>
       </Table>
       <div className="flex items-center justify-between mt-4"><Button variant="outline" disabled={!query.data || query.data.page<=1 || query.isFetching} onClick={() => setPage((query.data?.page || 1)-1)}>السابق</Button><span>صفحة {query.data?.page || 1} — {query.data?.total || 0} وثيقة</span><Button variant="outline" disabled={!query.data || query.data.page*20>=query.data.total || query.isFetching} onClick={() => setPage((query.data?.page || 1)+1)}>التالي</Button></div>

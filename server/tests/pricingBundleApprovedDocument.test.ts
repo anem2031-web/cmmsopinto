@@ -164,4 +164,14 @@ describe("Document-center DPB approved PDF, without changing delegate files or w
     expect(approved.rows.every(row=>html.includes(row.itemName))).toBe(true);
     expect(JSON.stringify(approved)).toBe(original);
   });
+  it("keeps full order numbers in their own single-line fitting cells without changing the source or other columns",async()=>{
+    const f=fixture();const approved=await approvedBundleSnapshot(f.database,{id:24},f.snapshot,f.signature);
+    approved.rows[0].poNumber="PR-2026-180486";approved.rows[1].poNumber="PR-2026-12345678901234567890";
+    const original=JSON.stringify(approved);const h=renderHarness();await h.render(0,11,undefined,undefined,approved);const html=h.html();
+    expect(html.match(/<td class="po-number-cell">/g)).toHaveLength(approved.rows.length);
+    for(const row of approved.rows)expect(html).toContain(`<span class="po-number-text">${row.poNumber}</span>`);
+    expect(html).toContain('white-space: nowrap');expect(html).toContain('width > available');expect(html).toContain("window.addEventListener('beforeprint', fitPurchaseOrderNumbers)");
+    expect(html).toContain('<th style="width: 12%;">رقم الطلب</th>');expect(html).not.toContain('table-layout: fixed');
+    expect(JSON.stringify(approved)).toBe(original);
+  });
 });

@@ -26,7 +26,7 @@ describe('Account-scoped approved pricing document tab',()=>{
   beforeEach(()=>{state.user={id:1,role:'user',isActive:1,username:'ANIS'};state.calls=[];state.buttons=[];state.values=[];state.cursor=0;state.pdf.mockClear();});
   it.each(['ANIS','ahmed1'])('shows %s only the final document reader with view and print',username=>{
     state.user.username=username;const html=render();
-    for(const value of ['حزم التسعير المعتمدة','DPB-APPROVED-1','المندوب التجريبي','400.00','استعراض','طباعة'])expect(html).toContain(value);
+    for(const value of ['حزم التسعير المعتمدة','DPB-APPROVED-1','المندوب التجريبي','400.00','استعراض','طباعة','تنزيل PDF'])expect(html).toContain(value);
     expect(html).not.toContain('المستندات الحالية');expect(html).not.toContain('href="/purchase-orders');expect(html).not.toContain('اعتماد وإرسال');
     expect(state.calls.filter(call=>call.enabled).map(call=>call.path)).toEqual(['approvedPricingDocuments.listPage']);
   });
@@ -36,6 +36,7 @@ describe('Account-scoped approved pricing document tab',()=>{
     expect(state.calls.some(call=>call.path==='approvedPricingDocuments.listPage')).toBe(false);
     state.buttons.find(button=>button.children==='حزم التسعير المعتمدة').onClick();state.calls=[];const selected=render();
     expect(selected).toContain('DPB-APPROVED-1');expect(state.calls.filter(call=>call.enabled).map(call=>call.path)).toEqual(['approvedPricingDocuments.listPage']);
+    expect(selected).toContain('تنزيل PDF');
   });
   it.each(['accountant','senior_management','delegate','warehouse','observer'])('preserves existing %s tabs without the new account grant',role=>{
     state.user={id:7,role,isActive:1,username:'OTHER'};const html=render();
@@ -51,6 +52,22 @@ describe('Account-scoped approved pricing document tab',()=>{
       const print=state.buttons.find(button=>React.Children.toArray(button.children).includes('طباعة'));
       await view.onClick();await print.onClick();
       expect(state.pdf.mock.calls).toEqual([[{id:1}],[{id:1}]]);expect(preview.location.replace).toHaveBeenCalledTimes(2);expect(preview.opener).toBe(null);expect(created).toHaveLength(2);expect(revoked).toHaveLength(2);
+    }finally{globalThis.URL=originalUrl;(globalThis as any).window=originalWindow;}
+  });
+  it('downloads the freshly authorized approved PDF with its server filename without requiring a popup',async()=>{
+    const originalUrl=globalThis.URL,originalWindow=(globalThis as any).window;
+    const anchor={href:'',download:'',hidden:false,click:vi.fn(),remove:vi.fn()},appendChild=vi.fn();
+    const revoke=vi.fn();
+    (globalThis as any).URL={createObjectURL:vi.fn(()=> 'blob:approved-download'),revokeObjectURL:revoke};
+    (globalThis as any).window={open:vi.fn(),document:{createElement:vi.fn(()=>anchor),body:{appendChild}},setTimeout:(fn:()=>void)=>fn()};
+    try{
+      render();await state.buttons.find(button=>React.Children.toArray(button.children).includes('تنزيل PDF')).onClick();
+      expect(state.pdf).toHaveBeenCalledWith({id:1});expect(anchor.download).toBe('DPB-1.pdf');expect(anchor.href).toBe('blob:approved-download');
+      expect(appendChild).toHaveBeenCalledWith(anchor);expect(anchor.click).toHaveBeenCalledTimes(1);expect(anchor.remove).toHaveBeenCalledTimes(1);
+      expect(revoke).toHaveBeenCalledWith('blob:approved-download');expect((globalThis as any).window.open).not.toHaveBeenCalled();
+      state.pdf.mockRejectedValueOnce(Error('approval revoked'));
+      await state.buttons.find(button=>React.Children.toArray(button.children).includes('تنزيل PDF')).onClick();
+      expect(anchor.click).toHaveBeenCalledTimes(1);expect(state.pdf).toHaveBeenCalledTimes(2);
     }finally{globalThis.URL=originalUrl;(globalThis as any).window=originalWindow;}
   });
 });

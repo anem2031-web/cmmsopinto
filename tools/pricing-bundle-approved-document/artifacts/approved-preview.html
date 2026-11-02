@@ -36,6 +36,9 @@
             padding: 3.078px; font-size: 10.26pt; border: 1px solid #2b6cb0;
         }
         table.items-table td { border: 1px solid #cbd5e0; padding: 3.078px; text-align: center; font-size: 10.26pt; }
+        table.items-table td.po-number-cell { font-size: 0.85em; direction: ltr; white-space: nowrap; }
+        .po-number-fit { display: block; width: 0; min-width: 100%; }
+        .po-number-text { display: inline-block; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
         table.items-table tr:nth-child(even) { background-color: #f7fafc; }
         .total-row { background-color: #ebf8ff !important; font-weight: bold; }
         .total-row td { border-top: 2px solid #2b6cb0 !important; color: #1a365d; }
@@ -118,7 +121,7 @@
 
       <tr>
         <td>1</td>
-        <td style="font-size: 0.85em;">PR-101</td>
+        <td class="po-number-cell"><span class="po-number-fit"><span class="po-number-text">PR-101</span></span></td>
         <td style="text-align: right;">Material 1</td>
 
         <td>1</td>
@@ -128,7 +131,7 @@
       </tr>
       <tr>
         <td>2</td>
-        <td style="font-size: 0.85em;">PR-102</td>
+        <td class="po-number-cell"><span class="po-number-fit"><span class="po-number-text">PR-102</span></span></td>
         <td style="text-align: right;">Material 2</td>
 
         <td>1</td>
@@ -138,7 +141,7 @@
       </tr>
       <tr>
         <td>3</td>
-        <td style="font-size: 0.85em;">PR-102</td>
+        <td class="po-number-cell"><span class="po-number-fit"><span class="po-number-text">PR-102</span></span></td>
         <td style="text-align: right;">Material 3</td>
 
         <td>1</td>
@@ -148,7 +151,7 @@
       </tr>
       <tr>
         <td>4</td>
-        <td style="font-size: 0.85em;">PR-102</td>
+        <td class="po-number-cell"><span class="po-number-fit"><span class="po-number-text">PR-102</span></span></td>
         <td style="text-align: right;">Material 4</td>
 
         <td>1</td>
@@ -158,7 +161,7 @@
       </tr>
       <tr>
         <td>5</td>
-        <td style="font-size: 0.85em;">PR-103</td>
+        <td class="po-number-cell"><span class="po-number-fit"><span class="po-number-text">PR-103</span></span></td>
         <td style="text-align: right;">Material 5</td>
 
         <td>1</td>
@@ -168,7 +171,7 @@
       </tr>
       <tr>
         <td>6</td>
-        <td style="font-size: 0.85em;">PR-103</td>
+        <td class="po-number-cell"><span class="po-number-fit"><span class="po-number-text">PR-103</span></span></td>
         <td style="text-align: right;">Material 6</td>
 
         <td>1</td>
@@ -178,7 +181,7 @@
       </tr>
       <tr>
         <td>7</td>
-        <td style="font-size: 0.85em;">PR-103</td>
+        <td class="po-number-cell"><span class="po-number-fit"><span class="po-number-text">PR-103</span></span></td>
         <td style="text-align: right;">Material 7</td>
 
         <td>1</td>
@@ -188,7 +191,7 @@
       </tr>
       <tr>
         <td>8</td>
-        <td style="font-size: 0.85em;">PR-103</td>
+        <td class="po-number-cell"><span class="po-number-fit"><span class="po-number-text">PR-103</span></span></td>
         <td style="text-align: right;">Material 8</td>
 
         <td>1</td>
@@ -291,5 +294,21 @@
         ملحوظة: أي شرح أو تعليق خارج حقول النموذج لا يُعتمد إلا بتوقيع الرئيس التنفيذي.
     </div>
 
+    <script>
+      function fitPurchaseOrderNumbers() {
+        document.querySelectorAll('.po-number-text').forEach(function(label) {
+          label.style.fontSize = '';
+          var available = label.parentElement.clientWidth;
+          var width = label.getBoundingClientRect().width;
+          if (available > 0 && width > available) {
+            var size = parseFloat(getComputedStyle(label).fontSize);
+            label.style.fontSize = (size * available / width * 0.98) + 'px';
+          }
+        });
+      }
+      fitPurchaseOrderNumbers();
+      document.fonts.ready.then(fitPurchaseOrderNumbers);
+      window.addEventListener('beforeprint', fitPurchaseOrderNumbers);
+    </script>
 </body>
 </html>
