@@ -14,6 +14,7 @@ import { issueInventoryBook } from "../services/inventory-book-issue";
 import { router } from "../routers/_shared/procedures";
 import { activeBookStockUnit } from "../_core/inventory-book-policy";
 import { createBookIssueProcedure } from "../routers/inventory/book-issue.procedure";
+import { businessRpcAllowed } from "../../shared/business-role-policy";
 vi.mock("../_core/authz/media-access", () => ({
   assertMediaMutationAccess: vi.fn(),
 }));
@@ -295,6 +296,7 @@ describe("direct book RPC grants preserve existing roles", () => {
   });
 });
 function issuePort() {
+  const actor = { id: 5, role: "admin", isActive: 1 };
   let stored: any = null,
     writes: any[] = [];
   const calls: any[] = [];
@@ -306,6 +308,7 @@ function issuePort() {
         execute: async (query: any) => {
           const parsed = sqlQuery(query);
           calls.push(parsed);
+          if (parsed.sql.includes("FROM users")) return [[{ ...actor }]];
           if (parsed.sql.includes("FROM warehouses"))
             return [[{ id: 1, isActive: 1 }]];
           if (parsed.sql.includes("FROM catalog_items")) return [[{ id: 1 }]];
@@ -345,6 +348,7 @@ function issuePort() {
   };
   return {
     database,
+    actor,
     calls,
     writes: () => writes,
     add: (row: any) => writes.push(row),
@@ -377,16 +381,17 @@ describe("book delivery orchestration", () => {
     await expect(
       api
         .createCaller({
-          user: { id: 5, role: "warehouse", isActive: 1 },
+          user: { id: 5, role: "admin", isActive: 1 },
         } as any)
         .purchaseOrders.deliverInventoryBook(issueInput())
     ).rejects.toThrow("تفعيل");
     expect(get).not.toHaveBeenCalled();
   });
-  it.each(["owner", "admin", "warehouse"])(
+  it.each(["owner", "admin"])(
     "allows %s through the actual book mutation while preserving actual identity",
     async role => {
       const port = issuePort();
+      port.actor.role = role;
       const write = vi.fn(
         async (
           _line: any,
@@ -416,6 +421,7 @@ describe("book delivery orchestration", () => {
     }
   );
   it.each([
+    "warehouse",
     "senior_management",
     "executive_director",
     "accountant",
@@ -455,6 +461,22 @@ describe("book delivery orchestration", () => {
       expect(get).not.toHaveBeenCalled();
     }
   );
+  it("rechecks current role/activity even before a saved retry and allows independent requests after denial", async () => {
+    const port = issuePort(), write = vi.fn(async () => ({}));
+    const api = router({ purchaseOrders: router({ deliverInventoryBook: createBookIssueProcedure(async()=>port.database,write,undefined,()=>true) }) });
+    const call = () => api.createCaller({user:{id:5,role:"admin",isActive:1}} as any).purchaseOrders.deliverInventoryBook(issueInput());
+    port.actor.role="warehouse"; await expect(call()).rejects.toMatchObject({code:"FORBIDDEN"}); expect(write).not.toHaveBeenCalled();
+    port.actor.role="admin"; await call(); expect(write).toHaveBeenCalledTimes(2);
+    port.actor.isActive=0; await expect(call()).rejects.toMatchObject({code:"FORBIDDEN"}); expect(write).toHaveBeenCalledTimes(2);
+    port.actor.isActive=1; await call(); expect(write).toHaveBeenCalledTimes(2);
+    expect(port.calls.filter(call=>call.sql.includes("FROM users"))).toHaveLength(4);
+  });
+  it("preserves warehouse capabilities for the existing single-lot and request-tab issue endpoints",()=>{
+    const warehouse={id:5,role:"warehouse",isActive:1};
+    expect(businessRpcAllowed(warehouse,"mutation","purchaseOrders.deliverInventoryBook")).toBe(false);
+    for(const path of ["purchaseOrders.deliverInventoryItem","ticketTeamExecution.issue","pmv2.warehouse.issueReadyRequirement","operationalIssues.issuePrepared"])
+      expect(businessRpcAllowed(warehouse,"mutation",path)).toBe(true);
+  });
   it("passes each physical allocation and the same transaction to the original writer and replays without double issue", async () => {
     const port = issuePort();
     const write = vi.fn(async (line: any, tx: any, callbacks: any[]) => {

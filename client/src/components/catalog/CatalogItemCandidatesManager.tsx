@@ -132,12 +132,18 @@ export default function CatalogItemCandidatesManager() {
   const [approvalCandidate, setApprovalCandidate] = useState<ItemCandidate | null>(null);
   const [form, setForm] = useState<ApprovalForm>(EMPTY_FORM);
   const [nodeSearch, setNodeSearch] = useState("");
+  const [candidateSearch, setCandidateSearch] = useState("");
 
   const {
     data: candidates = [],
     isLoading,
     refetch: refetchCandidates,
   } = trpc.catalog.itemCandidates.listPending.useQuery({ limit: 200 });
+  const candidateQuery = candidateSearch.trim().toLocaleLowerCase();
+  const visibleCandidates = (candidates as ItemCandidate[]).filter(candidate =>
+    !candidateQuery || [candidate.itemName, candidate.itemNameAr, candidate.itemNameEn]
+      .some(name => name?.toLocaleLowerCase().includes(candidateQuery))
+  );
 
   const { data: nodes = [] } = trpc.catalog.nodes.list.useQuery({ isActive: true });
   const { data: units = [] } = trpc.catalog.units.list.useQuery();
@@ -280,6 +286,7 @@ export default function CatalogItemCandidatesManager() {
       return;
     }
 
+    setCandidateSearch("");
     setHighlightedCandidateId(candidateId);
     window.setTimeout(() => {
       document.getElementById(`catalog-candidate-${candidateId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -389,19 +396,26 @@ export default function CatalogItemCandidatesManager() {
             أصناف استُلمت تشغيليًا كـ«صنف جديد» وتنتظر حسم Master Data. المراجعة هنا لا تعيد الاستلام ولا تغيّر الكميات أو التكلفة.
           </p>
         </div>
-        <Badge variant="outline" className="self-start sm:self-auto">{candidates.length} بانتظار المراجعة</Badge>
+        <Badge variant="outline" className="self-start sm:self-auto">{candidateQuery ? `${visibleCandidates.length} من ${candidates.length}` : candidates.length} بانتظار المراجعة</Badge>
       </div>
 
-      {candidates.length === 0 ? (
+      <div className="relative">
+        <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input type="search" aria-label="البحث في الأصناف الجديدة" value={candidateSearch}
+          onChange={event => setCandidateSearch(event.target.value)}
+          placeholder="ابحث باسم الصنف بالعربية أو الإنجليزية…" className="pr-9" />
+      </div>
+
+      {visibleCandidates.length === 0 ? (
         <Card>
           <CardContent className="py-14 text-center text-muted-foreground">
             <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-green-500" />
-            لا توجد أصناف جديدة بانتظار المراجعة.
+            {candidates.length === 0 ? "لا توجد أصناف جديدة بانتظار المراجعة." : "لا توجد أصناف مطابقة للبحث."}
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
-          {(candidates as ItemCandidate[]).map(candidate => {
+          {visibleCandidates.map(candidate => {
             const suggestions = suggestionsByCandidate[candidate.id] || [];
             const pendingDuplicates = pendingDuplicatesByCandidate[candidate.id] || [];
             return (

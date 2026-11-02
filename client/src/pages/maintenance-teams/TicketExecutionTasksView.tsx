@@ -6,6 +6,7 @@ import { Progress } from "@/components/ui/progress";
 import type { AssignedTeamTicket } from "@shared/maintenance-team-tickets/assignment";
 import { stageLabels } from "@shared/maintenance-team-tickets/model";
 import { TicketSequentialTasksView } from "./TicketSequentialTasksView";
+import { TicketReportMedia } from "./TicketReportMedia";
 
 /** Same task-card/detail layout as Pmv2MyTasks; the document identity remains a ticket. */
 export function TicketExecutionTasksView({ sequential = false, ...props }: {
@@ -40,11 +41,11 @@ function LegacyTicketExecutionTasksView({ tickets, language, renderExecution }: 
         {!tickets.length && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">{l("لا توجد تذاكر مسندة إلى فريقك.", "No team tickets assigned.", "آپ کی ٹیم کو کوئی ٹکٹ تفویض نہیں ہوا۔")}</div>}
         <div className="grid gap-3 md:grid-cols-2">{tickets.map(ticket => {
           const done = ["awaiting_review", "closed"].includes(ticket.stage);
-          return <button key={ticket.assignmentId} type="button" onClick={() => setSelectedId(ticket.assignmentId)} className={`rounded-xl border p-4 text-start transition ${selectedId === ticket.assignmentId ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}>
+          return <div key={ticket.assignmentId} className={`rounded-xl border p-4 transition ${selectedId === ticket.assignmentId ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}><button type="button" onClick={() => setSelectedId(ticket.assignmentId)} className="w-full text-start">
             <div className="flex items-start justify-between gap-3"><div><div className="font-semibold" dir="ltr">{ticket.ticketNumber}</div><div className="mt-1 flex items-start gap-1 text-sm text-muted-foreground"><MapPin className="mt-0.5 h-4 w-4 shrink-0" /><span>{ticket.siteName} / {ticket.sectionName}</span></div></div><Badge variant={done ? "secondary" : "outline"}>{ticket.executionInProgress ? l("قيد التنفيذ", "In progress", "کام جاری ہے") : labels[ticket.stage]}</Badge></div>
             <p className="mt-2 text-sm font-medium">{ticket.title}</p>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span className="flex items-center gap-1"><Users className="h-3.5 w-3.5" />{ticket.teamName}</span><span className="flex items-center gap-1"><Warehouse className="h-3.5 w-3.5" />{ticket.warehouseName}</span><span>{l("إنجاز التنفيذ", "Execution progress", "کام کی پیش رفت")}: {done ? "1 / 1" : "0 / 1"}</span></div><Progress value={done ? 100 : 0} className="mt-2 h-2" />
-          </button>;
+          </button><div className="mt-3"><TicketReportMedia media={ticket.reportMedia} language={language} /></div></div>;
         })}</div>
       </CardContent></Card>
     {selected && <Card id="ticket-selected-task"><CardHeader><CardTitle className="flex items-center gap-2 text-lg"><ClipboardList className="h-5 w-5" />{l("بنود التذكرة", "Ticket items", "ٹکٹ کی اشیاء")} <span dir="ltr">{selected.ticketNumber}</span></CardTitle><CardDescription>{selected.siteName} / {selected.sectionName}</CardDescription></CardHeader><CardContent className="space-y-4"><div className="rounded-lg border p-4"><h3 className="font-medium">{selected.title}</h3><p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{selected.description}</p><div className="mt-4">{renderExecution(selected)}</div></div><a href={`/tickets/${selected.ticketId}`} className="text-sm text-primary underline">{l("فتح بلاغ الصيانة", "Open maintenance ticket", "مرمت کا ٹکٹ کھولیں")}</a></CardContent></Card>}

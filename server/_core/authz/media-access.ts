@@ -11,6 +11,16 @@ export interface MediaAccessPort {
 }
 const denied = () => new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لفتح هذا الملف" });
 
+async function teamReportMediaReadable(user: MediaActor, ticketId: number, key?: string): Promise<boolean> {
+  if (!key || !["technician", "it_manager", "it_member"].includes(user.role)) return false;
+  const [{ getDb }, { canReadTeamReportMedia }] = await Promise.all([
+    import("../db/client"), import("../../maintenance-team-tickets/report-media"),
+  ]);
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر التحقق من وسائط البلاغ" });
+  return canReadTeamReportMedia(db, { id: user.id, role: user.role, active: user.isActive === 1 }, ticketId, key);
+}
+
 export function normalizeMediaKey(raw: unknown): string {
   if (typeof raw !== "string") throw denied();
   const key = raw.replace(/^\/+/, "");
@@ -118,8 +128,14 @@ export const mediaAccessPort: MediaAccessPort = {
         return;
       }
       const { assertCanAccessAttachments } = await import("../../routers/uploads/attachments.access");
-      await assertCanAccessAttachments(user, type, ref.parentId!);
-      return;
+      try {
+        await assertCanAccessAttachments(user, type, ref.parentId!);
+        return;
+      } catch (error) {
+        if (type === "ticket" && ref.parentId && error instanceof TRPCError && ["FORBIDDEN", "NOT_FOUND"].includes(error.code)
+          && await teamReportMediaReadable(user, ref.parentId, key)) return;
+        throw error;
+      }
     }
     if (ref.kind === "signature") { if (ref.ownerId !== user.id) throw denied(); return; }
     if (ref.kind === "reference") return;
@@ -149,8 +165,14 @@ export const mediaAccessPort: MediaAccessPort = {
         if (await isWaitingExternalWarehousePreparation(ticket.id)) return;
       }
       const { assertTicketReadable } = await import("../../routers/tickets/tickets.access");
-      await assertTicketReadable(user, ticket);
-      return;
+      try {
+        await assertTicketReadable(user, ticket);
+        return;
+      } catch (error) {
+        if (ref.kind === "ticket" && error instanceof TRPCError && ["FORBIDDEN", "NOT_FOUND"].includes(error.code)
+          && await teamReportMediaReadable(user, ticket.id, key)) return;
+        throw error;
+      }
     }
     if (ref.kind === "po") {
       const po = await db.getPurchaseOrderById(ref.parentId!);

@@ -36,6 +36,11 @@ export interface AssignmentTeam {
   warehouseType: string;
   memberCount: number;
 }
+export interface TicketReportMedia {
+  url: string;
+  type: "image" | "video";
+  name: string;
+}
 export interface AssignedTeamTicket {
   assignmentId: number;
   ticketId: number;
@@ -51,6 +56,7 @@ export interface AssignedTeamTicket {
   description: string;
   executionInProgress?: boolean;
   hasOpenVisit?: boolean;
+  reportMedia?: TicketReportMedia[];
   materialSections?: Array<"waiting" | "ready" | "returns">;
   materialNeeds?: Array<{
     needId: number;

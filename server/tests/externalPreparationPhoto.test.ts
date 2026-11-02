@@ -47,8 +47,12 @@ describe("warehouse external preparation initial photo only", () => {
     expect(mocks.execute).not.toHaveBeenCalled();
   });
   it.each(["accountant", "delegate", "technician", "operator"])("does not change access for %s", async role => {
+    if (role === "technician") mocks.execute.mockResolvedValueOnce([[]]);
     await expect(assertMediaAccess({ ...user, role }, key, port)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(mocks.execute).not.toHaveBeenCalled();
+    if (role === "technician") {
+      expect(mocks.execute).toHaveBeenCalledTimes(1);
+      expect(new MySqlDialect().sqlToQuery(mocks.execute.mock.calls[0][0]).sql).toContain("maintenance_team_members");
+    } else expect(mocks.execute).not.toHaveBeenCalled();
   });
   it.each(["admin", "owner"])("preserves %s access", async role => {
     await expect(assertMediaAccess({ ...user, role }, key, port)).resolves.toBe(key);

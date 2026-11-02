@@ -3,6 +3,7 @@ import { PlayCircle } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { TechnicianExecutionWindow } from "@/components/maintenance/TechnicianExecutionWindow";
+import { TicketReportMedia } from "./TicketReportMedia";
 import type { AssignedTeamTicket } from "@shared/maintenance-team-tickets/assignment";
 import { stageLabels } from "@shared/maintenance-team-tickets/model";
 import {
@@ -159,43 +160,63 @@ export function TicketSequentialTasksView({
                 ticketStepRecorded(item.stage)
               ).length;
               return (
-                <button
+                <div
                   key={ticket.ticketId}
-                  type="button"
-                  onClick={() =>
-                    open(
-                      items.find(item => !ticketStepRecorded(item.stage)) ??
-                        ticket
-                    )
-                  }
-                  className="rounded-xl border p-4 text-start transition hover:bg-muted/50"
+                  className="rounded-xl border p-4 transition hover:bg-muted/50"
                 >
-                  <p className="font-semibold" dir="ltr">
-                    {ticket.ticketNumber}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {ticket.siteName} / {ticket.sectionName}
-                  </p>
-                  <p className="mt-2 font-medium">{ticket.title}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {ticket.teamName} · {ticket.warehouseName}
-                  </p>
-                  <p className="mt-2 text-sm">
-                    {done} / {items.length}
-                  </p>
-                  <Progress
-                    value={(done / items.length) * 100}
-                    className="mt-2 h-2"
-                  />
-                  <span className="mt-3 inline-flex items-center gap-1 text-sm text-primary">
+                  <button
+                    key={ticket.ticketId}
+                    type="button"
+                    onClick={() =>
+                      open(
+                        items.find(item => !ticketStepRecorded(item.stage)) ??
+                          ticket
+                      )
+                    }
+                    className="w-full text-start"
+                  >
+                    <p className="font-semibold" dir="ltr">
+                      {ticket.ticketNumber}
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {ticket.siteName} / {ticket.sectionName}
+                    </p>
+                    <p className="mt-2 font-medium">{ticket.title}</p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {ticket.teamName} · {ticket.warehouseName}
+                    </p>
+                    <p className="mt-2 text-sm">
+                      {done} / {items.length}
+                    </p>
+                    <Progress
+                      value={(done / items.length) * 100}
+                      className="mt-2 h-2"
+                    />
+                  </button>
+                  <div className="mt-3">
+                    <TicketReportMedia
+                      media={ticket.reportMedia}
+                      language={language}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="mt-3 inline-flex items-center gap-1 text-sm text-primary"
+                    onClick={() =>
+                      open(
+                        items.find(item => !ticketStepRecorded(item.stage)) ??
+                          ticket
+                      )
+                    }
+                  >
                     <PlayCircle className="h-4 w-4" />
                     {l(
                       "بدء التنفيذ / متابعة",
                       "Start / continue execution",
                       "کام شروع / جاری رکھیں"
                     )}
-                  </span>
-                </button>
+                  </button>
+                </div>
               );
             })}
           </div>

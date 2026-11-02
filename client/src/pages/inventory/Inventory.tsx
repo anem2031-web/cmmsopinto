@@ -1,6 +1,7 @@
 import { InventoryBooks, loadBookLots } from "@/components/inventory/InventoryBooks";
 import { InventoryQuantitySummary } from "@/components/inventory/InventoryQuantitySummary";
 import { planBookFifo } from "@shared/inventory-book";
+import { isOwnerOrAdminRole } from "@shared/restricted-module-policy";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
 import { InventoryItemCard } from "@/components/inventory/InventoryItemCard";
@@ -465,6 +466,7 @@ export default function Inventory() {
     }, onError: (error: any) => toast.error(error.message),
   });
   const openBookDelivery = async (book: any, unit: string) => {
+    if (!isOwnerOrAdminRole(user?.role) || Number(user?.isActive) !== 1) return;
     try {
       const lots = await loadBookLots(input => utils.client.inventory.bookPages.query(input), book.id, Number(selectedWarehouseId));
       setFifoLots(lots); bookOperationKey.current = crypto.randomUUID();
@@ -742,7 +744,7 @@ export default function Inventory() {
 
       {selectedWarehouseId && lotsEnabled && <InventoryBooks layout="table" warehouseId={Number(selectedWarehouseId)} search={searchQuery} includeZero={!hideZeroStock} sort={sortBy} dateFrom={dateFrom} dateTo={dateTo}
         nodeIds={bookNodeIds}
-        onFifo={isWarehouse && lotsEnabled ? openBookDelivery : undefined}
+        onFifo={isOwnerOrAdminRole(user?.role) && Number(user?.isActive) === 1 && lotsEnabled ? openBookDelivery : undefined}
         onPick={isWarehouse && lotsEnabled ? async ({lot,page,master}) => {
           setDeliverItem({...page, quantity:Number(page.quantity), itemName:master.nameAr || master.nameEn});
           setDeliverQty("");setDeliverToId("");setDeliverNotes("");setDeliverCostAllocations([createIssueCostAllocationDraft()]);

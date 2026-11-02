@@ -2,6 +2,8 @@ import { sql, type SQL } from "drizzle-orm";
 import { ticketExecutionSession } from "../../../shared/maintenance-team-tickets/execution-session";
 import { TeamTicketError } from "../../../shared/maintenance-team-tickets/model";
 import { materialSupplyRemaining } from "../../../shared/maintenance-team-tickets/material-routing";
+import { ticketTeamQueueScope } from "./assignment-read-scope";
+import { loadTeamReportMedia } from "../../maintenance-team-tickets/report-media";
 import type {
   Snapshot,
   MaterialNeed,
@@ -254,12 +256,7 @@ export class SqlTicketTeamAssignmentRepository implements TeamAssignmentReposito
     options: { materialsOnly?: boolean } = {}
   ): Promise<AssignedTeamTicket[]> {
     const { db } = await this.load();
-    const scope =
-      actor.role === "technician"
-        ? sql`EXISTS (SELECT 1 FROM maintenance_team_members m INNER JOIN users u ON u.id=m.userId WHERE m.teamId=a.teamId AND m.userId=${actor.id} AND m.isActive=1 AND u.isActive=1 AND u.role='technician') AND t.isActive=1`
-        : ["it_manager", "it_member"].includes(actor.role)
-          ? sql`k.maintenanceResponsibleDepartment='maintenance_report_department_it' AND k.assignedToId=${actor.id} AND EXISTS (SELECT 1 FROM maintenance_team_members m INNER JOIN users u ON u.id=m.userId WHERE m.teamId=a.teamId AND m.userId=${actor.id} AND m.isActive=1 AND u.isActive=1 AND u.role IN ('it_manager','it_member')) AND t.isActive=1`
-          : sql`TRUE`;
+    const scope = ticketTeamQueueScope(actor);
     // Include received requests and completed executions too: their original-lot
     // returns may still need warehouse confirmation. No PMV2 task is fabricated.
     const materialScope = options.materialsOnly
@@ -279,12 +276,16 @@ export class SqlTicketTeamAssignmentRepository implements TeamAssignmentReposito
     if (!options.materialsOnly && actor.role === "warehouse") return tickets;
     if (!options.materialsOnly) {
       const ids = sql.join(tickets.map(t => sql`${t.assignmentId}`), sql`,`);
-      const history = rows(await db.execute(sql`SELECT id,assignmentId,actorId,kind,CASE WHEN kind IN ('execution_started','execution_resumed','execution_joined','visit_ended') THEN note ELSE '' END AS note,revision,operationKey,createdAt FROM ticket_team_actions WHERE assignmentId IN (${ids}) AND kind IN ('execution_protocol','execution_started','execution_resumed','execution_joined','visit_ended','ok','fixed','blocked','external','materials_started','needs_material','return_to_team','external_handover','approve_result') ORDER BY assignmentId,revision`)).map(x => ({
+      const [historyRows, reportMedia] = await Promise.all([
+        db.execute(sql`SELECT id,assignmentId,actorId,kind,CASE WHEN kind IN ('execution_started','execution_resumed','execution_joined','visit_ended') THEN note ELSE '' END AS note,revision,operationKey,createdAt FROM ticket_team_actions WHERE assignmentId IN (${ids}) AND kind IN ('execution_protocol','execution_started','execution_resumed','execution_joined','visit_ended','ok','fixed','blocked','external','materials_started','needs_material','return_to_team','external_handover','approve_result') ORDER BY assignmentId,revision`),
+        loadTeamReportMedia(db, actor, tickets),
+      ]);
+      const history = rows(historyRows).map(x => ({
         id: Number(x.id), assignmentId: Number(x.assignmentId), actorId: Number(x.actorId), kind: String(x.kind), note: String(x.note), revision: Number(x.revision), operationKey: String(x.operationKey), at: x.createdAt instanceof Date ? x.createdAt.toISOString() : String(x.createdAt),
       }));
       return tickets.map(t => {
         const session = ticketExecutionSession({ actions: history }, { id: t.assignmentId, stage: t.stage });
-        return { ...t, executionInProgress: session.working, hasOpenVisit: !!session.openVisit };
+        return { ...t, reportMedia: reportMedia.get(t.assignmentId) || [], executionInProgress: session.working, hasOpenVisit: !!session.openVisit };
       });
     }
     const needs = rows(

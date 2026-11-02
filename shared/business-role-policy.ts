@@ -99,7 +99,7 @@ const warehouseMutations = [
   ...paths("warehouseIssueBatches", "resolveLot create"),
   ...paths("warehouse", "create confirmDeliveryToWarehouse confirmDeliveryToRequester"),
   "transfers.resolveLot", "transfers.createBatch", "disposal.resolveLot", "disposal.create",
-  ...paths("purchaseOrders", "confirmDeliveryToRequester incrementPrintCount confirmDeliveryToWarehouse deliverInventoryItem deliverInventoryBook"),
+  ...paths("purchaseOrders", "confirmDeliveryToRequester incrementPrintCount confirmDeliveryToWarehouse deliverInventoryItem"),
   ...paths("operationalIssues", "addToPurchaseDraft approve issue returnMaterial createPrepared issuePrepared"),
   ...paths("ticketTeamExecution", "prepareSupply issue transferFromForm request resolve provide purchaseReceipt returnMaterial"),
   ...paths("pmv2.warehouse", "resolveMaterialIdentity prepareTransferHandoff preparePurchaseHandoff linkPurchaseOrder linkConfirmedTransfers issueReadyRequirement linkConfirmedDelivery confirmPendingReturn"),

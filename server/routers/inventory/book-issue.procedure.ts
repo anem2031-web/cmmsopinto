@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { warehouseProcedure } from "../_shared/procedures";
+import { adminOwnerProcedure } from "../_shared/procedures";
+import { sql } from "drizzle-orm";
+import { isOwnerOrAdminRole } from "../../../shared/restricted-module-policy";
 import { issueCostAllocationsSchema } from "./issue-cost-allocation.schema";
 import { issueInventoryBook } from "../../services/inventory-book-issue";
 import { isInventoryLotsEnabled } from "../../_core/inventory-lots";
@@ -26,7 +28,7 @@ export function createBookIssueProcedure(
   finishLine?: (snapshot: any, ctx: any) => Promise<any>,
   lotsEnabled: () => boolean = isInventoryLotsEnabled
 ) {
-  return warehouseProcedure
+  return adminOwnerProcedure
     .input(
       inventoryDeliveryInput
         .omit({ inventoryId: true, lotTrackingToken: true })
@@ -37,8 +39,11 @@ export function createBookIssueProcedure(
         })
     )
     .mutation(async ({ input, ctx }) => {
-      if (Number(ctx.user.isActive) !== 1)
+      const actor = ctx.authenticatedUser ?? ctx.user;
+      if (Number(actor.isActive) !== 1)
         throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
+      if (!isOwnerOrAdminRole(actor.role))
+        throw new TRPCError({ code: "FORBIDDEN", message: "الصرف من دفتر المخزون متاح للمالك ومدير النظام فقط" });
       if (!lotsEnabled())
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -50,10 +55,17 @@ export function createBookIssueProcedure(
       return issueInventoryBook(
         database,
         input,
-        ctx.user.id,
+        actor.id,
         (line, tx, callbacks) =>
           deliverLine(line, ctx, tx, callbacks, markedPurchaseItems),
-        finishLine ? snapshot => finishLine(snapshot, ctx) : undefined
+        finishLine ? snapshot => finishLine(snapshot, ctx) : undefined,
+        async tx => {
+          const [users] = await tx.execute(sql`SELECT id,role,isActive FROM users WHERE id=${actor.id} LIMIT 1 FOR UPDATE`);
+          const current = users[0];
+          if (!current || Number(current.id) !== actor.id || Number(current.isActive) !== 1 || !isOwnerOrAdminRole(current.role)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "الصرف من دفتر المخزون متاح للمالك ومدير النظام فقط" });
+          }
+        }
       );
     });
 }

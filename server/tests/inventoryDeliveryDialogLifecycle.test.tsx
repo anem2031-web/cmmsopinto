@@ -28,7 +28,7 @@ vi.mock("react", async original => ({
   },
 }));
 vi.mock("../../client/src/_core/hooks/useAuth", () => ({
-  useAuth: () => ({ user: { id: 1, role: state.role } }),
+  useAuth: () => ({ user: { id: 1, role: state.role, isActive: 1 } }),
 }));
 vi.mock("wouter", () => ({ useLocation: () => ["/inventory", vi.fn()] }));
 vi.mock("../../client/src/contexts/LanguageContext", () => ({
@@ -185,6 +185,7 @@ it("keeps the selected-lot requirement and renders safely after cancellation and
   expect(confirm().disabled).toBe(true);
 });
 it("keeps FIFO delivery available after choosing a book and renders safely after closing it", async () => {
+  state.role = "admin";
   render();
   state.selects[0].onValueChange("1");
   render();
@@ -194,4 +195,12 @@ it("keeps FIFO delivery available after choosing a book and renders safely after
   cancelDelivery();
   expect(render()).toContain("دفاتر المخزون");
   expect(confirm()).toBeUndefined();
+});
+it.each(["warehouse","senior_management","observer","accountant","technician"])("hides the inventory issue column action for %s while preserving the book reader",role=>{
+  state.role=role;render();state.selects[0].onValueChange("1");render();
+  expect(state.book.onFifo).toBeUndefined();
+  if(role==="warehouse")expect(state.book.onPick).toBeTypeOf("function");
+});
+it.each(["owner","admin"])("keeps the inventory issue column action for %s",role=>{
+  state.role=role;render();state.selects[0].onValueChange("1");render();expect(state.book.onFifo).toBeTypeOf("function");
 });

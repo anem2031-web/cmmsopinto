@@ -12,7 +12,8 @@ export async function issueInventoryBook(
     tx: any,
     afterCommit: Array<() => Promise<any>>
   ) => Promise<any>,
-  resumeEffects?: (snapshot: any) => Promise<any>
+  resumeEffects?: (snapshot: any) => Promise<any>,
+  authorize?: (tx: any) => Promise<void>
 ) {
   if (
     input.costAllocations?.some(
@@ -28,6 +29,7 @@ export async function issueInventoryBook(
   let pendingEffects: any[] = [];
   let effectsComplete = false;
   const result = await database.transaction(async (tx: any) => {
+    await authorize?.(tx);
     afterCommit.length = 0;
     pendingEffects = [];
     effectsComplete = false;
