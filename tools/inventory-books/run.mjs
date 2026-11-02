@@ -4,6 +4,7 @@ const files = [
   "server/tests/inventoryBooks.test.ts",
   "server/tests/inventoryBookSql.test.ts",
   "server/tests/inventoryBooksUi.test.tsx",
+  "server/tests/inventoryDeliveryDialogLifecycle.test.tsx",
   "server/tests/inventoryCosting.test.ts",
   "server/tests/receiptInventoryIdentityGovernance.test.ts",
   "server/tests/inventoryCountUnifiedSearch.test.ts",

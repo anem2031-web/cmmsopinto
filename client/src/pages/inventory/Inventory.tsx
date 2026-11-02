@@ -1144,6 +1144,7 @@ export default function Inventory() {
               )}
             </div>
           )}
+          {deliverItem && (
           <DialogFooter>
             <Button variant="outline" onClick={() => { setDeliverItem(null); setDeliverLotInfo(null); setDeliverCostAllocations([createIssueCostAllocationDraft()]); setLotCodeSearch(""); }}>إلغاء</Button>
             <Button
@@ -1198,6 +1199,7 @@ export default function Inventory() {
               تأكيد التسليم
             </Button>
           </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
 
