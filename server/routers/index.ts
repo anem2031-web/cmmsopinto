@@ -1,4 +1,4 @@
-import { delegatePricingBundlesRouter } from "./delegate-pricing-bundles";
+import { delegatePricingBundlesRouter, approvedPricingDocumentsRouter } from "./delegate-pricing-bundles";
 import { router } from "./_shared/procedures";
 import { operationalIssuesRouter } from "./operational-issues";
 import { maintenanceTeamsRouter, ticketTeamAssignmentsRouter, ticketTeamExecutionRouter } from "./maintenance-teams";
@@ -92,6 +92,7 @@ export const appRouter = router({
   tickets: ticketsMergedRouter,
   operationalIssues: operationalIssuesRouter,
   delegatePricingBundles: delegatePricingBundlesRouter,
+  approvedPricingDocuments: approvedPricingDocumentsRouter,
 
 purchaseOrders: router({
   ...purchaseOrdersRouter._def.procedures,

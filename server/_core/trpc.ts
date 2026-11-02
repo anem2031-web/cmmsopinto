@@ -16,6 +16,7 @@ import { redactUserSecrets } from "../../shared/user-response";
 import { assertDelegateDirectoryRpc } from "./authz/delegate-directory-guard";
 import { assertGateSecurityRpc, assertGateSecurityResourceAccess } from "./authz/gate-security-guard";
 import { isOwnerAdminOnlyRpc, isOwnerOrAdminRole } from "../../shared/restricted-module-policy";
+import { approvedPricingDocumentRpcAllowed } from "../../shared/approved-pricing-documents";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -124,6 +125,17 @@ const requireUser = t.middleware(async opts => {
 });
 
 export const protectedProcedure = baseProcedure.use(requireUser);
+
+/** Separate closed capability for the two named accounts and owner/admin.
+ * It grants only the final-document reader, never a purchasing role/projection.
+ * The document service rechecks the current account and full approval scope. */
+export const approvedPricingDocumentProcedure = t.procedure.use(responseGuard).use(requireUser).use(t.middleware(opts => {
+  const actor = opts.ctx.authenticatedUser ?? opts.ctx.user;
+  if (!approvedPricingDocumentRpcAllowed(actor, opts.type, opts.path)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية حزم التسعير المعتمدة" });
+  }
+  return opts.next({ ctx: { ...opts.ctx, user: actor! } });
+}));
 
 export const adminProcedure = baseProcedure.use(
   t.middleware(async opts => {

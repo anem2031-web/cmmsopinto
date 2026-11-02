@@ -48,6 +48,7 @@ import { useTranslation } from "@/contexts/LanguageContext";
 import LanguageSwitcher from "@/components/common/LanguageSwitcher";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { canRoleAccessPath } from "@shared/roles";
+import { canReadApprovedPricingDocuments, approvedPricingDocumentPageAllowed } from "@shared/approved-pricing-documents";
 import { isObserver } from "@shared/observer-policy";
 import { ObserverReadOnlyBoundary } from "@/components/system/ObserverReadOnlyBoundary";
 
@@ -581,7 +582,9 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
   const role = user?.role || "user";
 
   // Prevent direct-URL access to modules explicitly removed from the derived roles.
-  const canAccessCurrentPath = !authLoading && canRoleAccessPath(role, location);
+  const approvedDocumentsAccess = canReadApprovedPricingDocuments(user);
+  const canAccessCurrentPath = !authLoading && (canRoleAccessPath(role, location)
+    || approvedPricingDocumentPageAllowed(user, location));
   useEffect(() => {
     if (authLoading || canAccessCurrentPath) return;
     const fallback = role === "technician"
@@ -598,16 +601,17 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
   // ── Build visible sections with translated labels ──
   const permittedSections = useMemo(() => {
     return NAV_SECTIONS
-      .filter(s => canSeeSection(s, role))
+      .filter(s => canSeeSection(s, role) || approvedDocumentsAccess && s.id === "purchasing")
       .map(s => ({
         ...s,
         label: getNestedValue(t, s.labelKey),
         items: s.items
-          .filter(item => canSeeItem(item, role) && canRoleAccessPath(role, item.path))
+          .filter(item => canSeeItem(item, role) && canRoleAccessPath(role, item.path)
+            || approvedDocumentsAccess && item.path === "/documents")
           .map(item => ({ ...item, label: getNestedValue(t, item.labelKey) })),
       }))
       .filter(s => s.items.length > 0);
-  }, [t, role]);
+  }, [t, role, approvedDocumentsAccess]);
 
   const permittedItemsByPath = useMemo(() => new Map(
     permittedSections.flatMap(section => section.items).map(item => [item.path, item]),

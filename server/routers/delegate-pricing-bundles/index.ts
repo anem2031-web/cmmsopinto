@@ -9,7 +9,9 @@ import { UnifiedBundleApprovalService } from "../../services/delegate-pricing-bu
 import { unifiedBundleApprovalsEnabled } from "../../services/delegate-pricing-bundles/unified-feature";
 import { syncPathBTicketFromPurchaseOrder } from "../purchase/ticket-purchase-workflow";
 import { sql } from "drizzle-orm";
-export const delegatePricingBundlesRouter = createPricingBundlesRouter({
+import type { PricingBundlePorts } from "../../services/delegate-pricing-bundles/service";
+import { createApprovedPricingDocumentsRouter } from "./approved-reader.router";
+const pricingBundlePorts: PricingBundlePorts = {
   database: async () => { const database = await db.getDb(); if (!database) throw new Error("قاعدة البيانات غير متاحة"); return database; },
   submitPO: submitPricedBatchForPO,
   createPackageSubmission: db.createPurchasePackageSubmission,
@@ -30,4 +32,6 @@ export const delegatePricingBundlesRouter = createPricingBundlesRouter({
     }
     await finalizePricedBatchForPO(poId, actor, po, batchId, batch.batchNumber, items);
   },
-}, pricingBundlesEnabled);
+};
+export const delegatePricingBundlesRouter = createPricingBundlesRouter(pricingBundlePorts, pricingBundlesEnabled);
+export const approvedPricingDocumentsRouter = createApprovedPricingDocumentsRouter(pricingBundlePorts, pricingBundlesEnabled);

@@ -33,6 +33,8 @@ import { canOpenApprovalPdf, approvalPdfNotice, type ApprovalPdfPermission } fro
 import { downloadPricingBundlePdf } from "@/lib/downloadPricingBundlePdf";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { canReadPricingBundles, type PricingBundleRow } from "@shared/delegate-pricing-bundles";
+import { canReadApprovedPricingDocuments, EXISTING_DOCUMENT_CENTER_ROLES, APPROVED_PRICING_DOCUMENT_TITLE } from "@shared/approved-pricing-documents";
+import ApprovedPricingDocuments from "./documents/ApprovedPricingDocuments";
 
 type DocType = "purchase_order" | "receipt" | "delivery" | "warehouse_issue" | "return" | "disposal" | "count" | "settlement" | "delegate_pricing_documents" | "po_financial_batch" | "delegate_pricing_bundle";
 
@@ -82,6 +84,22 @@ function formatFinancialGrandTotal(value: string | number | null | undefined) {
 const listRows = (data: any): any[] => Array.isArray(data) ? data : data?.rows || [];
 
 export default function DocumentsCenter() {
+  const { user } = useAuth();
+  const allowed = canReadApprovedPricingDocuments(user);
+  const hasExisting = EXISTING_DOCUMENT_CENTER_ROLES.includes(user?.role || "");
+  const [selection, setSelection] = useState<"existing" | "approved">("existing");
+  if (!allowed) return <ExistingDocumentsCenter />;
+  const approved = !hasExisting || selection === "approved";
+  return <div className="space-y-5">
+    <div className="flex flex-wrap gap-2" role="tablist" aria-label="أنواع المستندات">
+      {hasExisting && <Button role="tab" aria-selected={!approved} variant={!approved ? "default" : "outline"} onClick={() => setSelection("existing")}>المستندات الحالية</Button>}
+      <Button role="tab" aria-selected={approved} variant={approved ? "default" : "outline"} onClick={() => setSelection("approved")}>{APPROVED_PRICING_DOCUMENT_TITLE}</Button>
+    </div>
+    {approved ? <ApprovedPricingDocuments /> : <ExistingDocumentsCenter />}
+  </div>;
+}
+
+function ExistingDocumentsCenter() {
   const { user } = useAuth();
   const role = (user?.role as string) || "";
   // الحسابات ترى الأنواع المالية الثلاثة فقط؛ لا تُجلب مستندات المخزون لها.
