@@ -44,9 +44,10 @@ import DocumentsCenter from "../../client/src/pages/DocumentsCenter";
 describe("Approval document UI boundaries", () => {
   beforeEach(() => { state.role = "accountant"; state.approved = false; state.calls = []; });
 
-  it("shows the accountant's three financial tabs and structured review while hiding all PDF actions before approval", () => {
+  it("groups the accountant's permitted document types while hiding all PDF actions before approval", () => {
     const html = renderToStaticMarkup(<DocumentsCenter />);
-    for (const text of ["وثائق التسعير الصادرة من المندوبين", "الوثائق المالية المعتمدة", "حزم التسعير", "FINANCIAL.pdf", "بيانات المعاملة"]) expect(html).toContain(text);
+    for (const text of ["الشراء والتسعير", "الوثائق المالية المعتمدة", "اعتمادات طلبات وحزم الشراء", "FINANCIAL.pdf", "بيانات المعاملة"]) expect(html).toContain(text);
+    expect(html).not.toContain("مستندات المستودع");expect(html).not.toContain("المستندات الحالية");
     expect(html).not.toContain("PRICING.pdf"); expect(html).not.toContain("DPB-SENT-003");
     expect(html).toContain('href="/purchase-orders/101"');
     expect(html).not.toContain('title="عرض PDF"');
@@ -84,7 +85,7 @@ describe("Approval document UI boundaries", () => {
     const source = readFileSync("client/src/pages/DocumentsCenter.tsx", "utf8");
     expect(source).not.toContain('row.type !== "po_financial_batch" || role === "accountant" || role === "senior_management"');
     expect(source).toContain('title="تنزيل PDF"');
-    expect(source).toContain('row.type === "po_financial_batch" && "تنزيل PDF"');
+    expect(source).toContain('onClick={() => handleDownloadPdf(row)}');
   });
 
   it("keeps senior-management inventory documents usable while financial PDFs await its approval", () => {
@@ -111,7 +112,8 @@ describe("Approval document UI boundaries", () => {
     const active = state.calls.filter(call => call.enabled);
     expect(active).toHaveLength(1);
     expect(active[0]).toMatchObject({ path: "attachments.listByType", input: { entityType: "po_financial_batch", pagination: { page: 1, pageSize: 20 } } });
-    expect(html).toContain("—");
+    expect(html).toContain("1 مستند مطابق");
+    expect(html).not.toContain("مرات الطباعة");
   });
   it("keeps the delegate restricted to its pricing document page", () => {
     state.role = "delegate";

@@ -11,14 +11,11 @@ import { useState, useMemo, useEffect } from "react";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  FileStack, Search, RefreshCw, Printer, ShoppingCart, PackageCheck,
-  Truck, RotateCcw, Trash2, ClipboardCheck, Scale, Eye, Download, Landmark, FileText,
+  FileStack, Printer, Eye, Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { buildReceiptHtml } from "@/lib/printReceiptDocument";
@@ -33,10 +30,11 @@ import { canOpenApprovalPdf, approvalPdfNotice, type ApprovalPdfPermission } fro
 import { downloadPricingBundlePdf } from "@/lib/downloadPricingBundlePdf";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { canReadPricingBundles, type PricingBundleRow } from "@shared/delegate-pricing-bundles";
-import { canReadApprovedPricingDocuments, EXISTING_DOCUMENT_CENTER_ROLES, APPROVED_PRICING_DOCUMENT_TITLE } from "@shared/approved-pricing-documents";
 import ApprovedPricingDocuments from "./documents/ApprovedPricingDocuments";
+import { documentCenterSections, defaultDocumentKind, type DocumentKind, type ExistingDocumentKind } from "@/lib/documentCenterNavigation";
+import DocumentFilters from "@/components/documents/DocumentFilters";
 
-type DocType = "purchase_order" | "receipt" | "delivery" | "warehouse_issue" | "return" | "disposal" | "count" | "settlement" | "delegate_pricing_documents" | "po_financial_batch" | "delegate_pricing_bundle";
+type DocType = ExistingDocumentKind;
 
 type DocRow = ApprovalPdfPermission & {
   type: DocType;
@@ -50,22 +48,6 @@ type DocRow = ApprovalPdfPermission & {
   status?: string;
   purchaseOrders?: { id: number; poNumber: string }[];
   reviewUrl?: string | null;
-};
-
-const TYPE_META: Record<DocType, { label: string; icon: any; color: string }> = {
-  purchase_order: { label: "طلب شراء",      icon: ShoppingCart,   color: "bg-indigo-100 text-indigo-700 border-indigo-200" },
-  receipt:        { label: "سند استلام",    icon: PackageCheck,   color: "bg-green-100 text-green-700 border-green-200" },
-  delivery:       { label: "سند تسليم",     icon: Truck,          color: "bg-blue-100 text-blue-700 border-blue-200" },
-  warehouse_issue:{ label: "سند صرف مخزني", icon: Truck,          color: "bg-cyan-100 text-cyan-800 border-cyan-200" },
-  return:         { label: "سند مرتجع",     icon: RotateCcw,      color: "bg-orange-100 text-orange-700 border-orange-200" },
-  disposal:       { label: "عملية استبعاد", icon: Trash2,         color: "bg-red-100 text-red-700 border-red-200" },
-  count:          { label: "عملية جرد",     icon: ClipboardCheck, color: "bg-teal-100 text-teal-700 border-teal-200" },
-  settlement:     { label: "تسوية جرد",     icon: Scale,          color: "bg-purple-100 text-purple-700 border-purple-200" },
-  // آخر عنصر بالقائمة = أقصى اليسار بصف الفلاتر (الصفحة RTL) — طلب صريح من
-  // صاحب المشروع (2026-08-10): "جوار طلب الشراء من اليسار"، لا قسم منفصل.
-  delegate_pricing_documents: { label: "وثائق التسعير الصادرة من المندوبين", icon: FileText, color: "bg-sky-100 text-sky-700 border-sky-200" },
-  po_financial_batch: { label: "الوثائق المالية المعتمدة", icon: Landmark, color: "bg-emerald-100 text-emerald-700 border-emerald-200" },
-  delegate_pricing_bundle: { label: "حزم التسعير", icon: FileStack, color: "bg-violet-100 text-violet-700 border-violet-200" },
 };
 
 function relativeOrDate(d: any) {
@@ -85,21 +67,23 @@ const listRows = (data: any): any[] => Array.isArray(data) ? data : data?.rows |
 
 export default function DocumentsCenter() {
   const { user } = useAuth();
-  const allowed = canReadApprovedPricingDocuments(user);
-  const hasExisting = EXISTING_DOCUMENT_CENTER_ROLES.includes(user?.role || "");
-  const [selection, setSelection] = useState<"existing" | "approved">("existing");
-  if (!allowed) return <ExistingDocumentsCenter />;
-  const approved = !hasExisting || selection === "approved";
-  return <div className="space-y-5">
-    <div className="flex flex-wrap gap-2" role="tablist" aria-label="أنواع المستندات">
-      {hasExisting && <Button role="tab" aria-selected={!approved} variant={!approved ? "default" : "outline"} onClick={() => setSelection("existing")}>المستندات الحالية</Button>}
-      <Button role="tab" aria-selected={approved} variant={approved ? "default" : "outline"} onClick={() => setSelection("approved")}>{APPROVED_PRICING_DOCUMENT_TITLE}</Button>
+  const sections = documentCenterSections(user);
+  const [selection, setSelection] = useState<DocumentKind | undefined>(()=>defaultDocumentKind(user,sections));
+  const selected = sections.some(section=>section.types.some(type=>type.key===selection))?selection:defaultDocumentKind(user,sections);
+  const section = sections.find(section=>section.types.some(type=>type.key===selected));
+  const selectedLabel = section?.types.find(type=>type.key===selected)?.label;
+  if (!section || !selected) return <p role="status">لا توجد مستندات متاحة لهذا الحساب.</p>;
+  return <div className="space-y-5" dir="rtl">
+    <div><h1 className="text-2xl font-bold flex items-center gap-2"><FileStack className="w-6 h-6 text-primary" />مركز المستندات</h1><p className="text-sm text-muted-foreground mt-1">اختر القسم ونوع المستند للاستعراض أو التنزيل أو الطباعة.</p></div>
+    <div className="flex flex-wrap gap-2" role="tablist" aria-label="أقسام مركز المستندات">
+      {sections.map(item=><Button key={item.id} role="tab" aria-selected={item.id===section.id} variant={item.id===section.id?"default":"outline"} onClick={()=>setSelection(item.types[0].key)}>{item.label}</Button>)}
     </div>
-    {approved ? <ApprovedPricingDocuments /> : <ExistingDocumentsCenter />}
+    <div className="max-w-sm space-y-1"><span className="text-sm font-medium">نوع المستند</span><Select value={selected} onValueChange={value=>setSelection(value as DocumentKind)}><SelectTrigger aria-label="نوع المستند"><SelectValue>{selectedLabel}</SelectValue></SelectTrigger><SelectContent>{section.types.map(type=><SelectItem key={type.key} value={type.key}>{type.label}</SelectItem>)}</SelectContent></Select></div>
+    {selected === "approved_pricing_bundle" ? <ApprovedPricingDocuments embedded /> : <ExistingDocumentsCenter key={selected} typeFilter={selected} />}
   </div>;
 }
 
-function ExistingDocumentsCenter() {
+function ExistingDocumentsCenter({typeFilter}: {typeFilter:DocType}) {
   const { user } = useAuth();
   const role = (user?.role as string) || "";
   // الحسابات ترى الأنواع المالية الثلاثة فقط؛ لا تُجلب مستندات المخزون لها.
@@ -110,9 +94,6 @@ function ExistingDocumentsCenter() {
   const canViewGeneralDocs = !isAccountantOnly && !isDelegateOnly;
 
   const [search, setSearch] = useState("");
-  const [selectedType, setTypeFilter] = useState<DocType | "all">(() => isAccountantOnly ? "po_financial_batch" : isDelegateOnly ? "delegate_pricing_documents" : "purchase_order");
-  const typeFilter = isDelegateOnly ? "delegate_pricing_documents"
-    : isAccountantOnly && !["po_financial_batch", "delegate_pricing_documents", "delegate_pricing_bundle"].includes(selectedType) ? "po_financial_batch" : selectedType;
   const [dateFrom, setDateFrom] = useState("");
   // فلترة "الوثائق المالية المعتمدة" حسب المندوب — الجزء 2 (2026-08-10)
   const [delegateFilter, setDelegateFilter] = useState<string>("all");
@@ -126,7 +107,7 @@ function ExistingDocumentsCenter() {
   const pagination = { page, pageSize: PAGE_SIZE, search: debouncedSearch,
     dateFrom: dateFrom || undefined, dateTo: dateTo || undefined,
     delegateId: delegateFilter === "all" ? undefined : Number(delegateFilter), sort };
-  const wants = (type: DocType) => !!user && (typeFilter === "all" || typeFilter === type);
+  const wants = (type: DocType) => !!user && typeFilter === type;
   const [printingKey, setPrintingKey] = useState<string | null>(null);
   const [viewingKey, setViewingKey] = useState<string | null>(null);
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
@@ -164,21 +145,10 @@ function ExistingDocumentsCenter() {
   const canViewBundles = !!user && !isDelegateOnly && role !== "observer" && canReadPricingBundles(user);
   const bundleStatusQ = trpc.delegatePricingBundles.status.useQuery(undefined, { enabled: canViewBundles && wants("delegate_pricing_bundle"), retry: false });
   const bundlesEnabled = canViewBundles && bundleStatusQ.data?.enabled === true;
-  const bundlesAllQ = trpc.delegatePricingBundles.list.useQuery(undefined, { enabled: bundlesEnabled && typeFilter === "all", retry: false });
   const bundlesPageQ = trpc.delegatePricingBundles.listPage.useQuery(pagination, { enabled: bundlesEnabled && typeFilter === "delegate_pricing_bundle", retry: false });
-  const bundlesQ = typeFilter === "all" ? bundlesAllQ : bundlesPageQ;
+  const bundlesQ = bundlesPageQ;
   const bundleDetailQ = trpc.delegatePricingBundles.detail.useQuery({ id: selectedBundleId || 0 }, { enabled: !!selectedBundleId && bundlesEnabled, retry: false });
-  const bundlePdf = trpc.delegatePricingBundles.pdf.useMutation({
-    onSuccess: result => { try { downloadPricingBundlePdf(result); } catch { toast.error("تعذر تنزيل الملف"); } },
-    onError: error => toast.error(error.message),
-  });
-
-  // تُبقي زر "الوثائق المالية المعتمدة" ظاهرًا كمُحدَّد لدور الحسابات — تجميلي
-  // فقط، النتيجة المعروضة صحيحة أصلًا حتى بلا هذا (سطر واحد ممكن دون تأثير وظيفي).
-  useEffect(() => {
-    if (isAccountantOnly) setTypeFilter("po_financial_batch");
-    else if (isDelegateOnly) setTypeFilter("delegate_pricing_documents");
-  }, [isAccountantOnly, isDelegateOnly]);
+  const bundlePdf = trpc.delegatePricingBundles.pdf.useMutation();
 
   const queryEntries = [
     ["purchase_order", poQ, canViewGeneralDocs], ["receipt", receiptsQ, canViewGeneralDocs],
@@ -191,7 +161,7 @@ function ExistingDocumentsCenter() {
   ] as const;
   const activeQueries = queryEntries.filter(([type, , allowed]) => allowed && wants(type)).map(([, query]) => query);
   const loadingBundles = wants("delegate_pricing_bundle") && canViewBundles && bundleStatusQ.isLoading;
-  // "All" renders completed lists immediately while the remaining lists load.
+  // Keep the selected list visible while its supporting status query loads.
   const pendingLists = loadingBundles || activeQueries.some(query => query.isLoading);
   const isLoading = pendingLists && activeQueries.every(query => query.data === undefined);
   const activeError = activeQueries.some(query => query.error) || (wants("delegate_pricing_bundle") && !!bundleStatusQ.error);
@@ -279,7 +249,7 @@ function ExistingDocumentsCenter() {
     const from = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
     const to   = dateTo   ? new Date(`${dateTo}T23:59:59.999`) : null;
     let list = rows.filter(r => {
-      if (typeFilter !== "all" && r.type !== typeFilter) return false;
+      if (r.type !== typeFilter) return false;
       // فلترة المندوب — تنطبق فقط على نوع "الوثائق المالية المعتمدة"
       if (["po_financial_batch", "delegate_pricing_documents", "delegate_pricing_bundle"].includes(r.type) && delegateFilter !== "all") {
         if (String(r.delegateId ?? "") !== delegateFilter) return false;
@@ -300,15 +270,6 @@ function ExistingDocumentsCenter() {
     });
     return list;
   }, [rows, search, typeFilter, delegateFilter, dateFrom, dateTo, sort, paginated]);
-
-  const counts = useMemo(() => {
-    const c: Record<string, number | undefined> = {};
-    queryEntries.forEach(([type, query]) => {
-      if (query.data !== undefined) c[type] = Array.isArray(query.data) ? listRows(query.data).filter(row => type !== "delegate_pricing_bundle" || row.status !== "open").length : query.data.count;
-    });
-    if (typeFilter === "all" && !pendingLists && !activeError) c.all = rows.length;
-    return c;
-  }, [rows, typeFilter, pendingLists, activeError, financialDocsQ.data, delegatePricingDocsQ.data, bundlesQ.data]);
 
   const resultCount = serverPage?.total ?? filtered.length;
   const visiblePage = serverPage?.page ?? page;
@@ -402,12 +363,27 @@ function ExistingDocumentsCenter() {
   const getArchivedDocUrl = (row: DocRow): string => getArchivedDoc(row).fileUrl as string;
   const rowPdfAllowed = (row: DocRow) => role !== "observer" && (!["purchase_order", "po_financial_batch", "delegate_pricing_documents", "delegate_pricing_bundle"].includes(row.type) || canOpenApprovalPdf(role, row));
 
+  const openBundlePdf = async (id:number) => {
+    const preview = window.open("", "_blank");
+    if(!preview)throw Error("اسمح بفتح النوافذ لعرض الوثيقة وطباعتها");
+    preview.opener=null;
+    try {
+      const file=await bundlePdf.mutateAsync({id,approvedDocument:role!=="delegate"});
+      const bytes=Uint8Array.from(atob(file.content),char=>char.charCodeAt(0));
+      const url=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}));
+      preview.location.replace(url);setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }catch(error){preview.close();throw error;}
+  };
+  const downloadBundlePdf = async (id:number) => downloadPricingBundlePdf(await bundlePdf.mutateAsync({id,approvedDocument:role!=="delegate"}));
+
   const handlePrint = async (row: DocRow) => {
     if (!rowPdfAllowed(row)) return toast.error(approvalPdfNotice());
     const key = `${row.type}-${row.id}`;
     setPrintingKey(key);
     try {
-      if (["po_financial_batch", "delegate_pricing_documents"].includes(row.type)) {
+      if(row.type === "delegate_pricing_bundle") {
+        await openBundlePdf(row.id);
+      } else if (["po_financial_batch", "delegate_pricing_documents"].includes(row.type)) {
         window.open(getArchivedDocUrl(row), "_blank");
       } else if (row.type === "purchase_order") {
         const res = await fetch(`/api/export/po/${row.id}/pdf`, { credentials: "include" });
@@ -436,7 +412,9 @@ function ExistingDocumentsCenter() {
     const key = `${row.type}-${row.id}`;
     setViewingKey(key);
     try {
-      if (["po_financial_batch", "delegate_pricing_documents"].includes(row.type)) {
+      if(row.type === "delegate_pricing_bundle") {
+        await openBundlePdf(row.id);
+      } else if (["po_financial_batch", "delegate_pricing_documents"].includes(row.type)) {
         window.open(getArchivedDocUrl(row), "_blank");
       } else if (row.type === "purchase_order") {
         const res = await fetch(`/api/export/po/${row.id}/pdf`, { credentials: "include" });
@@ -461,7 +439,9 @@ function ExistingDocumentsCenter() {
     const key = `${row.type}-${row.id}`;
     setDownloadingKey(key);
     try {
-      if (["po_financial_batch", "delegate_pricing_documents"].includes(row.type)) {
+      if(row.type === "delegate_pricing_bundle") {
+        await downloadBundlePdf(row.id);
+      } else if (["po_financial_batch", "delegate_pricing_documents"].includes(row.type)) {
         const doc = getArchivedDoc(row);
         const baseUrl = getArchivedDocUrl(row);
         // نستخدم دعم البروكسي المدمج لفرض التنزيل (download=1) بدل الاعتماد
@@ -490,109 +470,13 @@ function ExistingDocumentsCenter() {
   };
 
 
-  const quickFilters: { key: DocType | "all"; label: string }[] = isAccountantOnly
-    ? (["delegate_pricing_documents", "po_financial_batch", "delegate_pricing_bundle"] as DocType[]).map(key => ({ key, label: TYPE_META[key].label }))
-    : isDelegateOnly
-      ? [{ key: "delegate_pricing_documents", label: TYPE_META.delegate_pricing_documents.label }]
-      : [
-          { key: "all", label: "الكل" },
-          ...(Object.keys(TYPE_META) as DocType[])
-            .filter(t => {
-              if (t === "po_financial_batch") return canViewFinancialDocs;
-              if (t === "delegate_pricing_documents") return canViewDelegatePricingDocs;
-              if (t === "delegate_pricing_bundle") return canViewBundles;
-              return true;
-            })
-            .map(t => ({ key: t, label: TYPE_META[t].label })),
-        ];
-
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <FileStack className="w-6 h-6 text-primary" />
-            مركز المستندات
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            كل مستندات الشراء والمخزون في مكان واحد — للاطلاع وإعادة الطباعة
-          </p>
-        </div>
-        <Button variant="outline" onClick={refresh} className="gap-2" disabled={isLoading}>
-          <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-          تحديث البيانات
-        </Button>
-      </div>
-
-      <div className="relative max-w-md">
-        <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="ابحث برقم المستند أو الجهة..."
-          value={search}
-          onChange={e => { setSearch(e.target.value); setPage(1); }}
-          className="pr-10"
-        />
-      </div>
-
-      <div className="flex gap-2 flex-wrap">
-        {quickFilters.map(f => (
-          <Button
-            key={f.key}
-            size="sm"
-            variant={typeFilter === f.key ? "default" : "outline"}
-            className="gap-2 h-8"
-            onClick={() => { setTypeFilter(f.key); setPage(1); }}
-          >
-            {f.label}
-            <Badge
-              variant="secondary"
-              className={`text-[11px] px-1.5 min-w-5 justify-center ${typeFilter === f.key ? "bg-primary-foreground/20 text-primary-foreground" : ""}`}
-            >
-              {counts[f.key] ?? "—"}
-            </Badge>
-          </Button>
-        ))}
-      </div>
-
-      <div className="flex flex-wrap gap-3 items-end">
-        <div className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">من تاريخ</span>
-          <Input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} className="w-[150px]" max={dateTo || undefined} />
-        </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">إلى تاريخ</span>
-          <Input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} className="w-[150px]" min={dateFrom || undefined} />
-        </div>
-        {role !== "delegate" && ["po_financial_batch", "delegate_pricing_documents", "delegate_pricing_bundle"].includes(typeFilter) && financialDelegateOptions.length > 0 && (
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">المندوب</span>
-            <Select value={delegateFilter} onValueChange={v => { setDelegateFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">كل المندوبين</SelectItem>
-                {financialDelegateOptions.map(([id, name]) => (
-                  <SelectItem key={id} value={id}>{name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-        <div className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">الترتيب</span>
-          <Select value={sort} onValueChange={v => { setSort(v as any); setPage(1); }}>
-            <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="newest">الأحدث أولًا</SelectItem>
-              <SelectItem value="oldest">الأقدم أولًا</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        {(search || typeFilter !== "all" || dateFrom || dateTo || delegateFilter !== "all") && (
-          <Button variant="ghost" size="sm" className="h-9" onClick={() => { setSearch(""); setDateFrom(""); setDateTo(""); setDelegateFilter("all"); setPage(1); }}>
-            مسح الفلاتر
-          </Button>
-        )}
-      </div>
+    <div className="space-y-4">
+      <DocumentFilters values={{search,dateFrom,dateTo,sort,delegateId:delegateFilter}}
+        onChange={value=>{setSearch(value.search);setDateFrom(value.dateFrom);setDateTo(value.dateTo);setSort(value.sort);setDelegateFilter(value.delegateId||"all");setPage(1);}}
+        onRefresh={refresh} refreshing={isLoading}
+        delegates={role!=="delegate"&&["po_financial_batch","delegate_pricing_documents","delegate_pricing_bundle"].includes(typeFilter)?financialDelegateOptions:undefined} />
+      {!isLoading&&!activeError&&<p className="text-sm text-muted-foreground" role="status">{resultCount} مستند مطابق</p>}
 
       {(role === "accountant" || role === "senior_management") && <p className="text-sm text-muted-foreground">{approvalPdfNotice()}</p>}
       {activeError && <p role="alert">تعذر تحميل بعض المستندات. أعد المحاولة من تحديث البيانات.</p>}
@@ -612,32 +496,21 @@ function ExistingDocumentsCenter() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="text-start">النوع</TableHead>
                 <TableHead className="text-start">رقم المستند</TableHead>
                 {["po_financial_batch", "delegate_pricing_documents", "delegate_pricing_bundle"].includes(typeFilter) && (
                   <TableHead className="text-start whitespace-nowrap">الإجمالي الكلي</TableHead>
                 )}
                 <TableHead className="text-start">التاريخ</TableHead>
                 <TableHead className="text-start">المرجع</TableHead>
-                {typeFilter === "delegate_pricing_bundle" && <><TableHead className="text-start">الحالة</TableHead><TableHead className="text-start">طلبات الشراء المرتبطة</TableHead></>}
-                <TableHead className="text-start">مرات الطباعة</TableHead>
                 <TableHead className="text-start">إجراء</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {pageRows.map(row => {
-                const meta = TYPE_META[row.type];
-                const Icon = meta.icon;
                 const key = `${row.type}-${row.id}`;
                 const pdfAllowed = rowPdfAllowed(row);
                 return (
                   <TableRow key={key}>
-                    <TableCell>
-                      <Badge variant="outline" className={`gap-1.5 ${meta.color}`}>
-                        <Icon className="w-3.5 h-3.5" />
-                        {meta.label}
-                      </Badge>
-                    </TableCell>
                     <TableCell className="font-mono text-sm">{row.documentNumber}</TableCell>
                     {["po_financial_batch", "delegate_pricing_documents", "delegate_pricing_bundle"].includes(typeFilter) && (
                       <TableCell className="font-mono text-sm font-semibold whitespace-nowrap">
@@ -646,31 +519,18 @@ function ExistingDocumentsCenter() {
                     )}
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{relativeOrDate(row.date)}</TableCell>
                     <TableCell className="text-sm max-w-[220px] truncate">{row.referenceLabel}</TableCell>
-                    {typeFilter === "delegate_pricing_bundle" && <><TableCell>{row.status === "archived" ? "مؤرشفة — مرسلة للحسابات" : "مرسلة للحسابات"}</TableCell><TableCell><div className="flex gap-2 flex-wrap">{row.purchaseOrders?.length ? row.purchaseOrders.map(po => <Link key={po.id} href={`/purchase-orders/${po.id}`} className="text-primary underline font-mono">{po.poNumber}</Link>) : "—"}</div></TableCell></>}
-                    <TableCell className="text-sm text-muted-foreground">{row.printCount ?? "—"}</TableCell>
                     <TableCell>
-                      <div className="flex gap-1.5">
-                        {row.type === "delegate_pricing_bundle" ? <>
-                          <Button size="sm" variant="outline" onClick={() => setSelectedBundleId(row.id)}>تفاصيل الحزمة</Button>
-                          {pdfAllowed && <Button size="sm" variant="outline" disabled={bundlePdf.isPending} onClick={() => bundlePdf.mutate({ id: row.id, approvedDocument: role !== "delegate" })}><Download className="w-3.5 h-3.5" />تنزيل PDF</Button>}
-                        </> : <>
+                      <div className="flex flex-col items-start gap-1.5 sm:flex-row">
+                        {row.type === "delegate_pricing_bundle" && <Button size="sm" variant="ghost" onClick={() => setSelectedBundleId(row.id)}>تفاصيل</Button>}
                         {row.reviewUrl && <Link href={row.reviewUrl} className="text-sm text-primary underline self-center px-2">بيانات المعاملة</Link>}
                         {pdfAllowed ? <>
-                        <Button
-                          size="sm" variant="outline" className="gap-1.5"
-                          disabled={printingKey === key}
-                          onClick={() => handlePrint(row)}
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                          {printingKey === key ? "..." : "طباعة"}
-                        </Button>
                         <Button
                           size="sm" variant="outline" className="gap-1.5 px-2"
                           disabled={viewingKey === key}
                           title="عرض PDF"
                           onClick={() => handleViewPdf(row)}
                         >
-                          <Eye className="w-3.5 h-3.5" />
+                          <Eye className="w-3.5 h-3.5" />استعراض
                         </Button>
                         <Button
                             size="sm" variant="outline" className="gap-1.5 px-2"
@@ -679,10 +539,17 @@ function ExistingDocumentsCenter() {
                             onClick={() => handleDownloadPdf(row)}
                           >
                             <Download className="w-3.5 h-3.5" />
-                            {row.type === "po_financial_batch" && "تنزيل PDF"}
+                            تنزيل PDF
                           </Button>
+                        <Button
+                          size="sm" variant="outline" className="gap-1.5"
+                          disabled={printingKey === key}
+                          onClick={() => handlePrint(row)}
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          {printingKey === key ? "..." : "طباعة"}
+                        </Button>
                         </> : <span className="text-xs text-muted-foreground self-center">{role === "observer" ? "استعراض فقط" : "PDF متاح بعد اعتمادك"}</span>}
-                        </>}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -700,7 +567,7 @@ function ExistingDocumentsCenter() {
             <p>المندوب: {bundleDetailQ.data.delegateName} — التاريخ: {relativeOrDate(bundleDetailQ.data.createdAt)}</p>
             <div className="overflow-x-auto"><Table><TableHeader><TableRow>{["الصنف", "طلب الشراء", "القسم", "الكمية", "الوحدة", "السعر", "المورد", "الإجمالي"].map(label => <TableHead key={label}>{label}</TableHead>)}</TableRow></TableHeader><TableBody>{bundleDetailQ.data.items.map((item: PricingBundleRow) => <TableRow key={item.id}><TableCell>{item.itemName}</TableCell><TableCell><Link href={`/purchase-orders/${item.purchaseOrderId}?itemId=${item.id}`} className="text-primary underline">{item.poNumber}</Link></TableCell><TableCell>{item.sectionName}</TableCell><TableCell>{item.quantity}</TableCell><TableCell>{item.unit}</TableCell><TableCell>{formatFinancialGrandTotal(item.estimatedUnitCost)}</TableCell><TableCell>{item.supplierName}</TableCell><TableCell>{formatFinancialGrandTotal(item.estimatedTotalCost)}</TableCell></TableRow>)}</TableBody></Table></div>
             <p>الإجمالي: {formatFinancialGrandTotal(bundleDetailQ.data.total)}</p>
-            {canOpenApprovalPdf(role, bundleDetailQ.data) ? <Button disabled={bundlePdf.isPending} onClick={() => bundlePdf.mutate({ id: bundleDetailQ.data!.id, approvedDocument: role !== "delegate" })}>تنزيل PDF</Button> : <p>{approvalPdfNotice()}</p>}
+            {canOpenApprovalPdf(role, bundleDetailQ.data) ? <Button disabled={bundlePdf.isPending} onClick={async()=>{try{await downloadBundlePdf(bundleDetailQ.data!.id);}catch(error:any){toast.error(error.message||"تعذر تنزيل الملف");}}}>تنزيل PDF</Button> : <p>{approvalPdfNotice()}</p>}
           </div> : null}
           <Button variant="outline" onClick={() => setSelectedBundleId(null)}>إغلاق</Button>
         </DialogContent>
