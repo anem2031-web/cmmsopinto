@@ -1,3 +1,4 @@
+import { warehouseLotSelectionSchema, type WarehouseLotOption } from "../../../shared/warehouse-lot-selection";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -153,7 +154,7 @@ export function createTicketTeamExecutionRouter(
         )
       ),
     issue: protectedProcedure
-      .input(command.extend({ needId: id, recipientId: id }).strict())
+      .input(command.extend({ needId: id, recipientId: id, selection: warehouseLotSelectionSchema.optional() }).strict())
       .mutation(({ ctx, input }) =>
         result(() =>
           service(ctx, input, {
@@ -162,7 +163,8 @@ export function createTicketTeamExecutionRouter(
             ctx.user.id,
             input,
             input.needId,
-            input.recipientId
+            input.recipientId,
+            input.selection
           )
         )
       ),
@@ -210,9 +212,10 @@ export function createTicketTeamExecutionRouter(
         result(async () => localizeActionSnapshot(await service(ctx, input).read(ctx.user.id), input.language))
       ),
     balances: protectedProcedure
-      .input(z.object({ assignmentId: id }).strict())
+      .input(z.object({ assignmentId: id, issueNeedId: id.optional() }).strict())
       .query(({ ctx, input }) =>
         result(async () => {
+          if (input.issueNeedId && !["warehouse", "owner", "admin"].includes((ctx.authenticatedUser ?? ctx.user).role)) throw new TeamTicketError("FORBIDDEN", "اختيار اللوتات للمستودع فقط");
           await service(ctx, input).read(ctx.user.id);
           return new SqlExecutionStore(
             input.assignmentId,
@@ -220,7 +223,12 @@ export function createTicketTeamExecutionRouter(
           ).transaction(async (s, effects) => {
             const a = s.assignments[0],
               main = await effects.mainWarehouseId();
-            const balances = [];
+            const balances: Array<{needId:number;branch:number;main:number;lots?:WarehouseLotOption[]}> = [];
+            if (input.issueNeedId) {
+              const need = s.needs.find(row => row.id === input.issueNeedId && row.assignmentId === a.id && row.round === a.materialRound);
+              if (!need || a.stage !== "waiting_material" || !effects.issueLots) throw new TeamTicketError("CONFLICT", "الاحتياج غير متاح لاختيار اللوتات");
+              return [{ needId: need.id, branch: 0, main: 0, lots: await effects.issueLots(need.id, a.warehouseId) }];
+            }
             for (const n of s.needs.filter(n => n.round === a.materialRound))
               balances.push({
                 needId: n.id,

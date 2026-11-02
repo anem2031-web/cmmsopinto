@@ -228,9 +228,9 @@ export async function createPrepared(
         invalid(
           "يوجد اختلاف في وحدة الصنف أو أرصدة اللوت؛ حدّث الصنف وراجع المخزون"
         );
-      if (item.source === "inventory")
-        allocateOperationalFifo(s, item.quantity);
-      else if (s.totalQuantity > 0) allocateOperationalFifo(s, item.quantity);
+      if (item.source === "inventory" && s.totalQuantity <= 0)
+        invalid("اختر صنفًا له رصيد في المخزن أو استخدم اختيار الكتالوج المخوّل");
+      if (s.totalQuantity > 0) { if (item.quantity <= s.totalQuantity) allocateOperationalFifo(s, item.quantity); }
       else if (String(c.unit).trim() !== item.unit)
         invalid("الوحدة لا تطابق وحدة الصنف");
       return {
@@ -373,7 +373,8 @@ export async function issuePrepared(
     const allocations = lines.map(line =>
       allocateOperationalFifo(
         stock.find(s => s.itemId === Number(line.id))!,
-        Number(line.quantity)
+        Number(line.quantity),
+        input.items.find(item=>item.itemId===Number(line.id))?.selection
       )
     );
     const persisted = recipients.map(r => ({

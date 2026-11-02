@@ -2,6 +2,7 @@ import type {
   Snapshot,
   LocationRef,
 } from "../../shared/maintenance-team-tickets/model";
+import type { WarehouseLotOption, WarehouseLotSelection } from "../../shared/warehouse-lot-selection";
 
 /** Persistence is injected; the pure domain never imports a database provider. */
 export interface Store {
@@ -40,6 +41,7 @@ export interface SupplyResult {
  * do not establish live database atomicity.
  */
 export interface MaterialGateway {
+  issueLots?(needId: number, warehouseId: number): Promise<WarehouseLotOption[]>;
   replacementContext?(needId: number): Promise<boolean>;
   issueNeed?(needId: number, input: Parameters<MaterialGateway["issue"]>[0]): Promise<PhysicalDelivery[]>;
   transferNeed?(needId: number, input: Parameters<MaterialGateway["transfer"]>[0]): Promise<SupplyResult[]>;
@@ -93,6 +95,7 @@ export interface MaterialGateway {
     receiverId: number;
     location: LocationRef;
     lotIds?: number[];
+    selection?: WarehouseLotSelection;
   }): Promise<PhysicalDelivery[]>;
   transfer(input: {
     operationKey: string;

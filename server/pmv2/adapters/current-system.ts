@@ -608,7 +608,7 @@ export const currentInventoryAdapter: InventoryAdapter = {
       .from(inventoryLotBalances)
       .innerJoin(inventoryLots, eq(inventoryLots.id, inventoryLotBalances.lotId))
       .where(and(eq(inventoryLotBalances.inventoryId, inventoryId), gt(inventoryLotBalances.quantity, "0")))
-      .orderBy(asc(inventoryLots.expiryDate), asc(inventoryLots.createdAt), asc(inventoryLots.id));
+      .orderBy(asc(inventoryLots.createdAt), asc(inventoryLots.id));
 
     return rows.map((row) => ({
       id: Number(row.id),
@@ -617,14 +617,14 @@ export const currentInventoryAdapter: InventoryAdapter = {
       trackingToken: String(row.trackingToken),
       quantity: Number(row.quantity || 0),
       expiryDate: row.expiryDate == null ? null : String(row.expiryDate),
-      createdAt: String(row.createdAt),
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
     }));
   },
 };
 
 /** Existing Inventory/Delivery write boundary, invoked by PM V2 through an adapter. */
 export const currentInventoryIssueAdapter: InventoryIssueAdapter = {
-  async issueDelivery(input) {
+  async issueDelivery(input, transaction) {
     const result = await issueDelivery({
       pmv2TaskItemId: input.taskItemId,
       inventoryId: input.inventoryId,
@@ -640,7 +640,7 @@ export const currentInventoryIssueAdapter: InventoryIssueAdapter = {
         beneficiaryAssetId: input.costTarget.beneficiaryAssetId ?? undefined,
         quantity: input.quantity,
       }],
-    });
+    }, transaction);
     return {
       deliveryNumber: result.deliveryNumber,
       deliveryDocumentId: result.deliveryDocumentId,
@@ -677,11 +677,11 @@ export const currentRecipientReturnAdapter: RecipientReturnAdapter = {
  * movement or delivery identity.
  */
 export const currentDeliveryAdapter: DeliveryAdapter = {
-  async getDeliveryByNumber(deliveryNumber) {
+  async getDeliveryByNumber(deliveryNumber, transaction) {
     const number = String(deliveryNumber || "").trim();
     if (!number) return null;
 
-    const db = await requireDb();
+    const db = transaction || await requireDb();
     const rows = await db
       .select({
         id: deliveryDocuments.id,

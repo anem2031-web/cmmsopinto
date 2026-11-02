@@ -272,10 +272,12 @@ function fixture() {
         });
         return [{ insertId: id }];
       }
+      if (q.startsWith("SELECT userId,newValues FROM audit_logs"))
+        return result(state.audits.filter((r:any)=>r.length===3&&r[1]===p[0]&&typeof r[2]==="string").map((r:any)=>({userId:r[0],newValues:r[2]})));
       if (q.startsWith("SELECT i.*,COALESCE"))
         return result(
           state.items
-            .filter((i: any) => i.orderId === p[0])
+            .filter((i: any) => q.includes("WHERE i.id=") ? i.id === p[0] && i.orderId === p[1] : i.orderId === p[0])
             .map((i: any) => ({ ...i, issuedQuantity: used(i.id) }))
         );
       if (q.startsWith("SELECT * FROM operational_issue_batches"))
@@ -476,6 +478,33 @@ function fixture() {
 beforeEach(() => vi.stubEnv("OPERATIONAL_ISSUES_ENABLED", "true"));
 afterEach(() => vi.unstubAllEnvs());
 describe("Prepared operational issues through the canonical physical writer", () => {
+  it("issues legacy operational lines through the same full multi-lot writer and retries without duplicate stock changes",async()=>{
+    const f=fixture();await f.ready();f.state().items.forEach((line:any)=>{line.dispatchContext=null;});const service=new OperationalIssueService(f.ports);
+    const input={orderId:1,itemId:1,warehouseId:1,quantity:3,operationKey:"legacy-full",selection:{mode:"manual" as const,lots:[{lotId:11,quantity:1},{lotId:12,quantity:2}]}};
+    const result=await service.issue(warehouse,input);await service.issue(warehouse,input);
+    expect(result.documents).toHaveLength(2);expect(f.state().documents).toHaveLength(2);expect(f.state().lots.map((l:any)=>l.quantity)).toEqual([1,6,10]);
+    await expect(service.issue(warehouse,{...input,selection:{mode:"manual",lots:[{lotId:12,quantity:3}]}})).rejects.toMatchObject({code:"CONFLICT"});
+  });
+  it("rolls back a legacy multi-lot choice when the second physical document fails",async()=>{
+    const f=fixture();await f.ready();f.state().items.forEach((line:any)=>{line.dispatchContext=null;});f.flags.failDocument=2;
+    await expect(new OperationalIssueService(f.ports).issue(warehouse,{orderId:1,itemId:1,warehouseId:1,quantity:3,operationKey:"legacy-failure",selection:{mode:"manual",lots:[{lotId:11,quantity:1},{lotId:12,quantity:2}]}})).rejects.toThrow("failed");
+    expect(f.state().documents).toEqual([]);expect(f.state().lots.map((l:any)=>l.quantity)).toEqual([2,8,10]);
+  });
+  it("manually selects a later lot for one line and confirms all lines in one batch",async()=>{
+    const f=fixture();await f.ready();const input:any=issueInput();input.items[0].selection={mode:"manual",lots:[{lotId:12,quantity:3}]};
+    await issuePrepared(f.ports,warehouse,input);
+    expect(f.state().documents.map((d:any)=>[d.lotId,d.quantity])).toEqual([[12,3],[13,2]]);
+    expect(f.state().lots.map((l:any)=>l.quantity)).toEqual([2,5,8]);expect(f.state().batches).toHaveLength(1);expect(f.state().orders[0].status).toBe("completed");
+  });
+  it.each(["partial","foreign","excess","duplicate"])("blocks %s manual selections for the entire order without stock changes",async kind=>{
+    const f=fixture();await f.ready();const input:any=issueInput();
+    input.items[0].selection={mode:"manual",lots:kind==="partial"?[{lotId:11,quantity:2}]:kind==="foreign"?[{lotId:13,quantity:3}]:kind==="excess"?[{lotId:11,quantity:3}]:[{lotId:12,quantity:1},{lotId:12,quantity:2}]};
+    await expect(issuePrepared(f.ports,warehouse,input)).rejects.toThrow();expect(f.state().documents).toEqual([]);expect(f.state().batches).toEqual([]);expect(f.state().lots.map((l:any)=>l.quantity)).toEqual([2,8,10]);
+  });
+  it("rolls back every manually selected lot when a later document fails",async()=>{
+    const f=fixture();await f.ready();const input:any=issueInput();input.items[0].selection={mode:"manual",lots:[{lotId:11,quantity:1},{lotId:12,quantity:2}]};f.flags.failDocument=3;
+    await expect(issuePrepared(f.ports,warehouse,input)).rejects.toThrow("failed");expect(f.state().documents).toEqual([]);expect(f.state().batches).toEqual([]);expect(f.state().lots.map((l:any)=>l.quantity)).toEqual([2,8,10]);
+  });
   it("saves per-line context without stock deduction and prevents duplicate saves", async () => {
     const f = fixture();
     await createPrepared(f.ports, warehouse, makeInput());

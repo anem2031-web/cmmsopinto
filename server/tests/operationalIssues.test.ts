@@ -120,6 +120,10 @@ beforeEach(() => vi.stubEnv("OPERATIONAL_ISSUES_ENABLED", "true"));
 afterEach(() => vi.unstubAllEnvs());
 
 describe("Operational order → existing physical issue → original-delivery return", () => {
+  it("blocks partial issue through the legacy direct API as well",async()=>{
+    const f=fixture();await f.ready(3);await expect(f.service.issue(warehouse,{orderId:1,itemId:1,warehouseId:1,lotTrackingToken:"LOT-1",quantity:1,operationKey:"no-partial"})).rejects.toThrow("كامل المتبقي");
+    expect(f.state().documents).toEqual([]);expect(f.state().stock).toBe(10);
+  });
   it.each([null, "cmms/uploads/u-20/original-signature.png"])("freezes the real warehouse issuer's signature in the actual physical writer: %s", async signature => {
     const f = fixture(); f.flags.warehouseSignature = signature; await f.ready();
     await f.service.issue(warehouse, { orderId: 1, itemId: 1, warehouseId: 1, lotTrackingToken: "LOT-1", quantity: 3, operationKey: "signature-fixture" });
@@ -203,7 +207,7 @@ describe("Operational order → existing physical issue → original-delivery re
   });
   it("requires approval, correct request/item pair and active designated collector", async () => {
     const f = fixture(); await f.service.create(manager, body);
-    const input = { orderId: 1, itemId: 1, warehouseId: 1, lotTrackingToken: "LOT-1", quantity: 1, operationKey: "blocked" };
+    const input = { orderId: 1, itemId: 1, warehouseId: 1, lotTrackingToken: "LOT-1", quantity: 3, operationKey: "blocked" };
     await expect(f.service.issue(warehouse, input)).rejects.toThrow("معتمد");
     await f.service.approve(warehouse, 1, 0); f.flags.collectorActive = 0;
     await expect(f.service.issue(warehouse, input)).rejects.toThrow("الفني المحدد");

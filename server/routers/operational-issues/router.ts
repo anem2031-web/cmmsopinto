@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { warehouseLotSelectionSchema } from "../../../shared/warehouse-lot-selection";
 import { sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, warehouseProcedure } from "../_shared/procedures";
@@ -41,7 +42,7 @@ export function createOperationalIssuesRouter(ports: OperationalPorts, enabled: 
     create: protectedProcedure.input(z.object({ siteId: id, sectionId: id, collectorId: id, reason: z.string().trim().min(1).max(2000), operationKey: z.string().min(1).max(120), items: z.array(z.object({ catalogItemId: id, quantity, unit: z.string().trim().min(1).max(50) })).min(1).max(20) }))
       .mutation(({ ctx, input }) => { available(); if (!canUseOperationalCatalog(ctx.user.role)) throw new TRPCError({ code: "FORBIDDEN", message: "استخدم نموذج الإنشاء من المخزون" }); return service.create(ctx.user, input); }),
     approve: warehouseProcedure.input(z.object({ id, revision: z.number().int().nonnegative() })).mutation(({ ctx, input }) => { available(); return service.approve(ctx.user, input.id, input.revision); }),
-    issue: warehouseProcedure.input(z.object({ orderId: id, itemId: id, warehouseId: id, lotTrackingToken: z.string().trim().min(1), quantity, operationKey: z.string().min(1).max(120) }))
+    issue: warehouseProcedure.input(z.object({ orderId: id, itemId: id, warehouseId: id, lotTrackingToken: z.string().trim().min(1).optional(), quantity, operationKey: z.string().min(1).max(120), selection:warehouseLotSelectionSchema.optional() }))
       .mutation(({ ctx, input }) => { available(); return service.issue(ctx.user, input); }),
     returnMaterial: warehouseProcedure.input(z.object({ orderId: id, deliveryDocumentId: id, quantity: z.number().int().positive(), reason: z.string().trim().min(1).max(2000), operationKey: z.string().min(1).max(120) }))
       .mutation(({ ctx, input }) => { available(); return service.returnMaterial(ctx.user, input); }),

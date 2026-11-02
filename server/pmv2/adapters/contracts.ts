@@ -241,7 +241,7 @@ export interface InventoryIssueAdapter {
     lotTrackingToken: string;
     notes?: string;
     costTarget: Pmv2IssueCostTarget;
-  }): Promise<Pmv2InventoryIssueResult>;
+  }, transaction?: any): Promise<Pmv2InventoryIssueResult>;
 }
 
 export interface RecipientReturnAdapter {
@@ -254,7 +254,7 @@ export interface RecipientReturnAdapter {
 }
 
 export interface DeliveryAdapter {
-  getDeliveryByNumber(deliveryNumber: string): Promise<Pmv2DeliveryRef | null>;
+  getDeliveryByNumber(deliveryNumber: string, transaction?: any): Promise<Pmv2DeliveryRef | null>;
 }
 
 export interface WarehouseTransferAdapter {

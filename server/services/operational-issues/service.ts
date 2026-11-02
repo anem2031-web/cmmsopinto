@@ -1,4 +1,7 @@
 import { sql } from "drizzle-orm";
+import { allocateOperationalFifo } from "../../../shared/operational-dispatch";
+import type { WarehouseLotSelection } from "../../../shared/warehouse-lot-selection";
+import { replacementPhysicalToOriginal } from "../../supplier-return-followup/fulfillment";
 import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { canCreateOperationalIssue, canProcessOperationalIssue, canReadOperationalIssue, operationalNetCost, type OperationalActor, type OperationalOrder, type OperationalLine, type OperationalDelivery, type OperationalStock } from "../../../shared/operational-issues";
@@ -136,9 +139,136 @@ export class OperationalIssueService {
       await this.audit(tx, actor.id, id, "operational_issue_approved"); return { success: true };
     });
   }
-  async issue(actor: OperationalActor, input: { orderId: number; itemId: number; warehouseId: number; lotTrackingToken: string; quantity: number; operationKey: string }) {
+  private async issueSelected(
+    actor: OperationalActor,
+    input: {
+      orderId: number;
+      itemId: number;
+      warehouseId: number;
+      quantity: number;
+      operationKey: string;
+      selection: WarehouseLotSelection;
+    },
+  ) {
+    const db = await this.ports.database();
+    return db.transaction(async (tx: any) => {
+      const [fresh] = await rows(
+        tx,
+        sql`SELECT id,role,isActive FROM users WHERE id=${actor.id} FOR UPDATE`,
+      );
+      if (
+        !fresh ||
+        Number(fresh.isActive) !== 1 ||
+        fresh.role !== actor.role ||
+        !canProcessOperationalIssue(fresh.role)
+      )
+        deny();
+      const order = await this.order(tx, actor, input.orderId, true);
+      const saved = await rows(
+        tx,
+        sql`SELECT userId,newValues FROM audit_logs WHERE entityType='operational_issue' AND entityId=${input.orderId} AND action='operational_issue_full_line' ORDER BY id`,
+      );
+      const requestFingerprint = fingerprint({
+        ...input,
+        operationKey: undefined,
+      });
+      for (const row of saved) {
+        const data =
+          typeof row.newValues === "string"
+            ? JSON.parse(row.newValues)
+            : row.newValues;
+        if (data?.operationKey === input.operationKey) {
+          if (
+            Number(row.userId) !== actor.id ||
+            data.fingerprint !== requestFingerprint
+          )
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "معرف الصرف مستخدم لعملية مختلفة",
+            });
+          return data.result;
+        }
+      }
+      const [line] = (await rows(
+        tx,
+        sql`SELECT i.*,COALESCE((SELECT SUM(d.quantity) FROM operational_issue_deliveries d WHERE d.orderItemId=i.id),0) AS issuedQuantity FROM operational_issue_items i WHERE i.id=${input.itemId} AND i.orderId=${input.orderId} FOR UPDATE`,
+      )) as OperationalLine[];
+      if (!line || line.dispatchContext != null || order.status !== "approved")
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "يلزم صرف بند قديم معتمد أو استخدام تأكيد الطلب المجمع",
+        });
+      const replacements = await loadOperationalReplacements(tx, [line]);
+      const required =
+        Number(line.quantity) -
+        (replacements.get(Number(line.id))?.issued ??
+          Number(line.issuedQuantity));
+      if (required <= 0 || input.quantity !== required)
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "يلزم صرف كامل المتبقي دون صرف جزئي",
+        });
+      const physical = replacementStockLines(replacements);
+      const stocks = await loadOperationalStock(
+        tx,
+        [line, ...physical],
+        true,
+        input.warehouseId,
+      );
+      const [stock] = applyOperationalReplacementStock(
+        stocks.filter((s) => s.itemId > 0),
+        stocks.filter((s) => s.itemId < 0),
+        replacements,
+      );
+      const allocations = allocateOperationalFifo(
+        stock,
+        required,
+        input.selection,
+      );
+      const documents = [];
+      for (let index = 0; index < allocations.length; index++) {
+        const lot = allocations[index];
+        documents.push(
+          await this.ports.issue(tx, {
+            operationalIssueItemId: input.itemId,
+            operationalOperationKey: fingerprint([input.operationKey, index]),
+            operationalRequestFingerprint: requestFingerprint,
+            inventoryId: lot.inventoryId,
+            quantity: lot.quantity,
+            unit: lot.unit,
+            operationalReplacementAware: replacements.has(Number(line.id)),
+            performedById: actor.id,
+            deliveredToId: Number(order.collectorId),
+            lotTrackingToken: lot.trackingToken,
+            notes: `${order.orderNumber}: ${order.reason}`,
+            costAllocations: [
+              {
+                beneficiarySiteId: Number(order.siteId),
+                beneficiarySectionId: Number(order.sectionId),
+                quantity: lot.quantity,
+              },
+            ],
+          }),
+        );
+      }
+      const result = {
+        orderId: input.orderId,
+        itemId: input.itemId,
+        documents,
+      };
+      await tx.execute(
+        sql`INSERT INTO audit_logs (userId,action,entityType,entityId,newValues) VALUES (${actor.id},'operational_issue_full_line','operational_issue',${input.orderId},${JSON.stringify({ operationKey: input.operationKey, fingerprint: requestFingerprint, result })})`,
+      );
+      return result;
+    });
+  }
+
+  async issue(actor: OperationalActor, input: { orderId: number; itemId: number; warehouseId: number; lotTrackingToken?: string; quantity: number; operationKey: string; selection?:WarehouseLotSelection }) {
     this.actor(actor, "warehouse");
     if (!Number.isInteger(input.quantity) || input.quantity <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "كمية الصرف التشغيلي يجب أن تكون عددًا صحيحًا موجبًا" });
+    if(input.selection)return this.issueSelected(actor,{...input,selection:input.selection});
+    if(!input.lotTrackingToken)throw new TRPCError({code:"BAD_REQUEST",message:"اختر لوتات الصرف"});
+    const lotTrackingToken = input.lotTrackingToken;
     const db = await this.ports.database();
     return db.transaction(async (tx: any) => {
       const order = await this.order(tx, actor, input.orderId, true);
@@ -152,9 +282,13 @@ export class OperationalIssueService {
       const [line] = await rows(tx, sql`SELECT * FROM operational_issue_items WHERE id=${input.itemId} AND orderId=${input.orderId} FOR UPDATE`);
       if (line?.dispatchContext != null) throw new TRPCError({ code: "BAD_REQUEST", message: "يلزم تأكيد صرف الطلب بالكامل" });
       if (!line || order.status !== "approved") throw new TRPCError({ code: "BAD_REQUEST", message: "الصنف لا ينتمي إلى أمر معتمد" });
-      const lot = await this.ports.resolveLot({ warehouseId: input.warehouseId, identifier: input.lotTrackingToken });
+      const lot = await this.ports.resolveLot({ warehouseId: input.warehouseId, identifier: lotTrackingToken });
       const replacement = await assertOperationalReplacementIdentity(tx, line, { catalogItemId: Number(lot.linkedItemId), lotTrackingToken: lot.trackingToken, unit: String(lot.unit || ""), quantity: input.quantity });
       const replacementPlan = replacement?.plans.find(plan => plan.lots.some(allowed => allowed.trackingToken === lot.trackingToken));
+      const [issued] = await rows(tx, sql`SELECT COALESCE(SUM(quantity),0) AS issued FROM operational_issue_deliveries WHERE orderItemId=${input.itemId}`);
+      const remaining = Number(line.quantity) - (replacement?.issued ?? Number(issued?.issued || 0));
+      const covered = replacementPlan ? Number(replacementPhysicalToOriginal(replacementPlan, String(input.quantity))) : input.quantity;
+      if (remaining <= 0 || Math.abs(covered - remaining) > .0005) throw new TRPCError({ code: "BAD_REQUEST", message: "يجب صرف كامل المتبقي دون صرف جزئي" });
       const result = await this.ports.issue(tx, {
         operationalIssueItemId: input.itemId, operationalOperationKey: input.operationKey, operationalRequestFingerprint: requestFingerprint,
         inventoryId: lot.inventoryId, quantity: input.quantity, unit: String(lot.unit), operationalReplacementAware: Boolean(replacement),

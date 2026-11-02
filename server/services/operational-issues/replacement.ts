@@ -164,7 +164,8 @@ export function applyOperationalReplacementStock(stocks: OperationalStock[], phy
       const remaining = totalPhysical(plan) - (target.physicalIssued.get(plan.planId) || 0);
       if (remaining <= 0 || unmet <= 0) continue;
       const choices = (physical?.lots || []).filter(lot => plan.lots.some(allowed => allowed.lotId === lot.lotId && allowed.trackingToken === lot.trackingToken && allowed.unit === lot.unit))
-        .map(lot => ({ ...lot, quantity: Math.min(lot.quantity, assignableOperationalReplacement(plan, unmet, remaining)), replacementName: plan.itemName }));
+        .map(lot => ({ ...lot, quantity: Math.min(lot.quantity, assignableOperationalReplacement(plan, unmet, remaining)), replacementName: plan.itemName,
+          originalPerUnit:Number(plan.originalQuantityCovered)/totalPhysical(plan),coverageKey:String(plan.planId),coverageLimit:Math.min(unmet,Number(plan.originalQuantityCovered)-Number(replacementPhysicalToOriginal(plan,String(target.physicalIssued.get(plan.planId)||0)))) }));
       lots.push(...choices);
       const count = choices.reduce((sum, lot) => sum + lot.quantity, 0);
       const availablePhysical = assignableOperationalReplacement(plan, unmet, Math.min(count, remaining));

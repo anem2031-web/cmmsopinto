@@ -1,3 +1,4 @@
+import { selectFullIssueLots, type WarehouseLotOption, type WarehouseLotSelection } from "../../../shared/warehouse-lot-selection";
 import { sql } from "drizzle-orm";
 import {
   TeamTicketError,
@@ -125,14 +126,48 @@ export class ProductionMaterialGateway implements MaterialGateway {
   async issueNeed(needId: number, input: Parameters<MaterialGateway["issue"]>[0]) {
     if (!await this.replacementContext(needId)) return this.issue(input);
     await this.validateReplacementWrites(needId);
+    if (input.selection?.mode === "manual") {
+      const selected = selectFullIssueLots(await this.issueLots(needId, input.warehouseId), input.quantity, input.unit, input.selection);
+      const plans = await this.replacements(needId);
+      const results: PhysicalDelivery[] = [];
+      for (const lot of selected) {
+        const replacement = plans.find(plan => plan.lots.some(source => source.lotId === lot.lotId));
+        const deliveries = await this.issue({ ...input, catalogItemId: replacement?.catalogItemId ?? input.catalogItemId,
+          unit: lot.unit, quantity: lot.quantity, lotIds: [lot.lotId], selection: undefined });
+        for (const delivery of deliveries) results.push({ ...delivery, originalEquivalent: replacement ? Number(replacementPhysicalToOriginal(replacement, String(delivery.quantity))) : delivery.quantity,
+          ...(replacement ? { replacementPlanId: replacement.planId, replacementName: replacement.itemName } : {}) });
+      }
+      return results;
+    }
     const { allocations } = await this.fulfillmentPlan(needId, input.warehouseId, input.quantity);
     const results: PhysicalDelivery[] = [];
     for (const segment of allocations) {
-      const rows = await this.issue({ ...input, catalogItemId: segment.catalogItemId, quantity: segment.quantity, unit: segment.unit, lotIds: segment.lotIds });
+      const rows = await this.issue({ ...input, catalogItemId: segment.catalogItemId, quantity: segment.quantity, unit: segment.unit, lotIds: segment.lotIds, selection: undefined });
       for (const row of rows) results.push({ ...row, originalEquivalent: segment.replacement ? Number(replacementPhysicalToOriginal(segment.replacement, String(row.quantity))) : row.quantity,
         ...(segment.replacement ? { replacementPlanId: segment.replacement.planId, replacementName: segment.replacement.itemName } : {}) });
     }
     return results;
+  }
+  async issueLots(needId: number, warehouseId: number): Promise<WarehouseLotOption[]> {
+    const need = this.state.needs.find(row => row.id === needId);
+    const assignment = this.state.assignments[0];
+    if (!need?.catalogItemId || need.assignmentId !== assignment.id || need.round !== assignment.materialRound || warehouseId !== assignment.warehouseId)
+      throw new TeamTicketError("FORBIDDEN", "الاحتياج أو المخزن خارج نطاق الصرف");
+    const plans = await this.replacements(needId);
+    const reserved = new Set(plans.flatMap(plan => plan.lots.map(lot => lot.lotId)));
+    const original = await this.stock(warehouseId, need.catalogItemId);
+    const mapLot = (lot: any, stock: any): WarehouseLotOption => ({ lotId: Number(lot.lotId), lotCode: lot.lotCode, quantity: Math.floor(Number(lot.quantity)),
+      inventoryId: Number(stock.inventory.id), unit: lot.issueUnit || stock.inventory.issueUnit || stock.inventory.unit,
+      createdAt: lot.createdAt instanceof Date ? lot.createdAt.toISOString() : String(lot.createdAt || "") });
+    const result = original.lots.filter(lot => !reserved.has(Number(lot.lotId))).map(lot => mapLot(lot, original));
+    for (const plan of plans) {
+      const stock = await this.stock(warehouseId, plan.catalogItemId);
+      const used = this.state.deliveries.filter(row => row.needId === needId && plan.lots.some(lot => lot.lotId === row.lotId))
+        .reduce((sum, row) => sum + (row.originalEquivalent ?? Number(replacementPhysicalToOriginal(plan, String(row.quantity)))), 0);
+      for (const lot of stock.lots.filter(lot => plan.lots.some(source => source.lotId === Number(lot.lotId)))) result.push({ ...mapLot(lot, stock),
+        originalPerUnit: Number(plan.originalQuantityCovered) / plan.lots.reduce((sum, row) => sum + Number(row.quantity), 0), coverageKey: String(plan.planId), coverageLimit: Math.max(0, Number(plan.maximumOriginalQuantity) - used) });
+    }
+    return result;
   }
   async transferNeed(needId: number, input: Parameters<MaterialGateway["transfer"]>[0]) {
     await this.validateReplacementWrites(needId);
@@ -184,7 +219,7 @@ export class ProductionMaterialGateway implements MaterialGateway {
       );
     const lots = await selectRows(
       this.tx,
-      sql`SELECT b.lotId,b.quantity,l.trackingToken,l.lotCode,l.issueUnit,l.catalogItemId FROM inventory_lot_balances b INNER JOIN inventory_lots l ON l.id=b.lotId WHERE b.inventoryId=${Number(inventory.id)} AND b.quantity>0 ORDER BY l.expiryDate,l.createdAt,l.id FOR UPDATE`
+      sql`SELECT b.lotId,b.quantity,l.trackingToken,l.lotCode,l.issueUnit,l.catalogItemId,l.createdAt FROM inventory_lot_balances b INNER JOIN inventory_lots l ON l.id=b.lotId WHERE b.inventoryId=${Number(inventory.id)} AND b.quantity>0 ORDER BY l.expiryDate,l.createdAt,l.id FOR UPDATE`
     );
     const matching = lots.filter(
       l =>
@@ -289,7 +324,8 @@ export class ProductionMaterialGateway implements MaterialGateway {
     catalogItemId: number,
     quantity: number,
     unit: string,
-    lotIds?: number[]
+    lotIds?: number[],
+    selection?: WarehouseLotSelection
   ) {
     const stock = await this.stock(warehouseId, catalogItemId);
     if (
@@ -303,6 +339,12 @@ export class ProductionMaterialGateway implements MaterialGateway {
       );
     let left = quantity;
     const allocations: Array<{ lot: any; quantity: number }> = [];
+    if (selection) {
+      const candidates = stock.lots.filter(lot => !lotIds || lotIds.includes(Number(lot.lotId)));
+      const selected = selectFullIssueLots(candidates.map(lot => ({ lotId: Number(lot.lotId), quantity: Number(lot.quantity), unit,
+        createdAt: lot.createdAt instanceof Date ? lot.createdAt.toISOString() : String(lot.createdAt || "") })), quantity, unit, selection);
+      return { inventory: stock.inventory, allocations: selected.map(choice => ({ lot: candidates.find(lot => Number(lot.lotId) === choice.lotId)!, quantity: choice.quantity })) };
+    }
     for (const lot of stock.lots.filter(lot => !lotIds || lotIds.includes(Number(lot.lotId)))) {
       const take = Math.min(left, Math.floor(Number(lot.quantity)));
       if (take > 0) {
@@ -326,6 +368,7 @@ export class ProductionMaterialGateway implements MaterialGateway {
     receiverId: number;
     location: LocationRef;
     lotIds?: number[];
+    selection?: WarehouseLotSelection;
   }): Promise<PhysicalDelivery[]> {
     const recipient = this.state.users.find(
       x => x.id === input.receiverId && x.active
@@ -356,7 +399,8 @@ export class ProductionMaterialGateway implements MaterialGateway {
         input.catalogItemId,
         input.quantity,
         input.unit,
-        input.lotIds
+        input.lotIds,
+        input.selection ?? { mode: "fifo" }
       ),
       writers = await this.writers(),
       result: PhysicalDelivery[] = [];

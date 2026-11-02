@@ -65,6 +65,7 @@ export function PreparedIssueForm() {
     const stock = stockFor(item.catalogItemId);
     if (!stock || (item.source === "catalog" && stock.totalQuantity === 0))
       return { label: "", error: "" };
+    if(stock.totalQuantity<item.quantity)return {label:language==="ar"?`المتاح ${stock.totalQuantity} ${stock.unit} — ينتظر تغطية عجز ${item.quantity-stock.totalQuantity} قبل الصرف`:`Shortage: ${item.quantity-stock.totalQuantity} ${stock.unit}; full issue waits for coverage`,error:""};
     try {
       return {
         label: allocateOperationalFifo(stock, item.quantity)
@@ -118,8 +119,7 @@ export function PreparedIssueForm() {
         stock?.unit &&
         !stock.needsReview &&
         !fifoFor(i).error &&
-        ((i.source === "catalog" && stock.totalQuantity === 0) ||
-          i.quantity <= stock.totalQuantity)
+        ((i.source === "catalog" && stock.totalQuantity === 0) || stock.totalQuantity > 0)
       );
     });
   if (options.isLoading) return <p>{text.load}</p>;

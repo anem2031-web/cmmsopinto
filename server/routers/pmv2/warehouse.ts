@@ -1,3 +1,4 @@
+import { warehouseLotSelectionSchema } from "../../../shared/warehouse-lot-selection";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router } from "../_shared/procedures";
@@ -164,10 +165,11 @@ export const pmv2WarehouseRouter = router({
     .input(z.object({
       routeDecisionActionId: z.number().int().positive(),
       deliveredToId: z.number().int().positive().optional(),
+      selection: warehouseLotSelectionSchema.optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       try {
-        return await pmv2TeamIssueHandoffService.issueReadyRequirement(ctx.user.id, input, {
+        return await pmv2TeamIssueHandoffService.issueReadyRequirement(ctx.user.id, { ...input, selection: input.selection ?? { mode: "fifo" } }, {
           ipAddress: ctx.req.ip,
           userAgent: ctx.req.headers["user-agent"],
         });

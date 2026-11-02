@@ -166,10 +166,17 @@ describe("Zero-stock requirement → existing purchase draft", () => {
   it.each(["pending", "completed"])("does not procure for a %s order", async status => {
     const f = fixture(); f.state().orders[0].status = status; await expect(f.add()).rejects.toMatchObject({ code: "CONFLICT" });
   });
-  it("rejects wrong-parent item and stale stock without creating documents", async () => {
+  it("rejects wrong-parent items and fully covered stock without creating documents", async () => {
     const f = fixture(); f.state().items[0].orderId = 999; await expect(f.add()).rejects.toMatchObject({ code: "BAD_REQUEST" });
-    f.state().items[0].orderId = 1; f.state().inventories.push(inventory(1, 1)); f.state().lots.push(lot(1, 1, 1));
+    f.state().items[0].orderId = 1; f.state().inventories.push(inventory(1, 3)); f.state().lots.push(lot(1, 1, 3));
     await expect(f.add()).rejects.toMatchObject({ code: "CONFLICT" }); expect(f.state().headers).toHaveLength(0);
+  });
+  it("buys only the shortage when positive stock cannot cover the full requirement, without duplicate purchase", async () => {
+    const f = fixture(); f.state().inventories.push(inventory(1, 1)); f.state().lots.push(lot(1, 1, 1));
+    expect(await f.add()).toMatchObject({ quantity: 2, existing: false });
+    expect(await f.add()).toMatchObject({ quantity: 2, existing: true, changed: false });
+    expect(f.state().headers).toHaveLength(1); expect(f.state().poItems).toHaveLength(1);
+    expect(f.state().inventories[0].quantity).toBe(1); expect(f.ports.issue).not.toHaveBeenCalled();
   });
   it.each(["catalogActive", "validSection", "unitActive"] as const)("validates %s before saving a new purchase relationship", async flag => {
     const f = fixture(); f.flags[flag] = false; await expect(f.add()).rejects.toThrow(); expect(f.state().headers).toHaveLength(0);

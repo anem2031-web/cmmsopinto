@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
+import { WarehouseLotSelection } from "@/components/inventory/WarehouseLotSelection";
+import { selectFullIssueLots, type WarehouseLotSelection as LotSelection } from "@shared/warehouse-lot-selection";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { operationalIssueText } from "@/i18n/operationalIssues";
@@ -15,27 +16,31 @@ export function OperationalStockPanel({ line, stock, orderId, approved, canProce
 }) {
   const { language } = useTranslation(); const text = operationalIssueText[language];
   const remaining = Math.max(0, Number(line.quantity) - Number(line.issuedQuantity));
-  const [selected, setSelected] = useState(""); const [quantity, setQuantity] = useState(remaining);
+  const [warehouse,setWarehouse]=useState(""); const [selection,setSelection]=useState<LotSelection>({mode:"fifo"});
+  const quantity=remaining;
   const busy = useRef(false); const key = useRef<{ value: string; key: string } | null>(null);
   const issue = trpc.operationalIssues.issue.useMutation();
   const purchase = trpc.operationalIssues.addToPurchaseDraft.useMutation();
-  const lotKey = (lot: NonNullable<OperationalStock>["lots"][number]) => `${lot.warehouseId}:${lot.inventoryId}:${lot.lotId}`;
-  const lot = stock?.lots.find(choice => lotKey(choice) === selected);
-  const maximum = lot ? (stock?.fulfillment ? lot.quantity : Math.min(remaining, lot.quantity)) : 0;
+  const warehouseId=Number(warehouse||stock?.lots[0]?.warehouseId||0);
+  const lots=stock?.lots.filter(lot=>lot.warehouseId===warehouseId)||[];
+  let plan: typeof lots = [];
+  try{if(stock&&!stock.needsReview)plan=selection.mode==="fifo"&&stock.fulfillment?.ready&&stock.fulfillment.allocations.every(lot=>lot.warehouseId===warehouseId)
+    ? stock.fulfillment.allocations : selectFullIssueLots(lots,remaining,line.unit,selection);}catch{}
+  const ready=plan.length>0;
   const disabled = loading || issue.isPending || purchase.isPending;
   const submit = async () => {
-    if (busy.current || !approved || !canProcess || !lot || !Number.isInteger(quantity) || quantity < 1 || quantity > maximum) return;
+    if (busy.current || !approved || !canProcess || !ready || !Number.isInteger(quantity) || quantity < 1) return;
     busy.current = true;
-    const fingerprint = JSON.stringify([orderId, line.id, lot.warehouseId, lot.trackingToken, quantity]);
+    const fingerprint = JSON.stringify([orderId, line.id, warehouseId, selection, quantity]);
     if (!key.current || key.current.value !== fingerprint) key.current = { value: fingerprint, key: crypto.randomUUID() };
     try {
-      await issue.mutateAsync({ orderId, itemId: Number(line.id), warehouseId: lot.warehouseId, lotTrackingToken: lot.trackingToken, quantity, operationKey: key.current.key });
-      key.current = null; setSelected(""); toast.success(text.success);
+      await issue.mutateAsync({ orderId, itemId: Number(line.id), warehouseId, selection, quantity, operationKey: key.current.key });
+      key.current = null; setSelection({mode:"fifo"}); toast.success(text.success);
     } catch (error) { toast.error(error instanceof Error ? error.message : text.error); }
     finally { try { await refresh(); } finally { busy.current = false; } }
   };
   const addToDraft = async () => {
-    if (busy.current || disabled || !approved || !canProcess || !procurementReady || !stock || stock.totalQuantity !== 0 || stock.needsReview || stock.purchase || remaining <= 0) return;
+    if (busy.current || disabled || !approved || !canProcess || !procurementReady || !stock || stock.totalQuantity >= remaining || stock.needsReview || stock.purchase || remaining <= 0) return;
     busy.current = true;
     try { await purchase.mutateAsync({ orderId, itemId: Number(line.id) }); toast.success(text.draftAdded); }
     catch (error) { toast.error(error instanceof Error ? error.message : text.error); }
@@ -55,29 +60,20 @@ export function OperationalStockPanel({ line, stock, orderId, approved, canProce
           <p className="text-muted-foreground">{text.reviewDraft}</p>
           {stock.purchase.changed && <p role="alert" className="text-destructive">{text.purchaseChanged}</p>}
         </div>}
-        {stock.lots.length > 0 && <div className="space-y-2">
-          <Label htmlFor={`operational-lot-${line.id}`}>{text.chooseLot}</Label>
-          <select id={`operational-lot-${line.id}`} className="w-full h-10 rounded-md border bg-background px-2" value={selected}
-            disabled={!canProcess || !approved || disabled || remaining <= 0} onChange={e => {
-              setSelected(e.target.value); const choice = stock.lots.find(value => lotKey(value) === e.target.value);
-              if (choice) setQuantity(stock.fulfillment ? Math.floor(choice.quantity) : Math.min(remaining, Math.floor(choice.quantity)));
-            }}>
-            <option value="">{text.chooseLot}</option>
-            {stock.lots.map(choice => <option key={lotKey(choice)} value={lotKey(choice)}>
-              {choice.replacementName ? `${choice.replacementName} · ` : ""}{choice.lotCode} — {language === "ar" ? choice.warehouseNameAr : choice.warehouseNameEn || choice.warehouseNameAr} — {choice.quantity} {choice.unit}
-            </option>)}
-          </select>
-        </div>}
+        {!canProcess&&stock.lots.map(lot=><p key={`${lot.warehouseId}:${lot.lotId}`}>{lot.lotCode} — {lot.warehouseNameAr} — {lot.quantity} {lot.unit}</p>)}
         {canProcess && approved && remaining > 0 && <>
-          {lot && <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
-            <p className="text-sm">{lot.lotCode} · {text.available}: {lot.quantity} {lot.unit}</p>
-            <div><Label htmlFor={`operational-quantity-${line.id}`}>{text.quantity} ({lot.unit})</Label><Input id={`operational-quantity-${line.id}`} type="number" min={1} max={maximum} step={1} value={quantity} disabled={disabled} onChange={e => setQuantity(Number(e.target.value))} /></div>
-            <p className="text-sm">{text.totalCost}: {(lot.unitCost * quantity).toFixed(2)} {text.currency}</p>
-            <Button disabled={disabled || !Number.isInteger(quantity) || quantity < 1 || quantity > maximum} onClick={() => void submit()}>{text.issue}</Button>
-          </div>}
-          {stock.totalQuantity === 0 && !stock.needsReview && !stock.purchase && <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3 space-y-2">
-            <p className="text-sm">{text.zeroStock}</p>
-            {procurementReady ? <Button variant="outline" disabled={disabled} onClick={() => void addToDraft()}>{text.addToDraft} — {remaining} {line.unit}</Button>
+          <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
+            <Label>{text.warehouse}</Label><select className="h-10 w-full rounded-md border bg-background px-2" value={String(warehouseId||"")} disabled={disabled} onChange={event=>{setWarehouse(event.target.value);setSelection({mode:"fifo"});}}>
+              {!warehouseId&&<option value="">{text.warehouse}</option>}
+              {stock.lots.filter((lot,index,all)=>all.findIndex(row=>row.warehouseId===lot.warehouseId)===index).map(lot=><option key={lot.warehouseId} value={String(lot.warehouseId)}>{language==="ar"?lot.warehouseNameAr:lot.warehouseNameEn||lot.warehouseNameAr}</option>)}
+            </select>
+            <WarehouseLotSelection lots={lots} required={remaining} unit={line.unit} value={selection} onChange={setSelection} disabled={disabled} language={language}/>
+            <p className="text-sm">{text.totalCost}: {plan.reduce((sum,lot)=>sum+lot.unitCost*lot.quantity,0).toFixed(2)} {text.currency}</p>
+            <Button disabled={disabled || !ready} onClick={() => void submit()}>{text.issue}</Button>
+          </div>
+          {stock.totalQuantity < remaining && !stock.needsReview && !stock.purchase && <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3 space-y-2">
+            <p className="text-sm">{stock.totalQuantity === 0 ? text.zeroStock : language === "ar" ? "الرصيد لا يغطي كامل الاحتياج؛ ينتظر تغطية العجز." : language === "ur" ? "اسٹاک پوری ضرورت کے لیے ناکافی ہے؛ کمی پوری ہونے کا انتظار ہے۔" : "Stock does not cover the full requirement; waiting for shortage coverage."}</p>
+            {procurementReady ? <Button variant="outline" disabled={disabled} onClick={() => void addToDraft()}>{text.addToDraft} — {Math.max(0,remaining-Math.floor(stock.totalQuantity))} {line.unit}</Button>
               : <p className="text-sm text-muted-foreground">{text.procurementUnavailable}</p>}
           </div>}
         </>}

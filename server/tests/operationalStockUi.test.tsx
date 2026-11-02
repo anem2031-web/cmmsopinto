@@ -17,8 +17,9 @@ describe("Operational stock and procurement presentation", () => {
     const text = operationalIssueText[language as keyof typeof operationalIssueText];
     const stock: OperationalStock = { ...empty, totalQuantity: 3, lots: [{ inventoryId: 1, warehouseId: 1, warehouseNameAr: "مخزن التكييف", warehouseNameEn: "AC warehouse", lotId: 10, lotCode: "LOT-A", trackingToken: "token-a", quantity: 3, unit: "حبة", unitCost: 12 }] };
     const stocked = renderToStaticMarkup(<OperationalStockPanel {...props} stock={stock} />);
-    expect(stocked).toContain(text.totalAvailable); expect(stocked).toContain("LOT-A"); expect(stocked).toContain(language === "ar" ? "مخزن التكييف" : "AC warehouse");
-    expect(stocked).not.toContain(text.addToDraft);
+    expect(stocked).toContain(text.totalAvailable); expect(stocked).toContain('aria-expanded="false"'); expect(stocked).toContain(language === "ar" ? "مخزن التكييف" : "AC warehouse");
+    expect(stocked).toContain(`${text.addToDraft} — 1 حبة`);
+    expect(stocked).toMatch(new RegExp('disabled="">'+text.issue));
     const zero = renderToStaticMarkup(<OperationalStockPanel {...props} stock={empty} />);
     expect(zero).toContain(text.zeroStock); expect(zero).toContain(`${text.addToDraft} — 4 حبة`);
   });

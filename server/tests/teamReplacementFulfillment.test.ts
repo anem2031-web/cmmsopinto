@@ -10,8 +10,8 @@ const dialect = new MySqlDialect();
 function fixture() {
   const state = { users: [{ id: 2, active: true, role: "warehouse" }, { id: 3, active: true, role: "technician" }],
     teams: [{ id: 21, active: true }], memberships: [{ teamId: 21, userId: 3, active: true }],
-    assignments: [{ id: 1, teamId: 21, ticketId: 100, ticketItemId: 101 }], tickets: [{ ticketId: 100 }],
-    needs: [{ id: 20, assignmentId: 1, catalogItemId: 9, unit: "حبة", requested: 4, name: "الأصل", originalName: "الأصل", used: null }],
+    assignments: [{ id: 1, teamId: 21, ticketId: 100, ticketItemId: 101, warehouseId: 22, materialRound: 1 }], tickets: [{ ticketId: 100 }],
+    needs: [{ id: 20, assignmentId: 1, round: 1, catalogItemId: 9, unit: "حبة", requested: 4, name: "الأصل", originalName: "الأصل", used: null }],
     supplies: [{ id: 30, needId: 20, kind: "purchase", sourceId: 7, quantity: 4, status: "received" }], deliveries: [] } as unknown as Snapshot;
   const writes: any[] = [];
   const tx = { execute: async (q: any) => {
@@ -44,6 +44,18 @@ beforeEach(() => { facts.active = true; facts.alternativeStock = 6; facts.origin
   receiptLinkId: 13, receivedQuantity: "2", receivedUnit: "علبة", compensatedOriginalQuantity: "4", originalUnit: "حبة",
   lotId: 14, trackingToken: "LOT-TEST", issueUnit: "قطعة", lotQuantity: "6" }]; });
 describe("team replacement physical fulfillment", () => {
+  it("manually issues a valid three-piece alternative plus two original units without altering the need", async () => {
+    const f=fixture(); facts.alternativeStock=5; facts.originalStock=2;
+    const result=await f.gateway.issueNeed(20,{operationKey:"manual-mixed",ticketId:100,ticketNumber:"MT-TEST",warehouseId:22,catalogItemId:9,quantity:4,unit:"حبة",receiverId:3,location:{siteId:1,sectionId:2},selection:{mode:"manual",lots:[{lotId:14,quantity:3},{lotId:114,quantity:2}]}});
+    expect(result.map(row=>[row.quantity,row.originalEquivalent])).toEqual([[3,2],[2,2]]);
+    expect(facts.alternativeStock).toBe(2); expect(facts.originalStock).toBe(0); expect(f.state.needs[0].requested).toBe(4);
+  });
+  it("rejects a foreign lot or wrong warehouse before calling physical writers",async()=>{
+    const f=fixture(); facts.originalStock=4;
+    await expect(f.gateway.issueLots(20,99)).rejects.toThrow("خارج نطاق");
+    await expect(f.gateway.issueNeed(20,{operationKey:"foreign",ticketId:100,ticketNumber:"MT-TEST",warehouseId:22,catalogItemId:9,quantity:4,unit:"حبة",receiverId:3,location:{siteId:1,sectionId:2},selection:{mode:"manual",lots:[{lotId:999,quantity:4}]}})).rejects.toThrow();
+    expect(f.writes).toEqual([]);
+  });
   it("issues the approved physical alternative and projects original coverage without rewriting the need", async () => {
     const f = fixture();
     const result = await f.gateway.issueNeed(20, { operationKey: "test", ticketId: 100, ticketNumber: "MT-TEST", warehouseId: 22,

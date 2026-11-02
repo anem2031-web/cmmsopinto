@@ -1,3 +1,4 @@
+import type { WarehouseLotOption } from "./warehouse-lot-selection";
 export type OperationalActor = { id: number; role: string; isActive?: number };
 export const OPERATIONAL_CREATE_ROLES = ["maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "it_manager", "owner", "admin", "warehouse"];
 export const OPERATIONAL_WAREHOUSE_ROLES = ["warehouse", "owner", "admin"];
@@ -18,7 +19,7 @@ export type OperationalDelivery = {
   id: number; orderItemId: number; deliveryDocumentId: number; deliveryNumber: string; quantity: number;
   lotUnitCost: number; cost: number; returnedQuantity: number; lotCode: string; createdAt: string;
 };
-export type OperationalLotChoice = {
+export type OperationalLotChoice = WarehouseLotOption & {
   replacementName?: string;
   receivedAt?: string;
   inventoryId: number; warehouseId: number; warehouseNameAr: string; warehouseNameEn: string | null;

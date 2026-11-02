@@ -107,7 +107,8 @@ export async function addOperationalPurchaseDraft(tx: any, ports: OperationalPur
   const remaining = Number(line.quantity) - Number(line.issuedQuantity);
   if (order.status !== "approved" || remaining <= 0 || !Number.isInteger(remaining)) throw new TRPCError({ code: "CONFLICT", message: "يلزم أمر معتمد وكمية متبقية صحيحة" });
   const [stock] = await loadOperationalStock(tx, [line], true, context?.warehouseId);
-  if (stock.totalQuantity > 0 || stock.needsReview) throw new TRPCError({ code: "CONFLICT", message: "يوجد رصيد أو أرصدة تحتاج مراجعة؛ حدّث الصفحة واختر اللوت قبل طلب شراء" });
+  const shortage = Math.max(0, remaining - Math.floor(stock.totalQuantity));
+  if (shortage <= 0 || stock.needsReview) throw new TRPCError({ code: "CONFLICT", message: "لا يوجد عجز غير مغطى أو أن الأرصدة تحتاج مراجعة" });
   const [catalog] = await rows(tx, sql`SELECT id,nameAr,nameEn,unit FROM catalog_items WHERE id=${Number(line.catalogItemId)} AND isActive=1`);
   if (!catalog) throw new TRPCError({ code: "BAD_REQUEST", message: "صنف الكتالوج غير نشط أو غير موجود" });
   const [section] = await rows(tx, sql`SELECT s.id FROM sections s INNER JOIN sites t ON t.id=s.siteId WHERE s.id=${Number(order.sectionId)} AND t.id=${Number(order.siteId)}`);
@@ -131,13 +132,13 @@ export async function addOperationalPurchaseDraft(tx: any, ports: OperationalPur
     if (!purchaseOrderId) throw new Error("تعذر حفظ مسودة الشراء");
   }
   await ports.createItems(tx, [{ purchaseOrderId, catalogItemId: Number(line.catalogItemId), itemName: catalog.nameAr || catalog.nameEn || line.itemName,
-    quantity: remaining, unit: line.unit, status: "pending", deliveryLeadDays: DEFAULT_PURCHASE_DELIVERY_DAYS, requiredDate: null, notes: reference }]);
+    quantity: shortage, unit: line.unit, status: "pending", deliveryLeadDays: DEFAULT_PURCHASE_DELIVERY_DAYS, requiredDate: null, notes: reference }]);
   const [poItem] = await rows(tx, sql`SELECT id FROM purchase_order_items WHERE purchaseOrderId=${purchaseOrderId} AND catalogItemId=${Number(line.catalogItemId)} ORDER BY id DESC LIMIT 1`);
   if (!poItem) throw new Error("تعذر ربط صنف مسودة الشراء");
   await tx.execute(sql`INSERT INTO operational_issue_purchase_links (orderItemId,purchaseOrderId,purchaseOrderItemId,quantity,unit,createdById)
-    VALUES (${itemId},${purchaseOrderId},${Number(poItem.id)},${remaining},${line.unit},${actor.id})
+    VALUES (${itemId},${purchaseOrderId},${Number(poItem.id)},${shortage},${line.unit},${actor.id})
     ON DUPLICATE KEY UPDATE purchaseOrderId=VALUES(purchaseOrderId),purchaseOrderItemId=VALUES(purchaseOrderItemId),quantity=VALUES(quantity),unit=VALUES(unit),createdById=VALUES(createdById)`);
   await tx.execute(sql`INSERT INTO audit_logs (userId,action,entityType,entityId,newValues) VALUES
-    (${actor.id},'operational_issue_purchase_draft','operational_issue',${order.id},${JSON.stringify({ itemId, purchaseOrderId, purchaseOrderItemId: Number(poItem.id), quantity: remaining, unit: line.unit })})`);
-  return { orderItemId: itemId, purchaseOrderId, purchaseOrderItemId: Number(poItem.id), poNumber, quantity: remaining, unit: line.unit, status: "draft", itemStatus: "pending", changed: false, existing: false };
+    (${actor.id},'operational_issue_purchase_draft','operational_issue',${order.id},${JSON.stringify({ itemId, purchaseOrderId, purchaseOrderItemId: Number(poItem.id), quantity: shortage, unit: line.unit })})`);
+  return { orderItemId: itemId, purchaseOrderId, purchaseOrderItemId: Number(poItem.id), poNumber, quantity: shortage, unit: line.unit, status: "draft", itemStatus: "pending", changed: false, existing: false };
 }

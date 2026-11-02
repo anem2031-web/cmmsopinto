@@ -1,4 +1,6 @@
 import { useRef, useState } from "react";
+import { WarehouseLotSelection } from "@/components/inventory/WarehouseLotSelection";
+import type { WarehouseLotSelection as LotSelection } from "@shared/warehouse-lot-selection";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -47,6 +49,7 @@ export function PreparedDispatchPanel({
   const [values, setValues] = useState<
     Record<number, { actualCollectorId: string; notes: string }>
   >({});
+  const [lotSelections,setLotSelections]=useState<Record<number,LotSelection>>({});
   const busy = useRef(false),
     operation = useRef<{ value: string; key: string } | null>(null);
   const recipients = trpc.operationalIssues.choices.useQuery(undefined, {
@@ -59,7 +62,7 @@ export function PreparedDispatchPanel({
     const stock = stocks?.find(s => s.itemId === Number(line.id));
     try {
       return stock
-        ? allocateOperationalFifo(stock, Number(line.quantity))
+        ? allocateOperationalFifo(stock, Number(line.quantity),lotSelections[line.id])
         : null;
     } catch {
       return null;
@@ -118,6 +121,8 @@ export function PreparedDispatchPanel({
                 {t.stock}: {stock.totalQuantity} {stock.unit}
               </p>
             )}
+            {canProcess&&order.status==="approved"&&stock&&<WarehouseLotSelection lots={stock.lots} required={Number(line.quantity)} unit={line.unit}
+              value={lotSelections[line.id]||{mode:"fifo"}} onChange={selection=>setLotSelections(old=>({...old,[line.id]:selection}))} disabled={disabled} language={language}/>}
             {order.status !== "completed" && allocations[index] && (
               <p className="text-xs text-muted-foreground">
                 {t.current}:{" "}
@@ -200,11 +205,11 @@ export function PreparedDispatchPanel({
             )}
             {canProcess &&
               order.status === "approved" &&
-              stock?.totalQuantity === 0 &&
+              stock && stock.totalQuantity < Number(line.quantity) &&
               !stock.needsReview &&
               !stock.purchase && (
                 <div>
-                  <p>{t.noStock}</p>
+                  <p>{stock.totalQuantity === 0 ? t.noStock : language === "ar" ? "الرصيد لا يغطي الطلب كاملًا؛ يلزم تغطية العجز قبل تأكيد الصرف." : language === "ur" ? "پورا اجرا کرنے سے پہلے اسٹاک کی کمی پوری کریں۔" : "Cover the stock shortage before confirming the full issue."}</p>
                   {procurementReady ? (
                     <Button
                       variant="outline"
@@ -262,6 +267,7 @@ export function PreparedDispatchPanel({
                     ? Number(values[l.id].actualCollectorId)
                     : null,
                   notes: values[l.id]?.notes || "",
+                  selection:lotSelections[l.id]||{mode:"fifo"},
                 })),
               };
               const value = JSON.stringify(body);

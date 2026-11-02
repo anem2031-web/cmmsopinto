@@ -1,4 +1,5 @@
 import { canUserExecuteAllPmv2Teams, pmv2ExecutionActor, pmv2ExecutionActorCondition, pmv2ExecutionTeamCondition } from "../security/execution-access";
+import { selectFullIssueLots, type WarehouseLotSelection, type WarehouseLotOption } from "../../../shared/warehouse-lot-selection";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   pmv2ItemActions,
@@ -10,6 +11,7 @@ import {
   pmv2TeamMembers,
   pmv2Teams,
   users,
+  catalogItems,
 } from "../../../drizzle/schema";
 import { getDb } from "../../_core/db/client";
 import {
@@ -678,6 +680,17 @@ export class Pmv2TeamIssueHandoffService {
       const replacementLotIds=new Set(replacements.flatMap(({plan})=>plan.lots.map(lot=>lot.lotId)));
       const fulfillment=planPmv2Fulfillment({requiredOriginal:remainingQuantity,originalUnit:requirement.unit,originalStock:lots.filter(lot=>!replacementLotIds.has(lot.id)).map(lot=>({lotId:lot.id,inventoryId:inventoryId!,warehouseId:requirement.teamWarehouseId,catalogItemId:Number(requirement.catalogItemId),unit:availability.unit||requirement.unit,quantity:lot.quantity,lotCode:lot.lotCode,trackingToken:lot.trackingToken})),replacements:replacements.map(replacement=>({replacement,stock:replacement.plan.lots.map(lot=>replacementStock.get(`${requirement.teamWarehouseId}:${lot.lotId}`)).filter((lot):lot is NonNullable<typeof lot>=>!!lot),alreadyAllocated:previousIssues.filter((row:any)=>row.note.replacementPlanId===replacement.plan.planId).reduce((sum:number,row:any)=>sum+originalEquivalent(row.note),0)}))});
       const fulfillmentAllocations=fulfillment.allocations;
+      const availableLotOptions: Array<WarehouseLotOption & {catalogItemId:number;trackingToken:string;inventoryId:number}> = lots.filter(lot => !replacementLotIds.has(lot.id)).map(lot => ({
+        lotId:lot.id, lotCode:lot.lotCode, inventoryId:inventoryId!, catalogItemId:Number(requirement.catalogItemId), trackingToken:lot.trackingToken,
+        quantity:lot.quantity, unit:availability.unit||requirement.unit, createdAt:lot.createdAt,
+      }));
+      for (const replacement of replacements) {
+        const used=previousIssues.filter((row:any)=>row.note.replacementPlanId===replacement.plan.planId).reduce((sum:number,row:any)=>sum+originalEquivalent(row.note),0);
+        for(const source of replacement.plan.lots) {
+          const lot=replacementStock.get(`${requirement.teamWarehouseId}:${source.lotId}`);
+          if(lot) availableLotOptions.push({...lot,originalPerUnit:Number(replacement.plan.originalQuantityCovered)/replacement.plan.lots.reduce((sum,row)=>sum+Number(row.quantity),0),coverageKey:String(replacement.plan.planId),coverageLimit:Math.max(0,replacement.maximumOriginalQuantity-used)});
+        }
+      }
       let blocker = target.blocker;
       if (pendingRelink) blocker = `تم إنشاء سند الصرف ${pendingRelink.note.deliveryNumber} فعليًا ويحتاج إعادة ربط فقط — لا تكرر الصرف`;
       if (!fulfillment.complete&&fulfillment.unrepresentable) blocker ||="أرصدة لوتات البديل لا تحقق نسبة التعويض المعتمدة بوحدات صحيحة؛ راجع توزيع اللوتات والكمية دون تقريب";
@@ -696,6 +709,7 @@ export class Pmv2TeamIssueHandoffService {
         unit: requirement.unit, requiredQuantity: requirement.requestedQuantity, issuedQuantity, remainingQuantity,
         availableQuantity: fulfillment.availableOriginal, inventoryId:inventoryId??fulfillmentAllocations[0]?.inventoryId??null,
         fulfillmentAllocations,
+        availableLotOptions,
         requesterUserId: requirement.requesterUserId, requesterName: requester?.name || `#${requirement.requesterUserId}`,
         defaultRecipientUserId: requester?.id || technicians[0]?.id || null, technicians,
         targetLabel: target.label, canIssue: !blocker, canIssueToAuthorizedExecutor, blocker,
@@ -754,7 +768,7 @@ export class Pmv2TeamIssueHandoffService {
     }, auditContext);
   }
 
-  async issueReadyRequirement(actorUserId: number, input: { routeDecisionActionId: number; deliveredToId?: number }, auditContext?: { ipAddress?: string; userAgent?: string }) {
+  async issueReadyRequirement(actorUserId: number, input: { routeDecisionActionId: number; deliveredToId?: number; selection?: WarehouseLotSelection }, auditContext?: { ipAddress?: string; userAgent?: string }) {
     const queue = await this.listReadyToIssueQueue();
     const candidate = queue.find((item) => item.routeDecisionActionId === input.routeDecisionActionId);
     if (!candidate) throw new Pmv2TeamIssueHandoffError("احتياج المادة لم يعد متاحًا للصرف؛ حدّث الشاشة");
@@ -768,6 +782,8 @@ export class Pmv2TeamIssueHandoffService {
       throw new Pmv2TeamIssueHandoffError(candidate.blocker || "المادة غير جاهزة للصرف");
     }
     const technicianSelfService = actorUserId === deliveredToId;
+
+    if(input.selection || !technicianSelfService) return this.issueSelectedRequirement(db, actorUserId, input.selection ?? {mode:"fifo"}, candidate, deliveredToId, auditContext);
 
     const requirement = await loadRequirementByRouteAction(db, candidate.routeDecisionActionId);
     if (!requirement) throw new Pmv2TeamIssueHandoffError("تعذر استعادة احتياج المادة");
@@ -824,19 +840,147 @@ export class Pmv2TeamIssueHandoffService {
     return { completed: true, partial: false, posted, issuedQuantity: candidate.remainingQuantity, recipientUserId: deliveredToId };
   }
 
-  async linkConfirmedDelivery(actorUserId: number, input: { routeDecisionActionId: number; deliveryNumber: string }, auditContext?: { ipAddress?: string; userAgent?: string }) {
+  private async issueSelectedRequirement(
+    db: any,
+    actorUserId: number,
+    selection: WarehouseLotSelection,
+    candidate: any,
+    deliveredToId: number,
+    auditContext?: { ipAddress?: string; userAgent?: string },
+  ) {
+    return db.transaction(async (tx: any) => {
+      await tx.execute(
+        sql`SELECT id FROM pmv2_task_items WHERE id=${candidate.taskItemId} FOR UPDATE`,
+      );
+      const [actor] = await tx
+        .select({ id: users.id, role: users.role, isActive: users.isActive })
+        .from(users)
+        .where(eq(users.id, actorUserId))
+        .limit(1);
+      if (
+        !actor ||
+        Number(actor.isActive) !== 1 ||
+        !["warehouse", "admin", "owner"].includes(actor.role)
+      )
+        throw new Pmv2TeamIssueHandoffError("الصرف المختار متاح للمستودع فقط");
+      const requirement = await loadRequirementByRouteAction(
+        tx,
+        candidate.routeDecisionActionId,
+      );
+      if (
+        !requirement ||
+        requirement.itemStatus !== "waiting_material" ||
+        requirement.itemResult !== "needs_material" ||
+        ["cancelled", "completed"].includes(requirement.taskStatus) ||
+        requirement.teamWarehouseId !== candidate.warehouseId ||
+        requirement.catalogItemId !== candidate.catalogItemId
+      )
+        throw new Pmv2TeamIssueHandoffError("تغير احتياج المهمة؛ حدّث الشاشة");
+      const remaining = roundQuantity(
+        requirement.requestedQuantity -
+          (await sumIssuedForRoute(
+            tx,
+            requirement.taskItemId,
+            requirement.routeDecisionActionId,
+          )),
+      );
+      if (
+        remaining <= 0 ||
+        Math.abs(remaining - candidate.remainingQuantity) > 0.0005
+      )
+        throw new Pmv2TeamIssueHandoffError(
+          "تغير المتبقي المطلوب؛ حدّث الشاشة ولا تكرر الصرف",
+        );
+      const allocations =
+        selection.mode === "fifo" &&
+        candidate.availableLotOptions.some((lot: any) => lot.coverageKey)
+          ? candidate.fulfillmentAllocations
+          : selectFullIssueLots(
+              candidate.availableLotOptions,
+              remaining,
+              requirement.unit,
+              selection,
+            );
+      if (!allocations.length)
+        throw new Pmv2TeamIssueHandoffError("يلزم تغطية كامل الاحتياج");
+      const catalogIds = Array.from(
+        new Set<number>(
+          allocations.map((lot: any) => Number(lot.catalogItemId)),
+        ),
+      );
+      const catalogs = await tx
+        .select({ id: catalogItems.id, isActive: catalogItems.isActive })
+        .from(catalogItems)
+        .where(inArray(catalogItems.id, catalogIds));
+      if (
+        catalogs.length !== catalogIds.length ||
+        catalogs.some((row: any) => Number(row.isActive) !== 1)
+      )
+        throw new Pmv2TeamIssueHandoffError("صنف الصرف أو البديل غير نشط");
+      const inventoryIds = Array.from(
+        new Set<number>(allocations.map((lot: any) => Number(lot.inventoryId))),
+      ).sort((a, b) => a - b);
+      await tx.execute(
+        sql`SELECT id FROM inventory WHERE id IN (${sql.join(
+          inventoryIds.map((id) => sql`${id}`),
+          sql`,`,
+        )}) ORDER BY id FOR UPDATE`,
+      );
+      const target = await resolveTarget(requirement.programTargetId);
+      if (!target.costTarget)
+        throw new Pmv2TeamIssueHandoffError(
+          target.blocker || "جهة تحميل التكلفة غير صالحة",
+        );
+      const posted = [];
+      for (const allocation of allocations) {
+        const delivery = await currentInventoryIssueAdapter.issueDelivery(
+          {
+            taskItemId: requirement.taskItemId,
+            inventoryId: allocation.inventoryId,
+            quantity: allocation.quantity,
+            unit: allocation.unit,
+            performedById: actorUserId,
+            deliveredToId,
+            lotTrackingToken: allocation.trackingToken,
+            notes: `صرف كامل احتياج مهمة PM V2 ${candidate.taskNumber}`,
+            costTarget: target.costTarget,
+          },
+          tx,
+        );
+        const link = await this.linkConfirmedDelivery(
+          actorUserId,
+          {
+            routeDecisionActionId: candidate.routeDecisionActionId,
+            deliveryNumber: delivery.deliveryNumber,
+          },
+          auditContext,
+          tx,
+        );
+        posted.push({ ...delivery, link });
+      }
+      return {
+        completed: true,
+        partial: false,
+        posted,
+        issuedQuantity: remaining,
+        recipientUserId: deliveredToId,
+      };
+    });
+  }
+
+  async linkConfirmedDelivery(actorUserId: number, input: { routeDecisionActionId: number; deliveryNumber: string }, auditContext?: { ipAddress?: string; userAgent?: string }, existingTx?:any) {
     const routeDecisionActionId = Number(input.routeDecisionActionId);
     const deliveryNumber = String(input.deliveryNumber || "").trim();
-    const db = await requireDb();
+    const db = existingTx || await requireDb();
     const requirement = await loadRequirementByRouteAction(db, routeDecisionActionId);
     if (!requirement?.catalogItemId) throw new Pmv2TeamIssueHandoffError("احتياج PM V2 غير صالح للربط");
-    const delivery = await currentDeliveryAdapter.getDeliveryByNumber(deliveryNumber);
+    const delivery = await currentDeliveryAdapter.getDeliveryByNumber(deliveryNumber,existingTx);
     if (!delivery || !delivery.id || delivery.catalogItemId == null || delivery.warehouseId == null) throw new Pmv2TeamIssueHandoffError("سند الصرف المؤكد غير موجود أو غير مكتمل");
     if (delivery.executionSource && (delivery.executionSource !== "pmv2" || delivery.executionId !== requirement.taskId || delivery.executionItemId !== requirement.taskItemId)) {
       throw new Pmv2TeamIssueHandoffError("سند الصرف مسجل على مرجع تكلفة آخر؛ لا يمكن احتسابه مرة أخرى على مهمة PMV2. استخدم الصرف من احتياج المهمة.");
     }
 
-    return db.transaction(async (tx: any) => {
+    const executeLink = async (tx: any) => {
       await tx.execute(sql`SELECT id FROM delivery_documents WHERE id = ${delivery.id} FOR UPDATE`);
       await tx.execute(sql`SELECT id FROM pmv2_task_items WHERE id = ${requirement.taskItemId} FOR UPDATE`);
       const issueRows = await listIssueActions(tx, requirement.taskItemId);
@@ -904,7 +1048,8 @@ export class Pmv2TeamIssueHandoffService {
         newValues: { deliveryNumber, linkedQuantity, issuedQuantity: roundQuantity(issuedBefore + linkedQuantity), allIssued, taskStatus, requesterUserId: requirement.requesterUserId, recipientUserId: delivery.deliveredToId },
         ipAddress: auditContext?.ipAddress, userAgent: auditContext?.userAgent });
       return { idempotent: false, issueActionId, deliveryNumber, linkedQuantity, physicalQuantity, totalIssuedQuantity: roundQuantity(issuedBefore + linkedQuantity), remainingQuantity: roundQuantity(remainingBefore - linkedQuantity), allIssued, taskStatus };
-    });
+    };
+    return existingTx ? executeLink(existingTx) : db.transaction(executeLink);
   }
 
   async listCompletionMaterials(userId: number, taskId: number, taskItemId: number) {

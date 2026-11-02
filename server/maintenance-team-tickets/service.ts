@@ -1,3 +1,4 @@
+import type { WarehouseLotSelection } from "../../shared/warehouse-lot-selection";
 import {
   TeamTicketError,
   integer,
@@ -844,7 +845,8 @@ export class MaintenanceTeamTicketService {
     needId: number,
     actorId: number,
     key: string,
-    effects: MaterialGateway
+    effects: MaterialGateway,
+    selection?: WarehouseLotSelection
   ) {
     const n = currentNeeds(s, a).find(n => n.id === needId);
     if (!n || n.catalogItemId === null)
@@ -879,6 +881,7 @@ export class MaintenanceTeamTicketService {
       unit: n.unit,
       receiverId: actorId,
       location: a.location,
+      ...(selection ? { selection } : {}),
     };
     const deliveries = effects.issueNeed
       ? await effects.issueNeed(needId, issueInput)
@@ -953,17 +956,18 @@ export class MaintenanceTeamTicketService {
     actorId: number,
     c: Command,
     needId: number,
-    recipientId: number
+    recipientId: number,
+    selection?: WarehouseLotSelection
   ) {
     return this.command(
       actorId,
       c,
-      { kind: "warehouse_issue", needId, recipientId },
+      { kind: "warehouse_issue", needId, recipientId, ...(selection ? { selection } : {}) },
       s => warehouse(s, actorId),
       async (s, a, effects) => {
         allowStage(a, ["waiting_material"]);
         executor(s, recipientId, a);
-        await this.issue(s, a, needId, recipientId, c.operationKey, effects);
+        await this.issue(s, a, needId, recipientId, c.operationKey, effects, selection);
         if (allReceived(s, a)) a.stage = "ready_to_repair";
         noteAction(
           s,

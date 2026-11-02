@@ -6,6 +6,8 @@ import { TicketExecutionControls } from "./TicketExecutionControls";
 import { TicketTechnicianMaterials } from "./TicketTechnicianMaterials";
 import { ticketSessionActionText, ticketExecutionSession } from "@shared/maintenance-team-tickets/execution-session";
 import { trpc } from "@/lib/trpc";
+import { TicketWarehouseLotSelection } from "./TicketWarehouseLotSelection";
+import type { WarehouseLotSelection } from "@shared/warehouse-lot-selection";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -123,6 +125,8 @@ export function ExecutionPanel({
       { retry: false }
     );
   const [catalogNeedId, setCatalogNeedId] = useState<number | null>(null);
+  const [issueSelections,setIssueSelections]=useState<Record<number,WarehouseLotSelection>>({});
+  const [issueSelectionReady,setIssueSelectionReady]=useState<Record<number,boolean>>({});
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [message, setMessage] = useState(""),
@@ -534,6 +538,9 @@ export function ExecutionPanel({
                           left > 0 &&
                           supplyRemaining === 0 ? (
                             <div className="grid gap-3 rounded-lg border bg-muted/10 p-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                              <div className="sm:col-span-2"><TicketWarehouseLotSelection assignmentId={assignmentId} needId={n.id} required={left} unit={n.unit}
+                                value={issueSelections[n.id]||{mode:"fifo"}} onChange={selection=>setIssueSelections(old=>({...old,[n.id]:selection}))}
+                                onReadyChange={ready=>setIssueSelectionReady(old=>old[n.id]===ready?old:{...old,[n.id]:ready})} disabled={busy} language={language}/></div>
                               <div>
                                 <label
                                   htmlFor={`ticket-recipient-${assignmentId}-${n.id}`}
@@ -585,7 +592,7 @@ export function ExecutionPanel({
                                 </select>
                               </div>
                               <Button
-                                disabled={busy || !Number(selectedRecipient)}
+                                disabled={busy || !Number(selectedRecipient) || issueSelectionReady[n.id]===false}
                                 className="gap-2"
                                 onClick={() =>
                                   void run(
@@ -593,6 +600,7 @@ export function ExecutionPanel({
                                     {
                                       needId: n.id,
                                       recipientId: Number(selectedRecipient),
+                                      selection:issueSelections[n.id]||{mode:"fifo"},
                                     },
                                     c =>
                                       utils.client.ticketTeamExecution.issue.mutate(
@@ -601,6 +609,7 @@ export function ExecutionPanel({
                                           needId: n.id,
                                           recipientId:
                                             Number(selectedRecipient),
+                                          selection:issueSelections[n.id]||{mode:"fifo"},
                                         }
                                       )
                                   )

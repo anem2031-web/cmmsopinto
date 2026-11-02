@@ -1,3 +1,5 @@
+import { WarehouseLotSelection } from "@/components/inventory/WarehouseLotSelection";
+import { selectFullIssueLots, type WarehouseLotSelection as LotSelection } from "@shared/warehouse-lot-selection";
 import { AlertTriangle, ArrowLeftRight, Boxes, ClipboardList, Link2, Loader2, PackageCheck, RefreshCw, RotateCcw, Send, ShoppingCart, Warehouse } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +68,7 @@ export default function Pmv2WarehouseQueue() {
   const [approvedIdentityQuantity, setApprovedIdentityQuantity] = useState("");
   const [selectedIdentityCatalogId, setSelectedIdentityCatalogId] = useState<number | null>(null);
   const [activeSection, setActiveSection] = useState<"waiting" | "ready" | "returns">("waiting");
+  const [lotSelections,setLotSelections]=useState<Record<number,LotSelection>>({});
 
   const identityCandidates = trpc.pmv2.warehouse.searchMaterialIdentityCandidates.useQuery(
     { requestItemId: Number(identityRequest?.requestItemId || 1), search: identitySearch },
@@ -480,6 +483,9 @@ export default function Pmv2WarehouseQueue() {
           <div className="space-y-3">
             {(readyIssue.data as any[]).map((item: any) => {
               const selectedRecipient = recipientByRequirement[item.routeDecisionActionId] || String(item.defaultRecipientUserId || "");
+              const selection=lotSelections[item.routeDecisionActionId]||{mode:"fifo" as const};
+              let manualReady=true;
+              if(selection.mode==="manual")try{selectFullIssueLots(item.availableLotOptions||[],item.remainingQuantity,item.unit,selection);}catch{manualReady=false;}
               return (
                 <Card key={item.routeDecisionActionId} className={item.canIssue ? "border-emerald-200" : "border-amber-200"}>
                   <CardHeader className="border-b pb-3">
@@ -527,6 +533,8 @@ export default function Pmv2WarehouseQueue() {
                       </div>
                     ) : item.blocker ? <p className="text-sm font-medium text-amber-700">{item.blocker}</p> : (
                       <div className="grid gap-3 rounded-lg border bg-muted/10 p-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                        <div className="sm:col-span-2"><WarehouseLotSelection lots={item.availableLotOptions||[]} required={item.remainingQuantity} unit={item.unit} value={selection}
+                          onChange={value=>setLotSelections(old=>({...old,[item.routeDecisionActionId]:value}))} disabled={issueRequirement.isPending} language={language}/></div>
                         <div>
                           <label className="mb-1 block text-xs font-medium">{t.workflow.pmv2.actualRecipient}</label>
                           <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={selectedRecipient}
@@ -534,8 +542,8 @@ export default function Pmv2WarehouseQueue() {
                             {item.technicians.map((tech: any) => <option key={tech.id} value={String(tech.id)}>{tech.name}{tech.id === item.requesterUserId ? ` — ${t.workflow.pmv2.materialRequesterSuffix}` : ""}</option>)}
                           </select>
                         </div>
-                        <Button className="gap-2" disabled={issueRequirement.isPending || !selectedRecipient}
-                          onClick={() => issueRequirement.mutate({ routeDecisionActionId: item.routeDecisionActionId, deliveredToId: Number(selectedRecipient) })}>
+                        <Button className="gap-2" disabled={issueRequirement.isPending || !selectedRecipient || !manualReady}
+                          onClick={() => issueRequirement.mutate({ routeDecisionActionId: item.routeDecisionActionId, deliveredToId: Number(selectedRecipient),selection })}>
                           {issueRequirement.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                           {t.workflow.pmv2.issueFullNeed}
                         </Button>

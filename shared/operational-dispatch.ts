@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { OperationalStock } from "./operational-issues";
+import { selectFullIssueLots, warehouseLotSelectionSchema, type WarehouseLotSelection } from "./warehouse-lot-selection";
 
 const id = z.number().int().positive();
 export const dispatchContextSchema = z.object({
@@ -50,6 +51,7 @@ export const preparedIssueSchema = z.object({
         itemId: id,
         actualCollectorId: id.nullable().optional(),
         notes: z.string().trim().max(2000).default(""),
+        selection: warehouseLotSelectionSchema.optional(),
       })
     )
     .min(1)
@@ -63,10 +65,12 @@ export const canUseOperationalCatalog = (role: string) =>
 /** Quantities are in thousandths; no unit conversion and no valuation changes. */
 export function allocateOperationalFifo(
   stock: OperationalStock,
-  quantity: number
+  quantity: number,
+  selection?: WarehouseLotSelection
 ) {
   if (stock.needsReview || !Number.isFinite(quantity) || quantity <= 0)
     throw new Error("راجع أرصدة الصنف قبل الصرف");
+  if(selection?.mode === "manual") return selectFullIssueLots(stock.lots,quantity,stock.unit,selection);
   if (stock.fulfillment) {
     if (!stock.fulfillment.ready || Math.round(quantity * 1000) !== Math.round(stock.fulfillment.remainingOriginalQuantity * 1000))
       throw new Error("الرصيد غير كافٍ لاستكمال الاحتياج وبدائله المعتمدة بالكامل");
