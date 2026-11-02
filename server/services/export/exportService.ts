@@ -953,7 +953,7 @@ export async function generatePurchaseRequestPDF(
   const approvedAccountingRows = approvedBundleApprovals.map(approval => `
     <tr><td style="font-weight:bold;background-color:#f7fafc;">الحسابات</td>
       <td>${escapeHtml(approval.accountingName)}</td>
-      <td>${sigImg(approval.accountingSignature)}<small class="signature-requests">اعتماد إلكتروني: ${escapeHtml(approval.accountingAt)}</small></td></tr>`).join("");
+      <td>${sigImg(approval.accountingSignature)}</td></tr>`).join("");
   const approvedFinanceHtml = approvedBundleApprovals.map(approval => {
     const balance = approval.custodyValue == null ? null : Number(approval.custodyValue);
     const words = balance == null ? "" : amountToArabicCurrencyPhrase(balance);
@@ -972,8 +972,8 @@ export async function generatePurchaseRequestPDF(
           <tr><td style="font-weight:bold;background-color:#f7fafc;width:25%;">رئيس الحسابات</td><td style="width:40%;"></td><td style="width:35%;"></td></tr>
           <tr style="height:${ceoRowHeight}px;">
             <td style="font-weight:bold;background-color:#f7fafc;width:25%;font-size:${ceoFontSize}pt;height:${ceoRowHeight}px;">الرئيس التنفيذي</td>
-            <td style="width:40%;font-size:${ceoFontSize}pt;height:${ceoRowHeight}px;">${escapeHtml(approval.managementName)}</td>
-            <td style="width:35%;height:${ceoRowHeight}px;">${sigImg(approval.managementSignature || "")}<small class="signature-requests">اعتماد إلكتروني مثبت: ${escapeHtml(approval.managementAt)}</small></td>
+            <td style="width:40%;font-weight:bold;font-size:${ceoFontSize}pt;height:${ceoRowHeight}px;">المهندس/ زكري بن عبدالله الزكري</td>
+            <td style="width:35%;height:${ceoRowHeight}px;"></td>
           </tr>
         </tbody>
       </table>

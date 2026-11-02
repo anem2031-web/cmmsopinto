@@ -110,7 +110,7 @@ describe("Document-center DPB approved PDF, without changing delegate files or w
   it("renders the PB reference form for approved DPB, preserving separate legacy financial scopes and all original rows",async()=>{
     const f=fixture();const approved=await approvedBundleSnapshot(f.database,{id:24},f.snapshot,f.signature);
     const h=renderHarness();await h.render(0,11,undefined,undefined,approved);const html=h.html();
-    expect(html).not.toContain("اعتمادات الحسابات والإدارة العليا");expect(html).toContain("Frozen accountant");expect(html).toContain("Actual manager");expect(html).toContain("اعتماد إلكتروني مثبت");
+    expect(html).not.toContain("اعتمادات الحسابات والإدارة العليا");expect(html).toContain("Frozen accountant");expect(html).not.toContain("Actual manager");expect(html).not.toContain("اعتماد إلكتروني");
     expect(html).toContain("رئيس الحسابات");expect(html).toContain("الرئيس التنفيذي");
     expect(html).not.toContain("القسم المستفيد</th>");expect(html).not.toContain("المورد:");
     expect(html.match(/<div class="section-title">الشؤون المالية والإجراءات المحاسبية/g)).toHaveLength(2);
@@ -130,11 +130,24 @@ describe("Document-center DPB approved PDF, without changing delegate files or w
     const original=JSON.stringify(approved);const h=renderHarness();await h.render(0,11,undefined,undefined,approved);const html=h.html();
     expect(html.match(/<div class="section-title">الشؤون المالية والإجراءات المحاسبية/g)).toHaveLength(1);
     expect(html.match(/45538\.00/g)).toHaveLength(1);
-    expect(html).toContain("test-management");expect(html).toContain("ملاحظات الاعتماد");
+    expect(html).not.toContain("test-management");expect(html).toContain("ملاحظات الاعتماد");
     expect(html).not.toContain("إجمالي الأصناف المعتمدة بعد قرارات الرفض");
     expect(html).toContain("المبلغ الإجمالي:");expect(html).toContain('colspan="6"');
     const table=html.slice(html.indexOf('<table class="items-table">'),html.indexOf('<div class="declaration-box">'));
     expect(table.match(/<th /g)).toHaveLength(7);
+    expect(JSON.stringify(approved)).toBe(original);
+  });
+  it("prints only the accounting signature and a fixed bold CEO name with an empty signature cell without changing approval evidence",async()=>{
+    const f=fixture();const legacy=await approvedBundleSnapshot(f.database,{id:24},f.snapshot,f.signature);
+    const approved={...legacy,financialApprovals:[{...legacy.financialApprovals![0],accountingSignature:"data:image/png;base64,accounting-only",accountingAt:"ACCOUNTING-TIMESTAMP",managementName:"Stored actual approver",managementSignature:"data:image/png;base64,stored-ceo-signature",managementAt:"MANAGEMENT-TIMESTAMP"}]};
+    const original=JSON.stringify(approved);const h=renderHarness();await h.render(0,11,undefined,undefined,approved);const html=h.html();
+    const accountingRow=html.match(/<tr><td[^>]*>الحسابات<\/td>[\s\S]*?<\/tr>/)?.[0];
+    expect(accountingRow).toContain("accounting-only");expect(accountingRow).not.toContain("<small");
+    expect(html).not.toContain("اعتماد إلكتروني");expect(html).not.toContain("ACCOUNTING-TIMESTAMP");expect(html).not.toContain("MANAGEMENT-TIMESTAMP");
+    const ceoRow=html.match(/<tr[^>]*>\s*<td[^>]*>الرئيس التنفيذي<\/td>[\s\S]*?<\/tr>/)?.[0];
+    expect(ceoRow).toMatch(/<td[^>]*font-weight:bold[^>]*>المهندس\/ زكري بن عبدالله الزكري<\/td>/);
+    expect(ceoRow).toMatch(/<td[^>]*><\/td>\s*<\/tr>$/);expect(ceoRow).not.toContain("<img");
+    expect(html).not.toContain("Stored actual approver");expect(html).not.toContain("stored-ceo-signature");
     expect(JSON.stringify(approved)).toBe(original);
   });
   it("preserves rejection evidence and approved totals without rewriting or dropping frozen rows",async()=>{
