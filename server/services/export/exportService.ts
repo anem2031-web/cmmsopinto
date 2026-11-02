@@ -849,7 +849,7 @@ export async function generatePurchaseRequestPDF(
     const rowsHtml = Array.from(groups.values()).map(group => {
       const label = group.role === "requester" ? "مقدّم الطلب" : "مراجع الطلب";
       const requestNumbers = Array.from(group.requestNumbers);
-      const showRequestReferences = !isApprovedBundle || new Set(bundleSnapshot.rows.map(row => row.purchaseOrderId)).size > 1;
+      const showRequestReferences = !isApprovedBundle || group.role !== "reviewer" && new Set(bundleSnapshot.rows.map(row => row.purchaseOrderId)).size > 1;
       return `<tr><td style="font-weight: bold; background-color: #f7fafc;">${label}</td><td>${escapeHtml(group.name)}${showRequestReferences ? `<span class="signature-requests">الطلبات: ${requestNumbers.map(escapeHtml).join("، ")}</span>` : ""}</td><td>${sigImg(group.signature)}</td></tr>`;
     }).join("");
     const warnings: string[] = [];

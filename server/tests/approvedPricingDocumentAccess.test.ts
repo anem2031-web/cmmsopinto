@@ -39,6 +39,11 @@ describe("Approved DPB named-account capability and complete document scope",()=
     await caller(f,f.actor()).approvedPricingDocuments.pdf({id:1,approvedDocument:false} as any);
     expect(f.ports.render.mock.calls[0][0].financialApprovals).toHaveLength(1);
   });
+  it.each(['accountant','senior_management','warehouse','technician','gate_security','observer'])("the explicit named-account grant does not depend on or replace the %s role",async role=>{
+    const f=fixture();f.add(1);f.memory.prepare('UPDATE users SET role=? WHERE id=1').run(role);
+    const api=caller(f,f.actor());expect((await api.approvedPricingDocuments.listPage({page:1})).rows).toHaveLength(1);
+    expect((await api.approvedPricingDocuments.pdf({id:1})).name).toBe('DPB-1.pdf');
+  });
   it.each(["UPDATE users SET isActive=0 WHERE id=1","UPDATE users SET username='RENAMED' WHERE id=1","UPDATE users SET role='warehouse' WHERE id=1","DELETE FROM users WHERE id=1","INSERT INTO users VALUES(90,'anis','user',1,'duplicate')"])("freshly revokes list and PDF access after %s",async change=>{
     const f=fixture();f.add(1);const user=f.actor(), api=caller(f,user);
     await api.approvedPricingDocuments.listPage({page:1});f.memory.exec(change);
@@ -56,11 +61,19 @@ describe("Approved DPB named-account capability and complete document scope",()=
   });
   it("checks all members of an aggregate PDF including undisplayed submission members",async()=>{
     const f=fixture();f.add(1);f.add(2,false);
+    f.memory.exec("INSERT INTO purchase_packages VALUES(9,'PB-9'); INSERT INTO purchase_package_submissions VALUES(10,9,1,'approved',7,'2026-11-02 08:00:00',8,'2026-11-02 09:00:00',NULL,'20'); UPDATE purchase_orders SET packageId=9; UPDATE po_pricing_batches SET purchasePackageSubmissionId=10; UPDATE delegate_pricing_bundle_batches SET purchasePackageSubmissionId=10");
     // Add an incomplete second PO to bundle 1 while its first row remains approved.
-    f.memory.exec("INSERT INTO delegate_pricing_bundle_batches SELECT 1,purchaseOrderId,pricingBatchId,NULL FROM delegate_pricing_bundle_batches WHERE bundleId=2; INSERT INTO delegate_pricing_bundle_items SELECT 1,purchaseOrderItemId,NULL FROM delegate_pricing_bundle_items WHERE bundleId=2");
+    f.memory.exec("INSERT INTO delegate_pricing_bundle_batches SELECT 1,purchaseOrderId,pricingBatchId,10 FROM delegate_pricing_bundle_batches WHERE bundleId=2; INSERT INTO delegate_pricing_bundle_items SELECT 1,purchaseOrderItemId,NULL FROM delegate_pricing_bundle_items WHERE bundleId=2");
     expect((await f.reader.listPage(f.actor(),page)).rows).toHaveLength(0);
     await expect(f.reader.pdf(f.actor(),1)).rejects.toMatchObject({code:'FORBIDDEN'});
     expect(f.ports.signature).not.toHaveBeenCalled();
+  });
+  it.each(["DELETE FROM purchase_package_submissions WHERE id=10","UPDATE purchase_package_submissions SET managementApprovedAt=NULL WHERE id=10","UPDATE purchase_orders SET packageId=99 WHERE id=101"])("keeps submission scope checks for named users: %s",async change=>{
+    const f=fixture();f.add(1);
+    f.memory.exec("INSERT INTO purchase_packages VALUES(9,'PB-9'); INSERT INTO purchase_package_submissions VALUES(10,9,1,'approved',7,'2026-11-02 08:00:00',8,'2026-11-02 09:00:00',NULL,'20'); UPDATE purchase_orders SET packageId=9; UPDATE po_pricing_batches SET purchasePackageSubmissionId=10; UPDATE delegate_pricing_bundle_batches SET purchasePackageSubmissionId=10");
+    expect((await f.reader.listPage(f.actor(),page)).rows).toHaveLength(1);f.memory.exec(change);
+    expect((await f.reader.listPage(f.actor(),page)).rows).toEqual([]);
+    await expect(f.reader.pdf(f.actor(),1)).rejects.toMatchObject({code:'FORBIDDEN'});
   });
   it("rejects a snapshot with missing/foreign members rather than showing or printing a partial document",async()=>{
     const f=fixture();const snapshot=f.add(1);f.add(2);

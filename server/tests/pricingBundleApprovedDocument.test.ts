@@ -117,12 +117,17 @@ describe("Document-center DPB approved PDF, without changing delegate files or w
     const body=html.slice(html.indexOf("<body>"));
     expect(body.indexOf("الحسابات</td>")).toBeLessThan(body.indexOf("الشؤون المالية والإجراءات المحاسبية"));
     expect(body.indexOf("الرئيس التنفيذي")).toBeLessThan(body.indexOf("رقم سند الصرف"));
+    const reviewerRow=body.match(/<tr><td[^>]*>مراجع الطلب<\/td>[\s\S]*?<\/tr>/)?.[0];
+    expect(reviewerRow).toContain("Reviewer");expect(reviewerRow).not.toContain("الطلبات:");expect(reviewerRow).not.toContain("PR-");
+    const requesterRow=body.match(/<tr><td[^>]*>مقدّم الطلب<\/td>[\s\S]*?<\/tr>/)?.[0];
+    expect(requesterRow).toContain("الطلبات:");
     expect(html).toContain("45538.00");expect(html).not.toContain("91076");expect(html).toContain("170.00");
     expect(approved.rows.map(row=>row.itemName).every(name=>html.includes(name))).toBe(true);
     fs.mkdirSync("tools/pricing-bundle-approved-document/artifacts",{recursive:true});fs.writeFileSync("tools/pricing-bundle-approved-document/artifacts/approved-preview.html",html.replace(/[ \t]+$/gm,""));
     await h.render(0,11,undefined,undefined,f.snapshot);const delegateHtml=h.html();
     expect(delegateHtml).not.toContain("اعتمادات الحسابات والإدارة العليا");expect(delegateHtml).not.toContain("الشؤون المالية والإجراءات المحاسبية</div>");expect(delegateHtml).toContain("170.00");
     expect(delegateHtml).toContain("القسم المستفيد</th>");expect(delegateHtml).toContain("المورد:");
+    expect(delegateHtml.match(/<tr><td[^>]*>مراجع الطلب<\/td>[\s\S]*?<\/tr>/)?.[0]).toContain("الطلبات:");
   });
   it("uses one standard finance block and one custody balance for a unified approval without a duplicate approval appendix",async()=>{
     const f=fixture();const legacy=await approvedBundleSnapshot(f.database,{id:24},f.snapshot,f.signature);
