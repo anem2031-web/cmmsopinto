@@ -203,10 +203,20 @@ export function InventoryBooks({
       {layout === "table" ? (
         <div className="overflow-x-auto rounded-lg border bg-background">
           <table
-            className="w-full min-w-[860px] text-sm"
+            className="w-full min-w-[1000px] table-fixed border-collapse text-sm"
             aria-label="أصناف المستودع حسب دفتر الكتالوج"
             dir="rtl"
           >
+            <colgroup>
+              <col style={{ width: onFifo ? "32%" : "42%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "8%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "8%" }} />
+              <col style={{ width: "8%" }} />
+              <col style={{ width: "8%" }} />
+              {onFifo && <col style={{ width: "10%" }} />}
+            </colgroup>
             <thead>
               <tr className="bg-muted/50 text-xs text-muted-foreground">
                 {[
@@ -218,11 +228,11 @@ export function InventoryBooks({
                   "المنصرف",
                   "السجلات",
                   ...(onFifo ? ["الصرف"] : []),
-                ].map(label => (
+                ].map((label, index, labels) => (
                   <th
                     key={label}
                     scope="col"
-                    className="px-3 py-2 text-right font-medium whitespace-nowrap"
+                    className={`h-10 px-3 py-2 font-medium whitespace-nowrap ${index === 0 ? "text-right" : "text-center"} ${index < labels.length - 1 ? "border-e" : ""}`}
                   >
                     {label}
                   </th>
@@ -233,8 +243,8 @@ export function InventoryBooks({
               {(result.data?.books || []).map((book: any) => (
                 <Fragment key={book.id}>
                   <tr className="border-t hover:bg-muted/30 transition-colors">
-                    <td className="px-3 py-2 align-top">
-                      <div className="flex items-center gap-1 min-h-8">
+                    <td className="border-e px-3 py-2 align-middle">
+                      <div className="flex h-8 min-w-0 items-center gap-1">
                         <Button
                           size="icon"
                           variant="ghost"
@@ -253,37 +263,38 @@ export function InventoryBooks({
                           )}
                         </Button>
                         <span
-                          className="font-medium min-w-48 max-w-80"
+                          className="min-w-0 flex-1 truncate font-medium"
                           title={book.nameAr || book.nameEn}
                         >
                           {book.nameAr || book.nameEn}
                         </span>
                       </div>
                     </td>
-                    <td className="px-3 py-2 align-top">
+                    <td className="border-e px-3 py-2 align-middle text-center">
                       <span
-                        className="inline-flex min-h-8 items-center font-mono text-xs whitespace-nowrap"
+                        className="block truncate font-mono text-xs leading-8"
                         dir="ltr"
+                        title={book.code || ""}
                       >
                         {book.code || "—"}
                       </span>
                     </td>
-                    <td className="px-3 py-2 align-top">
+                    <td className="border-e px-3 py-2 align-middle text-center">
                       {book.totals.map((total: any) => (
                         <div
                           key={`${total.unit}:${total.isFrozen}`}
-                          className="flex min-h-8 items-center font-bold tabular-nums"
+                          className="flex h-8 items-center justify-center font-bold tabular-nums"
                           dir="ltr"
                         >
                           {Number(total.quantity).toLocaleString()}
                         </div>
                       ))}
                     </td>
-                    <td className="px-3 py-2 align-top">
+                    <td className="border-e px-3 py-2 align-middle text-center">
                       {book.totals.map((total: any) => (
                         <div
                           key={`${total.unit}:${total.isFrozen}`}
-                          className="flex min-h-8 items-center gap-2 whitespace-nowrap"
+                          className="flex h-8 items-center justify-center gap-2 whitespace-nowrap"
                         >
                           {total.unit || "وحدة غير محددة"}
                           {!!Number(total.isFrozen) && (
@@ -294,39 +305,41 @@ export function InventoryBooks({
                         </div>
                       ))}
                     </td>
-                    <td className="px-3 py-2 align-top">
+                    <td className="border-e px-3 py-2 align-middle text-center">
                       {book.totals.map((total: any) => (
                         <div
                           key={`${total.unit}:${total.isFrozen}`}
-                          className="flex min-h-8 items-center tabular-nums"
+                          className="flex h-8 items-center justify-center tabular-nums"
                           dir="ltr"
                         >
                           {Number(total.incoming).toLocaleString()}
                         </div>
                       ))}
                     </td>
-                    <td className="px-3 py-2 align-top">
+                    <td className="border-e px-3 py-2 align-middle text-center">
                       {book.totals.map((total: any) => (
                         <div
                           key={`${total.unit}:${total.isFrozen}`}
-                          className="flex min-h-8 items-center tabular-nums"
+                          className="flex h-8 items-center justify-center tabular-nums"
                           dir="ltr"
                         >
                           {Number(total.outgoing).toLocaleString()}
                         </div>
                       ))}
                     </td>
-                    <td className="px-3 py-2 align-top">
-                      <span className="inline-flex min-h-8 items-center tabular-nums">
+                    <td
+                      className={`px-3 py-2 align-middle text-center ${onFifo ? "border-e" : ""}`}
+                    >
+                      <span className="inline-flex h-8 items-center justify-center tabular-nums">
                         {book.pageCount}
                       </span>
                     </td>
                     {onFifo && (
-                      <td className="px-3 py-2 align-top">
+                      <td className="px-3 py-2 align-middle text-center">
                         {book.totals.map((total: any) => (
                           <div
                             key={`${total.unit}:${total.isFrozen}`}
-                            className="flex min-h-8 items-center"
+                            className="flex h-8 items-center justify-center"
                           >
                             {!Number(total.isFrozen) &&
                             Number(total.quantity) > 0 ? (

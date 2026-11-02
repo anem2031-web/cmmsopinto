@@ -84,17 +84,48 @@ try {
     await page.setViewport({ width, height: 1000, deviceScaleFactor: 1 });
     await page.setContent(html, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => window.__inventoryPreviewReady === true);
-    const metrics = await page.evaluate(() => ({
-      bodyWidth: document.documentElement.scrollWidth,
-      viewport: innerWidth,
-      summaryHeight: document
-        .querySelector("main > .grid")
-        .getBoundingClientRect().height,
-      tableRows: document.querySelectorAll(
-        'table[aria-label="أصناف المستودع حسب دفتر الكتالوج"] tbody > tr'
-      ).length,
-    }));
+    const metrics = await page.evaluate(() => {
+      const table = document.querySelector(
+        'table[aria-label="أصناف المستودع حسب دفتر الكتالوج"]'
+      );
+      const headers = table.querySelectorAll("thead th");
+      const cells = table.querySelector("tbody > tr").children;
+      const textCenter = element => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const rect = range.getBoundingClientRect();
+        return (rect.left + rect.right) / 2;
+      };
+      return {
+        bodyWidth: document.documentElement.scrollWidth,
+        viewport: innerWidth,
+        summaryHeight: document
+          .querySelector("main > .grid")
+          .getBoundingClientRect().height,
+        tableRows: document.querySelectorAll(
+          'table[aria-label="أصناف المستودع حسب دفتر الكتالوج"] tbody > tr'
+        ).length,
+        fixedColumns: getComputedStyle(table).tableLayout === "fixed",
+        columnAlignmentErrors: [2, 4, 5, 6].map(index =>
+          Math.abs(
+            textCenter(headers[index]) -
+              textCenter(cells[index].firstElementChild)
+          )
+        ),
+        verticalBorders: Array.from(cells)
+          .slice(0, -1)
+          .every(
+            cell => parseFloat(getComputedStyle(cell).borderInlineEndWidth) >= 1
+          ),
+      };
+    });
     if (metrics.bodyWidth > width) throw Error("Page overflows viewport");
+    if (
+      !metrics.fixedColumns ||
+      !metrics.verticalBorders ||
+      metrics.columnAlignmentErrors.some(error => error > 1)
+    )
+      throw Error(`Inventory grid alignment failed: ${JSON.stringify(metrics)}`);
     await page.screenshot({
       path: `tmp/inventory-books-layout/${width}-closed.png`,
     });
