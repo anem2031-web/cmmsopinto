@@ -5,6 +5,8 @@ import { htmlToPdf } from "../pdf/htmlToPdfService";
 import { getSignatureDataUrl } from "../pdf/signatureImage";
 import { readAccountingSignature } from "../pdf/accountingSignature";
 import { replacementDocumentForBatch } from "../../supplier-return-followup/pricing-bridge";
+import type { InventoryBookExportFilters } from "../../../shared/inventory-export";
+import { appendInventoryBookSheet } from "./inventoryBookExcel";
 
 // ============================================================
 // EXCEL EXPORT HELPERS
@@ -217,10 +219,22 @@ export async function exportAuditLogToExcel(filters?: any): Promise<Buffer> {
 // ============================================================
 // INVENTORY EXPORT
 // ============================================================
-export async function exportInventoryToExcel(options?: { itemIds?: number[] }): Promise<Buffer> {
+export async function exportInventoryToExcel(options?: { itemIds?: number[]; bookFilters?: InventoryBookExportFilters }): Promise<Buffer> {
+  const bookFilters = options?.bookFilters;
+  const legacyIds = bookFilters ? options?.itemIds ?? [] : options?.itemIds;
+  let database: Awaited<ReturnType<typeof db.getDb>> | null = null;
+  let warehouse: Awaited<ReturnType<typeof db.getWarehouseById>> | null = null;
+  if (bookFilters) {
+    const { isInventoryLotsEnabled } = await import("../../_core/inventory-lots");
+    if (!isInventoryLotsEnabled()) throw Error("دفاتر اللوتات غير مفعّلة");
+    database = await db.getDb();
+    if (!database) throw Error("تعذر الاتصال بقاعدة البيانات لتصدير المخزون");
+    warehouse = await db.getWarehouseById(bookFilters.warehouseId, database);
+    if (!warehouse) throw Error("المخزن المحدد غير موجود");
+  }
   const [inventoryItems, taxonomyRows] = await Promise.all([
-    db.getInventoryItems(),
-    db.getInventoryCatalogTaxonomy(),
+    legacyIds?.length === 0 ? Promise.resolve([]) : db.getInventoryItems(),
+    legacyIds?.length === 0 ? Promise.resolve([]) : db.getInventoryCatalogTaxonomy(),
   ]);
 
   const taxonomyByInventoryId = new Map<number, any>(
@@ -234,21 +248,33 @@ export async function exportInventoryToExcel(options?: { itemIds?: number[] }): 
   // عند استدعاء التصدير من صفحة Inventory ترسل الواجهة معرّفات النتائج
   // بعد تطبيق كل الفلاتر والبحث والترتيب. نحافظ على نفس الترتيب حرفيًا.
   let items = mergedItems;
-  if (options?.itemIds !== undefined) {
+  if (legacyIds !== undefined) {
     const itemById = new Map<number, any>(
       mergedItems.map((item: any) => [Number(item.id), item]),
     );
-    items = options.itemIds
+    items = legacyIds
       .map(id => itemById.get(Number(id)))
       .filter(Boolean) as any[];
   }
+  if (bookFilters) items = items.filter((item: any) =>
+    // Linked records are already included in their master book, never twice.
+    (!item.linkedItemId || !item.warehouseId)
+    && (Number(item.warehouseId) === bookFilters.warehouseId || warehouse?.type === "main" && !item.warehouseId)
+    && (bookFilters.includeZero || Number(item.quantity || 0) > 0)
+  );
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "CMMS";
   workbook.created = new Date();
   workbook.subject = "تقرير المخزون حسب النتائج الظاهرة في شاشة المستودع";
 
-  const ws = workbook.addWorksheet("المخزون");
+  if (bookFilters) {
+    const { readInventoryBooks } = await import("../../routers/inventory/books.procedure");
+    await appendInventoryBookSheet(workbook, bookFilters, input => readInventoryBooks(database!, input));
+    if (!items.length) return Buffer.from(await workbook.xlsx.writeBuffer());
+  }
+
+  const ws = workbook.addWorksheet(bookFilters ? "سجلات غير مرتبطة" : "المخزون");
   addRtlSupport(ws);
 
   // نفس أعمدة شاشة Inventory ونفس ترتيبها — بدون عمود الإجراءات.

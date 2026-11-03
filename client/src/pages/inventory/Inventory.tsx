@@ -573,7 +573,12 @@ export default function Inventory() {
           <ExportButton
             endpoint="inventory"
             filename="inventory"
-            payload={{ itemIds: filteredItems.map((item: any) => Number(item.id)) }}
+            payload={{ itemIds: filteredItems.map((item: any) => Number(item.id)),
+              ...(lotsEnabled && selectedWarehouseId ? { bookFilters: {
+                warehouseId: Number(selectedWarehouseId), search: searchQuery, includeZero: !hideZeroStock,
+                nodeIds: bookNodeIds, sort: sortBy, dateFrom: dateFrom || undefined, dateTo: dateTo || undefined,
+              } } : {}),
+            }}
           />
           {isWarehouse && (
             <Button className="gap-2" onClick={() => navigate("/inventory/receive")}>

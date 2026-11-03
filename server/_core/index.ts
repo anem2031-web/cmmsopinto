@@ -25,6 +25,7 @@ import { authorizePurchaseDocument } from "./authz/purchase-document";
 import sharp from "sharp";
 import { transcodeVideoToCompatibleMp4 } from "./videoTranscode";
 import { exportTicketsToExcel, exportPurchaseOrdersToExcel, exportTechnicianPerformanceToExcel, exportAuditLogToExcel, exportInventoryToExcel, exportPreventivePlansToExcel, exportPMWorkOrdersToExcel, generateDelegateItemsPDF, generatePurchaseRequestPDF } from "../services/export/exportService";
+import { inventoryBookExportFilterSchema } from "../../shared/inventory-export";
 import { generateWorkflowGuidePDF } from "../services/pdf/workflowPdfService";
 import { runTechnicianOverdueJob } from "../jobs/technician-overdue";
 import { runPMAutomationJob } from "../jobs/pm-automation";
@@ -976,6 +977,10 @@ async function startServer() {
 
   const handleInventoryExport = async (req: any, res: any) => {
     try {
+      if (Number(req.authenticatedUser?.isActive) !== 1) return res.status(403).json({ error: "الحساب غير نشط" });
+      const rawBookFilters = req.method === "POST" ? req.body?.bookFilters : undefined;
+      const parsedBooks = rawBookFilters === undefined ? undefined : inventoryBookExportFilterSchema.safeParse(rawBookFilters);
+      if (parsedBooks && !parsedBooks.success) return res.status(400).json({ error: "فلاتر تصدير المخزون غير صالحة" });
       const rawItemIds = req.method === "POST" ? req.body?.itemIds : undefined;
       let itemIds: number[] | undefined;
 
@@ -990,7 +995,8 @@ async function startServer() {
         ));
       }
 
-      const buffer = await exportInventoryToExcel(itemIds === undefined ? undefined : { itemIds });
+      const bookFilters = parsedBooks?.success ? parsedBooks.data : undefined;
+      const buffer = await exportInventoryToExcel(itemIds === undefined && !bookFilters ? undefined : { itemIds, bookFilters });
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       res.setHeader("Content-Disposition", `attachment; filename=inventory-${Date.now()}.xlsx`);
       res.send(buffer);
