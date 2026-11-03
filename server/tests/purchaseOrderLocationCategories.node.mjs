@@ -38,10 +38,10 @@ test("create and save-draft preserve atomic header + items creation", () => {
 
 test("purchase-order form resets dependent selectors and loads category master data", () => {
   assert.match(createPage, /trpc\.centerCategories\.list\.useQuery/);
-  assert.match(createPage, /setSiteId\(value\);\s*setSectionId\(""\);\s*setAssetId\(""\);/);
-  assert.match(createPage, /setSectionId\(value\);\s*setAssetId\(""\);/);
-  assert.match(createPage, /assetId: assetId \? Number\(assetId\) : null/);
-  assert.match(createPage, /categoryId: categoryId \? Number\(categoryId\) : null/);
+  assert.match(createPage, /field === "siteId" \? \{ sectionId: "", assetId: "" \} : field === "sectionId" \? \{ assetId: "" \}/);
+  assert.match(createPage, /const context = isReturnReplacement \? initialContext : purchaseItemsForSubmit\(\)\[0\]/);
+  assert.match(createPage, /assetId: context\?\.assetId \? Number\(context\.assetId\) : null/);
+  assert.match(createPage, /categoryId: context\?\.categoryId \? Number\(context\.categoryId\) : null/);
 });
 
 test("purchase categories are managed dynamically and protected from unsafe deletion", () => {

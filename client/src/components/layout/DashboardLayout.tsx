@@ -23,7 +23,6 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import Login from "@/pages/auth/Login";
-import { useIsMobile } from "@/hooks/useMobile";
 import {
   LayoutDashboard, LogOut, PanelLeft, ClipboardList, ShoppingCart,
   Package, BarChart3, Users, Bell, MapPin, Wrench, Shield,
@@ -322,8 +321,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 function DashboardLayoutContent({ children, setSidebarWidth }: { children: React.ReactNode; setSidebarWidth: (w: number) => void }) {
   const { user, authenticatedUser, isReadOnly, logout, loading: authLoading } = useAuth();
   const [location, setLocation] = useLocation();
-  const { state, toggleSidebar } = useSidebar();
-  const isCollapsed = state === "collapsed";
+  const { state, toggleSidebar, isMobile, setOpenMobile } = useSidebar();
+  const isCollapsed = !isMobile && state === "collapsed";
+  const navigateFromSidebar = (path: string) => {
+    setLocation(path);
+    if (isMobile) setOpenMobile(false);
+  };
+  useEffect(() => {
+    if (isMobile) setOpenMobile(false);
+  }, [location, isMobile, setOpenMobile]);
   const [isResizing, setIsResizing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -449,7 +455,6 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
   });
   const sidebarRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const isMobile = useIsMobile();
   const { t } = useTranslation();
   const favoritesStorageKey = `${FAVORITES_STORAGE_PREFIX}:${authenticatedUser?.id ?? user?.id ?? "anonymous"}`;
   const [favoritePaths, setFavoritePaths] = useState<string[]>(() => {
@@ -796,7 +801,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
                       <SidebarMenuItem key={item.path}>
                         <SidebarMenuButton
                           isActive={isItemActive(item.path)}
-                          onClick={() => { setLocation(item.path); setSearchQuery(""); }}
+                          onClick={() => { navigateFromSidebar(item.path); setSearchQuery(""); }}
                           className="h-9 transition-all font-normal text-[13px]"
                         >
                           <item.icon className={`h-3.5 w-3.5 shrink-0 ${isItemActive(item.path) ? "text-sidebar-primary" : "text-sidebar-foreground/60"}`} />
@@ -860,7 +865,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
                                   if (isComingSoon) {
                                     import("sonner").then(m => m.toast.info("الصيانة التنبؤية قيد التطوير"));
                                   } else {
-                                    setLocation(item.path);
+                                    navigateFromSidebar(item.path);
                                   }
                                 }}
                                 tooltip={item.label}

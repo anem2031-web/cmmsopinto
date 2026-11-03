@@ -59,9 +59,6 @@ type ItemForm = {
 type ItemValidationField = "itemName" | "quantity" | "deliveryLeadDays" | "unit" | "siteId" | "sectionId" | "categoryId";
 
 type PurchaseFormErrors = {
-  siteId?: string;
-  sectionId?: string;
-  categoryId?: string;
   items: Record<number, Partial<Record<ItemValidationField, string>>>;
 };
 
@@ -189,20 +186,14 @@ export default function CreatePurchaseOrder() {
 
   // ✅ وحدات القياس من الكاتلوج — تُحدّث القائمة فور إضافة وحدة جديدة من تبويب الكاتلوج
   const { data: catalogUnits } = trpc.catalog.units.list.useQuery();
-  // سياق طلب الشراء: الموقع ← القسم ← الأصل، مع تصنيف ديناميكي مستقل.
-  const [siteId, setSiteId] = useState(fromIdeaId || isTicketMaterial || isReturnReplacement ? params.get("siteId") || "" : "");
-  const [sectionId, setSectionId] = useState(fromIdeaId || isTicketMaterial || isReturnReplacement ? params.get("sectionId") || "" : "");
-  const [assetId, setAssetId] = useState(fromIdeaId || isTicketMaterial || isReturnReplacement ? params.get("assetId") || "" : "");
-  const [categoryId, setCategoryId] = useState(isReturnReplacement ? params.get("categoryId") || "" : "");
+  // Defaults initialize item fields; the order context is derived at save time.
+  const initialContext = {
+    siteId: fromIdeaId || isTicketMaterial || isReturnReplacement ? params.get("siteId") || "" : "",
+    sectionId: fromIdeaId || isTicketMaterial || isReturnReplacement ? params.get("sectionId") || "" : "",
+    assetId: fromIdeaId || isTicketMaterial || isReturnReplacement ? params.get("assetId") || "" : "",
+    categoryId: isReturnReplacement ? params.get("categoryId") || "" : "",
+  };
   const { data: sites = [] } = trpc.sites.list.useQuery();
-  const { data: sections = [] } = trpc.sections.list.useQuery(
-    siteId ? { siteId: Number(siteId) } : undefined,
-    { enabled: Boolean(siteId) },
-  );
-  const { data: assets = [] } = trpc.assets.list.useQuery(
-    sectionId ? { sectionId: Number(sectionId) } : undefined,
-    { enabled: Boolean(sectionId) },
-  );
   const { data: allSections = [] } = trpc.sections.list.useQuery(undefined);
   const { data: allAssets = [] } = trpc.assets.list.useQuery({});
   const { data: purchaseCategories = [] } = trpc.centerCategories.list.useQuery({ activeOnly: !draftId });
@@ -218,32 +209,17 @@ export default function CreatePurchaseOrder() {
 
   const validationMessageForPath = (path: Array<string | number>): { message: string; targetId?: string; apply: (errors: PurchaseFormErrors) => void } | null => {
     const root = path[0];
-    if (root === "siteId") {
-      return {
-        message: t.purchaseOrders.validationSiteRequired,
-        targetId: "purchase-site",
-        apply: (errors) => { errors.siteId = t.purchaseOrders.validationSiteRequired; },
-      };
-    }
-    if (root === "sectionId") {
-      return {
-        message: t.purchaseOrders.validationSectionRequired,
-        targetId: "purchase-section",
-        apply: (errors) => { errors.sectionId = t.purchaseOrders.validationSectionRequired; },
-      };
-    }
-    if (root === "categoryId") {
-      return {
-        message: t.purchaseOrders.validationCategoryRequired,
-        targetId: "purchase-category",
-        apply: (errors) => { errors.categoryId = t.purchaseOrders.validationCategoryRequired; },
-      };
+    if (["siteId", "sectionId", "categoryId"].includes(String(root))) {
+      return validationMessageForPath(["items", 0, root]);
     }
     if (root !== "items" || typeof path[1] !== "number") return null;
 
     const itemIndex = path[1];
     const field = path[2];
     const map: Partial<Record<string, { field: ItemValidationField; message: string }>> = {
+      siteId: { field: "siteId", message: itemMessage(t.purchaseOrders.validationSiteRequired, itemIndex) },
+      sectionId: { field: "sectionId", message: itemMessage(t.purchaseOrders.validationSectionRequired, itemIndex) },
+      categoryId: { field: "categoryId", message: itemMessage(t.purchaseOrders.validationCategoryRequired, itemIndex) },
       itemName: { field: "itemName", message: itemMessage(t.purchaseOrders.validationItemNameRequired, itemIndex) },
       quantity: { field: "quantity", message: itemMessage(t.purchaseOrders.validationQuantityInvalid, itemIndex) },
       requiredDate: { field: "deliveryLeadDays", message: itemMessage(t.purchaseOrders.validationDeliveryLeadDays, itemIndex) },
@@ -350,7 +326,7 @@ export default function CreatePurchaseOrder() {
         categoryId: "",
         _contextTouched: {},
       }]
-    : [emptyItem("", { siteId, sectionId, assetId, categoryId })]);
+    : [emptyItem("", initialContext)]);
 
   const canReadCatalogStock = canRoleAccessPath(user?.role, "/inventory");
   const stockCatalogItemIds = useMemo(() => Array.from(new Set(items
@@ -417,10 +393,6 @@ export default function CreatePurchaseOrder() {
   useEffect(() => {
     if (draftPO && !draftLoaded) {
       setNotes(draftPO.notes || "");
-      setSiteId(draftPO.siteId ? String(draftPO.siteId) : "");
-      setSectionId(draftPO.sectionId ? String(draftPO.sectionId) : "");
-      setAssetId(draftPO.assetId ? String(draftPO.assetId) : "");
-      setCategoryId(draftPO.categoryId ? String(draftPO.categoryId) : "");
       if (draftPO.items && draftPO.items.length > 0) {
         setItems(draftPO.items.map((i: any) => ({
           sourceType: i.catalogItemId ? "catalog" as const : "manual" as const,
@@ -447,9 +419,12 @@ export default function CreatePurchaseOrder() {
   // الطلب المرتبط ببلاغ يبدأ تلقائيًا بنفس موقع/قسم/أصل البلاغ، مع بقاء الحقول قابلة للتعديل.
   useEffect(() => {
     if (draftId || !ticket) return;
-    setSiteId(current => current || (ticket.siteId ? String(ticket.siteId) : ""));
-    setSectionId(current => current || (ticket.sectionId ? String(ticket.sectionId) : ""));
-    setAssetId(current => current || (ticket.assetId ? String(ticket.assetId) : ""));
+    setItems(prev => prev.map(item => ({
+      ...item,
+      siteId: item.siteId || item._contextTouched?.siteId ? item.siteId : String(ticket.siteId || ""),
+      sectionId: item.sectionId || item._contextTouched?.sectionId ? item.sectionId : String(ticket.sectionId || ""),
+      assetId: item.assetId || item._contextTouched?.assetId ? item.assetId : String(ticket.assetId || ""),
+    })));
   }, [draftId, ticket]);
 
   const [notes, setNotes] = useState(prefillNotes);
@@ -464,11 +439,12 @@ export default function CreatePurchaseOrder() {
     setItems(prev => prev.map((item, i) => i === idx ? {
       ...item,
       [field]: value,
+      ...(field === "siteId" ? { sectionId: "", assetId: "" } : field === "sectionId" ? { assetId: "" } : {}),
       ...(["siteId", "sectionId", "assetId", "categoryId"].includes(field)
-        ? { _contextTouched: { ...item._contextTouched, [field]: true } }
+        ? { _contextTouched: { ...item._contextTouched, [field]: true, ...(field === "siteId" ? { sectionId: true, assetId: true } : field === "sectionId" ? { assetId: true } : {}) } }
         : {}),
     } : item));
-    if (["itemName", "quantity", "deliveryLeadDays", "unit"].includes(field)) {
+    if (["itemName", "quantity", "deliveryLeadDays", "unit", "siteId", "sectionId", "categoryId"].includes(field)) {
       setFormErrors(prev => {
         const current = prev.items[idx];
         if (!current?.[field as ItemValidationField]) return prev;
@@ -583,25 +559,21 @@ const handleCatalogSelect = (catalogItem: any) => {
     return true;
   };
 
-  const purchaseContextPayload = () => ({
-    siteId: Number(siteId),
-    sectionId: Number(sectionId),
-    assetId: assetId ? Number(assetId) : null,
-    categoryId: categoryId ? Number(categoryId) : null,
-  });
+  const purchaseContextPayload = () => {
+    // Replacement orders must retain the original order context for the bridge.
+    const context = isReturnReplacement ? initialContext : purchaseItemsForSubmit()[0];
+    return {
+      siteId: Number(context?.siteId),
+      sectionId: Number(context?.sectionId),
+      assetId: context?.assetId ? Number(context.assetId) : null,
+      categoryId: context?.categoryId ? Number(context.categoryId) : null,
+    };
+  };
 
   const validatePurchaseForm = (sending = true) => {
     const next = emptyPurchaseFormErrors();
     let firstMessage = "";
     let firstTargetId: string | undefined;
-
-    const addContextError = (field: "siteId" | "sectionId" | "categoryId", message: string, targetId: string) => {
-      next[field] = message;
-      if (!firstMessage) {
-        firstMessage = message;
-        firstTargetId = targetId;
-      }
-    };
 
     const addItemError = (itemIndex: number, field: ItemValidationField, message: string) => {
       next.items[itemIndex] = { ...(next.items[itemIndex] || {}), [field]: message };
@@ -611,10 +583,6 @@ const handleCatalogSelect = (catalogItem: any) => {
       }
     };
 
-    if (!siteId) addContextError("siteId", t.purchaseOrders.validationSiteRequired, "purchase-site");
-    if (!sectionId) addContextError("sectionId", t.purchaseOrders.validationSectionRequired, "purchase-section");
-    if (sending && !categoryId) addContextError("categoryId", t.purchaseOrders.validationCategoryRequired, "purchase-category");
-
     if (items.length === 0) {
       firstMessage ||= t.purchaseOrders.validationNoItems;
     }
@@ -622,7 +590,7 @@ const handleCatalogSelect = (catalogItem: any) => {
     items.forEach((item, itemIndex) => {
       if (!item.siteId) addItemError(itemIndex, "siteId", itemMessage(t.purchaseOrders.validationSiteRequired, itemIndex));
       if (!item.sectionId) addItemError(itemIndex, "sectionId", itemMessage(t.purchaseOrders.validationSectionRequired, itemIndex));
-      if (sending && !item.categoryId) addItemError(itemIndex, "categoryId", itemMessage(t.purchaseOrders.validationCategoryRequired, itemIndex));
+      if (!item.categoryId) addItemError(itemIndex, "categoryId", itemMessage(t.purchaseOrders.validationCategoryRequired, itemIndex));
       if (!item.itemName.trim()) {
         addItemError(itemIndex, "itemName", itemMessage(t.purchaseOrders.validationItemNameRequired, itemIndex));
       }
@@ -645,7 +613,7 @@ const handleCatalogSelect = (catalogItem: any) => {
       }
     });
 
-    const hasErrors = Boolean(next.siteId || next.sectionId || next.categoryId || Object.keys(next.items).length || items.length === 0);
+    const hasErrors = Boolean(Object.keys(next.items).length || items.length === 0);
     setFormErrors(next);
     if (!hasErrors) return true;
 
@@ -722,18 +690,6 @@ const handleCatalogSelect = (catalogItem: any) => {
     createMut.mutate({ ...body, ...(isTicketMaterial ? { ticketTeam: { assignmentId: ticketTeamAssignmentId, needId: ticketTeamNeedId, expectedRevision: ticketTeamRevision, operationKey: ticketOperationKey.current!.key, warehouseExtraQuantity: ticketWarehouseExtraQuantity } } : {}) });
   };
 
-  const applyHeaderContextToItems = (updates: Partial<Pick<ItemForm, "siteId" | "sectionId" | "assetId" | "categoryId">>) => {
-    if (!items.length) return;
-    const fields = Object.keys(updates) as Array<keyof typeof updates>;
-    const hasExistingValue = items.some(item => fields.some(field => Boolean(item[field]) || item._contextTouched?.[field]));
-    const applyAll = !hasExistingValue || window.confirm(language === "ar"
-      ? "هل تريد تطبيق التغيير على جميع الأصناف؟ اختر إلغاء لتطبيقه على الأصناف التي لم تُعدّل فقط."
-      : "Apply this change to all items? Choose Cancel to apply it only to items that were not customized.");
-    setItems(prev => prev.map(item => {
-      const eligible = applyAll || fields.every(field => !item._contextTouched?.[field]);
-      return eligible ? { ...item, ...updates } : item;
-    }));
-  };
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -817,118 +773,6 @@ const handleCatalogSelect = (catalogItem: any) => {
         </Card>
       )}
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">{t.purchaseOrders.requestContext}</CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>{t.tickets.site} *</Label>
-            <Select
-              value={siteId}
-              onValueChange={(value) => {
-                setSiteId(value);
-                setSectionId("");
-                setAssetId("");
-                applyHeaderContextToItems({ siteId: value, sectionId: "", assetId: "" });
-                setFormErrors(prev => ({ ...prev, siteId: undefined, sectionId: undefined }));
-              }}
-            >
-              <SelectTrigger
-                id="purchase-site"
-                aria-invalid={Boolean(formErrors.siteId)}
-                className={cn(formErrors.siteId && "border-destructive focus:ring-destructive")}
-              >
-                <SelectValue placeholder={t.workflow.ticket.chooseSite} />
-              </SelectTrigger>
-              <SelectContent>
-                {(sites as any[]).map((site: any) => (
-                  <SelectItem key={site.id} value={String(site.id)}>{getLocalizedName(site, language)}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {formErrors.siteId && <p className="text-xs text-destructive">{formErrors.siteId}</p>}
-          </div>
-
-          <div className="space-y-2">
-            <Label>{t.tickets.section} *</Label>
-            <Select
-              value={sectionId}
-              disabled={!siteId}
-              onValueChange={(value) => {
-                setSectionId(value);
-                setAssetId("");
-                applyHeaderContextToItems({ sectionId: value, assetId: "" });
-                setFormErrors(prev => ({ ...prev, sectionId: undefined }));
-              }}
-            >
-              <SelectTrigger
-                id="purchase-section"
-                aria-invalid={Boolean(formErrors.sectionId)}
-                className={cn(formErrors.sectionId && "border-destructive focus:ring-destructive")}
-              >
-                <SelectValue placeholder={siteId ? t.workflow.ticket.chooseSection : t.tickets.selectSiteFirst} />
-              </SelectTrigger>
-              <SelectContent>
-                {(sections as any[]).map((section: any) => (
-                  <SelectItem key={section.id} value={String(section.id)}>{getLocalizedName(section, language)}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {formErrors.sectionId && <p className="text-xs text-destructive">{formErrors.sectionId}</p>}
-          </div>
-
-          <div className="space-y-2">
-            <Label>{t.tickets.asset}</Label>
-            <Select value={assetId || "__none__"} disabled={!sectionId} onValueChange={(value) => {
-              const next = value === "__none__" ? "" : value;
-              setAssetId(next);
-              applyHeaderContextToItems({ assetId: next });
-            }}>
-              <SelectTrigger><SelectValue placeholder={t.purchaseOrders.selectAssetOptional} /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">{t.purchaseOrders.withoutAsset}</SelectItem>
-                {(assets as any[]).map((asset: any) => (
-                  <SelectItem key={asset.id} value={String(asset.id)}>{asset.assetNumber ? `${asset.assetNumber} — ` : ""}{asset.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>{t.tickets.category}</Label>
-            <Select
-              value={categoryId || "__none__"}
-              onValueChange={(value) => {
-                const next = value === "__none__" ? "" : value;
-                setCategoryId(next);
-                applyHeaderContextToItems({ categoryId: next });
-                setFormErrors(prev => ({ ...prev, categoryId: undefined }));
-              }}
-            >
-              <SelectTrigger
-                id="purchase-category"
-                aria-invalid={Boolean(formErrors.categoryId)}
-                className={cn(formErrors.categoryId && "border-destructive focus:ring-destructive")}
-              >
-                <SelectValue placeholder={t.purchaseOrders.selectCategoryOptional} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">{t.purchaseOrders.withoutCategory}</SelectItem>
-                {(purchaseCategories as any[]).map((category: any) => (
-                  <SelectItem key={category.id} value={String(category.id)} disabled={!category.isActive}>
-                    {category.name}{!category.isActive ? ` (${t.purchaseOrders.inactiveCategory})` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {formErrors.categoryId && <p className="text-xs text-destructive">{formErrors.categoryId}</p>}
-            {purchaseCategories.length === 0 && (
-              <p className="text-xs text-muted-foreground">{t.purchaseOrders.noActiveCategories}</p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
 
 {items.map((item, idx) => {
   const isMaterialBoundItem = Boolean(hasMaterialPurchaseContext && idx === 0 && item.catalogItemId === materialCatalogItemId);
@@ -1049,16 +893,16 @@ const handleCatalogSelect = (catalogItem: any) => {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div className="space-y-1">
             <Label>{t.tickets.site} *</Label>
-            <Select value={item.siteId} onValueChange={value => setItems(prev => prev.map((current, i) => i === idx ? { ...current, siteId: value, sectionId: "", assetId: "", _contextTouched: { ...current._contextTouched, siteId: true, sectionId: true, assetId: true } } : current))}>
-              <SelectTrigger id={`purchase-item-${idx}-siteId`} aria-invalid={Boolean(itemErrors.siteId)}><SelectValue placeholder={t.workflow.ticket.chooseSite} /></SelectTrigger>
+            <Select value={item.siteId} onValueChange={value => updateItem(idx, "siteId", value)}>
+              <SelectTrigger id={`purchase-item-${idx}-siteId`} aria-invalid={Boolean(itemErrors.siteId)} className={cn(itemErrors.siteId && "border-destructive focus:ring-destructive")}><SelectValue placeholder={t.workflow.ticket.chooseSite} /></SelectTrigger>
               <SelectContent>{(sites as any[]).map((site: any) => <SelectItem key={site.id} value={String(site.id)}>{getLocalizedName(site, language)}</SelectItem>)}</SelectContent>
             </Select>
             {itemErrors.siteId && <p className="text-xs text-destructive">{itemErrors.siteId}</p>}
           </div>
           <div className="space-y-1">
             <Label>{t.tickets.section} *</Label>
-            <Select value={item.sectionId} disabled={!item.siteId} onValueChange={value => setItems(prev => prev.map((current, i) => i === idx ? { ...current, sectionId: value, assetId: "", _contextTouched: { ...current._contextTouched, sectionId: true, assetId: true } } : current))}>
-              <SelectTrigger id={`purchase-item-${idx}-sectionId`} aria-invalid={Boolean(itemErrors.sectionId)}><SelectValue placeholder={item.siteId ? t.workflow.ticket.chooseSection : t.tickets.selectSiteFirst} /></SelectTrigger>
+            <Select value={item.sectionId} disabled={!item.siteId} onValueChange={value => updateItem(idx, "sectionId", value)}>
+              <SelectTrigger id={`purchase-item-${idx}-sectionId`} aria-invalid={Boolean(itemErrors.sectionId)} className={cn(itemErrors.sectionId && "border-destructive focus:ring-destructive")}><SelectValue placeholder={item.siteId ? t.workflow.ticket.chooseSection : t.tickets.selectSiteFirst} /></SelectTrigger>
               <SelectContent>{(allSections as any[]).filter((section: any) => String(section.siteId) === item.siteId).map((section: any) => <SelectItem key={section.id} value={String(section.id)}>{getLocalizedName(section, language)}</SelectItem>)}</SelectContent>
             </Select>
             {itemErrors.sectionId && <p className="text-xs text-destructive">{itemErrors.sectionId}</p>}
@@ -1066,7 +910,7 @@ const handleCatalogSelect = (catalogItem: any) => {
           <div className="space-y-1">
             <Label>{t.tickets.category} *</Label>
             <Select value={item.categoryId || "__none__"} onValueChange={value => updateItem(idx, "categoryId", value === "__none__" ? "" : value)}>
-              <SelectTrigger id={`purchase-item-${idx}-categoryId`} aria-invalid={Boolean(itemErrors.categoryId)}><SelectValue placeholder={t.purchaseOrders.selectCategoryOptional} /></SelectTrigger>
+              <SelectTrigger id={`purchase-item-${idx}-categoryId`} aria-invalid={Boolean(itemErrors.categoryId)} className={cn(itemErrors.categoryId && "border-destructive focus:ring-destructive")}><SelectValue placeholder={t.purchaseOrders.selectCategoryOptional} /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none__">{t.purchaseOrders.withoutCategory}</SelectItem>
                 {(purchaseCategories as any[]).map((category: any) => <SelectItem key={category.id} value={String(category.id)} disabled={!category.isActive}>{category.name}</SelectItem>)}
@@ -1313,7 +1157,7 @@ const handleCatalogSelect = (catalogItem: any) => {
 {!hasMaterialPurchaseContext && !isReturnReplacement && (
   <Button
     variant="outline"
-    onClick={() => setItems(prev => [...prev, emptyItem("", { siteId, sectionId, assetId, categoryId })])}
+    onClick={() => setItems(prev => [...prev, emptyItem("", prev[0] || initialContext)])}
     className="w-full gap-2 border-dashed h-12"
   >
     <Plus className="w-4 h-4" /> {t.common.add}
