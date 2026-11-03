@@ -1083,8 +1083,8 @@ export default function PurchaseOrders() {
                 className="hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer"
                 onClick={() => setLocation(`/purchase-orders/${item.purchaseOrderId}?itemId=${item.id}`)}
               >
-                <CardContent className="py-3 flex items-center justify-between gap-4 flex-wrap">
-                  <div className="min-w-0 flex-1">
+                <CardContent className="py-3 flex flex-col items-stretch sm:flex-row sm:items-center justify-between gap-4 flex-wrap">
+                  <div className="min-w-0 w-full sm:w-auto sm:flex-1">
                     <div className="font-medium text-sm break-words">{getLocalizedItemField(item, "itemName", language) || item.itemName || t.workflow.purchase.unnamedItem}</div>
                     <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3 flex-wrap">
                       <span className="font-mono">{item.purchaseOrderNumber}</span>
@@ -1096,7 +1096,7 @@ export default function PurchaseOrders() {
                       {item.updatedAt && <span>{t.workflow.purchase.lastUpdate} {new Date(item.updatedAt).toLocaleDateString(locale)}</span>}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap w-full sm:w-auto">
                     <Badge variant="outline">{getPOItemStatusLabel(item.status)}</Badge>
                     <Button
                       size="sm"
