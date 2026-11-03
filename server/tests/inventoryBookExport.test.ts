@@ -47,10 +47,16 @@ function exportFixture(books = [book(1)], legacy: any[] = []) {
 
 describe("Warehouse book Excel export, using the production export function", () => {
   it("exports books even with no legacy IDs, numeric quantities and RTL/frozen/filter formatting", async () => {
-    const f = exportFixture(); const result = await xlsx(await f.run({ itemIds: [], bookFilters: filters }));
+    const f = exportFixture([book(1), book(2, [{ unit: "كجم", quantity: 1.5, incoming: 2.125, outgoing: 0.625, isFrozen: 0 }])]);
+    const result = await xlsx(await f.run({ itemIds: [], bookFilters: filters }));
     expect(result.worksheets.map(sheet => sheet.name)).toEqual(["المخزون"]);
     const sheet = result.worksheets[0];
     expect(sheet.getRow(2).values).toEqual([undefined, "صنف 1", "CAT-1", 5, "قطعة", 9, 4, 3]);
+    for (const column of ["C", "E", "F"]) {
+      expect(sheet.getCell(`${column}2`).numFmt).toBe("#,##0");
+      expect(sheet.getCell(`${column}3`).numFmt).toBe("#,##0.###");
+    }
+    expect([sheet.getCell("C3").value, sheet.getCell("E3").value, sheet.getCell("F3").value]).toEqual([1.5, 2.125, 0.625]);
     expect(sheet.views[0]).toMatchObject({ rightToLeft: true, state: "frozen", ySplit: 1 });
     expect(sheet.autoFilter).toBe("A1:G1");
     expect(f.calls).toEqual([{ ...filters, afterId: 0, limit: 50 }]);

@@ -50,5 +50,9 @@ export async function appendInventoryBookSheet(workbook: ExcelJS.Workbook, filte
     row.alignment = { vertical: "middle", horizontal: index === 1 ? "center" : "right", wrapText: true };
     if (index > 1) row.height = 24;
   });
-  for (const key of ["quantity", "incoming", "outgoing"]) sheet.getColumn(key).numFmt = "#,##0.###";
+  for (const key of ["quantity", "incoming", "outgoing"]) sheet.getColumn(key).eachCell((cell, rowNumber) => {
+    if (rowNumber > 1 && typeof cell.value === "number") {
+      cell.numFmt = Number.isInteger(cell.value) ? "#,##0" : "#,##0.###";
+    }
+  });
 }
