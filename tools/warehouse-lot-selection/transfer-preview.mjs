@@ -165,6 +165,10 @@ try {
       assert.ok(await page.evaluate(() => window.__lotReads >= 2));
       await click("▸ اختيار اللوتات");
       await page.waitForSelector("table");
+      const emptySelectionText = await page.$eval("#root", node => node.textContent);
+      assert.ok(emptySelectionText.includes("اختر لوتًا واحدًا على الأقل"));
+      assert.ok(!emptySelectionText.includes("too_small"));
+      assert.equal(emptySelectionText.split("اختر لوتًا واحدًا على الأقل").length - 1, 1);
       await page.evaluate(() =>
         Array.from(document.querySelectorAll("tr"))
           .find(row => row.textContent.includes("LOT-3"))

@@ -3,6 +3,7 @@ import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { WarehouseLotSelection } from "./WarehouseLotSelection";
+import { isLotSelectionValidationError, warehouseLotValidationMessage } from "@/lib/warehouse-lot-validation-message";
 import type { WarehouseLotSelection as Selection } from "@shared/warehouse-lot-selection";
 import {
   buildMaterialTransferLotCart,
@@ -71,6 +72,7 @@ export function MaterialTransferLotPicker({
     };
   }, [inventoryIds]);
   let planError = "";
+  let inlineSelectionError = false;
   if (!loading && !error)
     try {
       buildMaterialTransferLotCart(
@@ -82,7 +84,8 @@ export function MaterialTransferLotPicker({
         notes
       );
     } catch (e) {
-      planError = (e as Error).message;
+      planError = warehouseLotValidationMessage(e);
+      inlineSelectionError = isLotSelectionValidationError(e);
     }
   const prepare = async () => {
     if (loading || disabled) return;
@@ -104,7 +107,7 @@ export function MaterialTransferLotPicker({
       );
     } catch (e) {
       onInvalidate();
-      setError((e as Error).message);
+      setError(warehouseLotValidationMessage(e));
     } finally {
       setLoading(false);
     }
@@ -181,7 +184,7 @@ export function MaterialTransferLotPicker({
           }}
         />
       </label>
-      {(error || planError) && (
+      {(error || (!inlineSelectionError && planError)) && (
         <p role="alert" className="text-sm text-destructive">
           {error || planError}
         </p>

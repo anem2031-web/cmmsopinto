@@ -126,7 +126,11 @@ describe.each(["tickets", "pmv2"] as const)(
     it("selects 5+1 manually and disables preparation for short or excessive quantities", async () => {
       render(source);
       state.buttons.find(button => button["aria-expanded"] === false).onClick();
-      render(source);
+      const emptySelection = render(source);
+      expect(emptySelection).toContain("اختر لوتًا واحدًا على الأقل");
+      expect(emptySelection.match(/اختر لوتًا واحدًا على الأقل/g)).toHaveLength(1);
+      expect(emptySelection).not.toContain("too_small");
+      expect(emptySelection).not.toContain('role="alert"');
       expect(add().disabled).toBe(true);
       state.buttons
         .filter(button => button.children === "اختيار اللوت")[2]

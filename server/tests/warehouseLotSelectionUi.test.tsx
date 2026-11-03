@@ -110,7 +110,10 @@ it("keeps the selected quantity input editable when cleared and allows removing 
   };
   render();
   state.inputs[0].onChange({ target: { value: "" } });
-  expect(render()).toContain('role="status"');
+  const emptyQuantity = render();
+  expect(emptyQuantity).toContain('role="status"');
+  expect(emptyQuantity).toContain("أدخل كمية صحيحة أكبر من صفر");
+  expect(emptyQuantity).not.toContain("too_small");
   expect(state.inputs).toHaveLength(1);
   state.inputs[0].onChange({ target: { value: "6" } });
   expect(render()).not.toContain('role="status"');
