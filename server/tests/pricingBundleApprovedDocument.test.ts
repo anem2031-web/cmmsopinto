@@ -9,11 +9,14 @@ import fs from "node:fs";
 import ts from "typescript";
 import vm from "node:vm";
 import { readAccountingSignature } from "../services/pdf/accountingSignature";
+import { documentListPageInput } from "../../shared/document-list";
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 const close: Array<()=>void> = [];
-afterEach(()=>close.splice(0).forEach(fn=>fn()));
+afterEach(()=>{close.splice(0).forEach(fn=>fn());vi.unstubAllEnvs();});
 function fixture() {
+  vi.stubEnv("DELEGATE_PRICING_BUNDLE_APPROVALS_ENABLED", "false");
   const memory = new DatabaseSync(":memory:"); close.push(()=>memory.close());
+  memory.function("JSON_EXTRACT", (value: string, path: string) => JSON.stringify(JSON.parse(value).rows.map((row: any) => row[path.split(".").at(-1)!])));
   memory.exec(`
     CREATE TABLE delegate_pricing_bundles(id INTEGER,bundleNumber TEXT,delegateId INTEGER,status TEXT,revision INTEGER,createdAt TEXT,sentAt TEXT,effectsDone INTEGER,snapshotJson TEXT,pdfContent BLOB);
     CREATE TABLE delegate_pricing_bundle_batches(bundleId INTEGER,purchaseOrderId INTEGER,pricingBatchId INTEGER,purchasePackageSubmissionId INTEGER);
@@ -24,7 +27,7 @@ function fixture() {
     CREATE TABLE users(id INTEGER,name TEXT);
     CREATE TABLE po_pricing_batches(id INTEGER,purchaseOrderId INTEGER,purchasePackageSubmissionId INTEGER,batchNumber INTEGER,status TEXT,accountingApprovedById INTEGER,accountingApprovedAt TEXT,managementApprovedById INTEGER,managementApprovedAt TEXT,accountingSignatureSnapshot TEXT,accountingNotes TEXT,custodyAmount TEXT);
     CREATE TABLE purchase_package_submissions(id INTEGER,purchasePackageId INTEGER,subNumber INTEGER,status TEXT,accountingApprovedById INTEGER,accountingApprovedAt TEXT,managementApprovedById INTEGER,managementApprovedAt TEXT,accountingSignatureSnapshot TEXT,custodyBalance TEXT);
-    INSERT INTO users VALUES(7,'Accounting original'),(8,'Actual manager');
+    INSERT INTO users VALUES(7,'Accounting original'),(8,'Actual manager'),(11,'Delegate');
     INSERT INTO purchase_packages VALUES(1,'PB-A'),(2,'PB-B');
     INSERT INTO purchase_package_submissions VALUES(10,1,5,'approved',7,'2026-10-31 09:25:01',8,'2026-10-31 09:42:17',NULL,'45538.00'),(20,2,2,'approved',7,'2026-10-31 09:24:35',8,'2026-10-31 09:39:56',NULL,'45538.00');
     INSERT INTO purchase_orders VALUES(101,'PR-101',1),(102,'PR-102',2),(103,'PR-103',2);
@@ -55,6 +58,87 @@ function renderHarness() {
     escapeHtml:(value:any)=>String(value).replaceAll("<","&lt;"),fmtSAR:(n:number)=>n.toFixed(2),amountToArabicCurrencyPhrase:(n:number)=>String(n),htmlToPdf:async(value:string)=>{html=value;return Buffer.from("%PDF-test");}});
   return {render,html:()=>html};
 }
+
+function completedFixture(unified: boolean) {
+  const f = fixture();
+  if (unified) {
+    vi.stubEnv("DELEGATE_PRICING_BUNDLE_APPROVALS_ENABLED", "true");
+    f.memory.exec(`CREATE TABLE delegate_pricing_bundle_approvals(bundleId INTEGER PRIMARY KEY,status TEXT,
+      accountingApprovedById INTEGER,accountingApprovedAt TEXT,managementApprovedById INTEGER,managementApprovedAt TEXT,
+      accountingSignatureSnapshot TEXT,managementSignatureSnapshot TEXT,accountingRejections TEXT,managementRejections TEXT,
+      custodyBalance TEXT,accountingNotes TEXT,managementNotes TEXT);
+      INSERT INTO delegate_pricing_bundle_approvals VALUES(24,'approved',7,'2026-11-03',8,'2026-11-03',NULL,NULL,'[]','[]','100',NULL,NULL);`);
+  }
+  return f;
+}
+
+describe.each([false,true])("Final DPB financial access (unified=%s), SQL in memory only", unified => {
+  it.each(["accountant","senior_management"])("enables final-document list/download for another active %s and freshly denies a revoked approval",async role=>{
+    const f=completedFixture(unified), actor={id:99,role,isActive:1};
+    const input=documentListPageInput.parse({page:1});
+    const page=await f.service.listPage(actor,input);
+    expect(page.rows).toEqual([expect.objectContaining({id:24,pdfAllowed:true,pdfBlockedReason:null})]);
+    expect(f.queries).toHaveLength(3);
+    // Ordinary pricing detail/export retain their exact-approver semantics.
+    expect((await f.service.detail(actor,24)).pdfAllowed).toBe(false);
+    await expect(f.service.pdf(actor,24)).rejects.toMatchObject({code:"FORBIDDEN"});
+    const file=await f.service.pdf(actor,24,true);
+    expect(file.name).toBe(f.snapshot.number+'.pdf');expect(f.render).toHaveBeenCalledTimes(1);
+    f.memory.exec(unified?"UPDATE delegate_pricing_bundle_approvals SET status='pending_management',managementApprovedAt=NULL":"UPDATE po_pricing_batches SET managementApprovedAt=NULL WHERE id=13");
+    expect((await f.service.listPage(actor,input)).rows).toEqual([]);
+    await expect(f.service.pdf(actor,24,true)).rejects.toThrow("اعتماد");
+    expect(f.render).toHaveBeenCalledTimes(1);
+    expect(Buffer.from(f.memory.prepare("SELECT pdfContent FROM delegate_pricing_bundles WHERE id=24").get()!.pdfContent as Uint8Array).toString()).toBe("%PDF-delegate-original");
+  });
+  it.each([
+    "DELETE FROM purchase_orders WHERE id=103",
+    "DELETE FROM purchase_order_items WHERE id=8",
+    "DELETE FROM delegate_pricing_bundle_batches WHERE purchaseOrderId=103",
+    "UPDATE po_pricing_batches SET purchasePackageSubmissionId=NULL WHERE id=13",
+  ])("denies the final document for both roles if any hidden member is invalid: %s",async change=>{
+    const f=completedFixture(unified);f.memory.exec(change);
+    for(const role of ["accountant","senior_management"]){
+      const actor={id:99,role,isActive:1};
+      expect((await f.service.listPage(actor,documentListPageInput.parse({page:1}))).rows).toEqual([]);
+      await expect(f.service.pdf(actor,24,true)).rejects.toThrow();
+    }
+    expect(f.render).not.toHaveBeenCalled();
+  });
+});
+
+describe("Final DPB list scale and unchanged role boundaries",()=>{
+  it.each(["accountant","senior_management"])("keeps %s list work constant with 601 bundles sharing parent IDs, mixed pending members and pagination",async role=>{
+    const f=fixture();
+    for(let id=25;id<=624;id++) {
+      f.memory.prepare("INSERT INTO delegate_pricing_bundles SELECT ?,?,delegateId,status,revision,createdAt,sentAt,effectsDone,snapshotJson,pdfContent FROM delegate_pricing_bundles WHERE id=24").run(id,`DPB-${id}`);
+      f.memory.prepare("INSERT INTO delegate_pricing_bundle_batches SELECT ?,purchaseOrderId,pricingBatchId,purchasePackageSubmissionId FROM delegate_pricing_bundle_batches WHERE bundleId=24").run(id);
+      f.memory.prepare("INSERT INTO delegate_pricing_bundle_items SELECT ?,purchaseOrderItemId,removedAt FROM delegate_pricing_bundle_items WHERE bundleId=24").run(id);
+    }
+    f.memory.exec("DELETE FROM delegate_pricing_bundle_batches WHERE bundleId=620 AND purchaseOrderId=103");
+    for(const pageSize of [1,50]){
+      f.queries.length=0;
+      const result=await f.service.listPage({id:99,role,isActive:1},documentListPageInput.parse({page:1,pageSize}));
+      expect(result.total).toBe(600);expect(result.rows).toHaveLength(pageSize);
+      expect(result.rows.every(row=>row.pdfAllowed&&row.id!==620)).toBe(true);
+      expect(f.queries).toHaveLength(3);expect(f.queries[2]).toContain("LIMIT ? OFFSET ?");
+    }
+  });
+  it("keeps observer, foreign delegate, unrelated and inactive users denied without reusing an earlier financial grant",async()=>{
+    const f=fixture();await f.service.pdf({id:99,role:"accountant",isActive:1},24,true);f.render.mockClear();
+    for(const role of ["warehouse","observer","it_manager","technician","user","delegate"]){
+      await expect(f.service.pdf({id:99,role,isActive:1},24,true)).rejects.toMatchObject({code:"FORBIDDEN"});
+    }
+    await expect(f.service.pdf({id:99,role:"senior_management",isActive:0},24,true)).rejects.toMatchObject({code:"FORBIDDEN"});
+    expect(f.render).not.toHaveBeenCalled();
+  });
+  it("propagates infrastructure failures rather than allowing a completed document",async()=>{
+    const service=new PricingBundleService({database:async()=>({execute:async()=>{throw Error("offline");}})} as any);
+    for(const role of ["accountant","senior_management"]){
+      await expect(service.listPage({id:99,role,isActive:1},documentListPageInput.parse({page:1}))).rejects.toThrow("offline");
+      await expect(service.pdf({id:99,role,isActive:1},24,true)).rejects.toThrow("offline");
+    }
+  });
+});
 describe("Document-center DPB approved PDF, without changing delegate files or workflow",()=>{
   it("keeps all eight frozen rows and groups the three request approvals into their two actual financial scopes, without summing custody balances",async()=>{
     const f=fixture();const original=JSON.stringify(f.snapshot);
@@ -94,12 +178,14 @@ describe("Document-center DPB approved PDF, without changing delegate files or w
     expect(Buffer.from(original.content,"base64").toString()).toBe("%PDF-delegate-original");expect(f.render).not.toHaveBeenCalled();expect(f.signature).not.toHaveBeenCalled();
     for(const actor of [{...delegate,id:99},{...delegate,role:"warehouse"},{...delegate,role:"observer"},{...delegate,isActive:0}])await expect(f.service.pdf(actor,24,true)).rejects.toMatchObject({code:"FORBIDDEN"});
   });
-  it.each([['accountant',7],['senior_management',8]] as const)("preserves the exact approval actor guard for %s on the approved rendition",async(role,id)=>{
+  it.each([['accountant',7],['senior_management',8]] as const)("shares only the final approved rendition with active %s users",async(role,id)=>{
     const f=fixture();
     expect((await f.service.pdf({id,role,isActive:1},24,true)).name).toBe(f.snapshot.number+'.pdf');
     expect(f.render).toHaveBeenCalledTimes(1);
-    await expect(f.service.pdf({id:99,role,isActive:1},24,true)).rejects.toMatchObject({code:'FORBIDDEN'});
-    expect(f.render).toHaveBeenCalledTimes(1);
+    expect((await f.service.pdf({id:99,role,isActive:1},24,true)).name).toBe(f.snapshot.number+'.pdf');
+    await expect(f.service.pdf({id:99,role,isActive:1},24)).rejects.toMatchObject({code:'FORBIDDEN'});
+    await expect(f.service.pdf({id:99,role,isActive:0},24,true)).rejects.toMatchObject({code:'FORBIDDEN'});
+    expect(f.render).toHaveBeenCalledTimes(2);
     expect(f.queries.every(query=>query.trim().startsWith('SELECT'))).toBe(true);
   });
   it("never substitutes a live profile signature for a missing historical accounting snapshot",async()=>{

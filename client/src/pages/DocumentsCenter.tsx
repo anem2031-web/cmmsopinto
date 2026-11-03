@@ -478,7 +478,7 @@ function ExistingDocumentsCenter({typeFilter}: {typeFilter:DocType}) {
         delegates={role!=="delegate"&&["po_financial_batch","delegate_pricing_documents","delegate_pricing_bundle"].includes(typeFilter)?financialDelegateOptions:undefined} />
       {!isLoading&&!activeError&&<p className="text-sm text-muted-foreground" role="status">{resultCount} مستند مطابق</p>}
 
-      {(role === "accountant" || role === "senior_management") && <p className="text-sm text-muted-foreground">{approvalPdfNotice()}</p>}
+      {(role === "accountant" || role === "senior_management") && typeFilter !== "delegate_pricing_bundle" && <p className="text-sm text-muted-foreground">{approvalPdfNotice()}</p>}
       {activeError && <p role="alert">تعذر تحميل بعض المستندات. أعد المحاولة من تحديث البيانات.</p>}
       {pendingLists && !isLoading && <p role="status">جارٍ تحميل بقية المستندات…</p>}
       {typeFilter === "delegate_pricing_bundle" && canViewBundles && bundleStatusQ.data?.enabled === false && <p role="status">حزم التسعير غير مفعلة حاليًا.</p>}
@@ -567,7 +567,7 @@ function ExistingDocumentsCenter({typeFilter}: {typeFilter:DocType}) {
             <p>المندوب: {bundleDetailQ.data.delegateName} — التاريخ: {relativeOrDate(bundleDetailQ.data.createdAt)}</p>
             <div className="overflow-x-auto"><Table><TableHeader><TableRow>{["الصنف", "طلب الشراء", "القسم", "الكمية", "الوحدة", "السعر", "المورد", "الإجمالي"].map(label => <TableHead key={label}>{label}</TableHead>)}</TableRow></TableHeader><TableBody>{bundleDetailQ.data.items.map((item: PricingBundleRow) => <TableRow key={item.id}><TableCell>{item.itemName}</TableCell><TableCell><Link href={`/purchase-orders/${item.purchaseOrderId}?itemId=${item.id}`} className="text-primary underline">{item.poNumber}</Link></TableCell><TableCell>{item.sectionName}</TableCell><TableCell>{item.quantity}</TableCell><TableCell>{item.unit}</TableCell><TableCell>{formatFinancialGrandTotal(item.estimatedUnitCost)}</TableCell><TableCell>{item.supplierName}</TableCell><TableCell>{formatFinancialGrandTotal(item.estimatedTotalCost)}</TableCell></TableRow>)}</TableBody></Table></div>
             <p>الإجمالي: {formatFinancialGrandTotal(bundleDetailQ.data.total)}</p>
-            {canOpenApprovalPdf(role, bundleDetailQ.data) ? <Button disabled={bundlePdf.isPending} onClick={async()=>{try{await downloadBundlePdf(bundleDetailQ.data!.id);}catch(error:any){toast.error(error.message||"تعذر تنزيل الملف");}}}>تنزيل PDF</Button> : <p>{approvalPdfNotice()}</p>}
+            {canOpenApprovalPdf(role, rows.find(row => row.type === "delegate_pricing_bundle" && row.id === selectedBundleId)) ? <Button disabled={bundlePdf.isPending} onClick={async()=>{try{await downloadBundlePdf(bundleDetailQ.data!.id);}catch(error:any){toast.error(error.message||"تعذر تنزيل الملف");}}}>تنزيل PDF</Button> : <p>{approvalPdfNotice()}</p>}
           </div> : null}
           <Button variant="outline" onClick={() => setSelectedBundleId(null)}>إغلاق</Button>
         </DialogContent>

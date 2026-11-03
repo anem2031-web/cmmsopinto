@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const state=vi.hoisted(()=>({user:{id:1,role:'user',isActive:1,username:'ANIS'},calls:[] as any[],buttons:[] as any[],inputs:[] as any[],selects:[] as any[],approved:true,values:[] as any[],cursor:0,pdf:vi.fn(async()=>({name:'DPB-1.pdf',content:'JVBERg=='}))}));
+const state=vi.hoisted(()=>({user:{id:1,role:'user',isActive:1,username:'ANIS'},calls:[] as any[],buttons:[] as any[],inputs:[] as any[],selects:[] as any[],approved:true,detailApproved:undefined as boolean|undefined,values:[] as any[],cursor:0,pdf:vi.fn(async()=>({name:'DPB-1.pdf',content:'JVBERg=='}))}));
 vi.mock('react',async()=>({...await vi.importActual<typeof import('react')>('react'),useEffect:()=>{},useState:(initial:any)=>{
   const index=state.cursor++;if(!(index in state.values))state.values[index]=typeof initial==='function'?initial():initial;
   return [state.values[index],(value:any)=>state.values[index]=typeof value==='function'?value(state.values[index]):value];
@@ -9,6 +9,7 @@ vi.mock('react',async()=>({...await vi.importActual<typeof import('react')>('rea
 vi.mock('../../client/src/_core/hooks/useAuth',()=>({useAuth:()=>({user:state.user})}));
 vi.mock('../../client/src/components/ui/button',()=>({Button:({children,...props}:any)=>{state.buttons.push({children,...props});return <button {...props}>{children}</button>;}}));
 vi.mock('../../client/src/components/ui/input',()=>({Input:(props:any)=>{state.inputs.push(props);return <input {...props}/>;}}));
+vi.mock('../../client/src/components/ui/dialog',()=>({Dialog:({open,children}:any)=>open?<div>{children}</div>:null,DialogContent:({children}:any)=><div>{children}</div>,DialogHeader:({children}:any)=><div>{children}</div>,DialogTitle:({children}:any)=><h2>{children}</h2>}));
 vi.mock('../../client/src/components/ui/select',()=>({
   Select:({children,...props}:any)=>{state.selects.push(props);return <div>{children}</div>;},
   SelectTrigger:({children,...props}:any)=><button {...props}>{children}</button>,SelectValue:({children}:any)=><span>{children}</span>,
@@ -22,7 +23,7 @@ vi.mock('../../client/src/lib/trpc',()=>{
     if(key==='useQuery')return (input:any,options:any={})=>{
       state.calls.push({path,input,enabled:options.enabled!==false});
       const bundle={id:3,bundleNumber:'DPB-LEGACY-3',status:'archived',delegateName:'Delegate',total:50,createdAt:'2026-11-02 08:00:00',pdfAllowed:state.approved,items:[]};
-      const data=path==='approvedPricingDocuments.listPage'?{rows:[{id:1,bundleNumber:'DPB-APPROVED-1',delegateName:'المندوب التجريبي',approvedAt:'2026-11-02 09:00:00',total:400}],page:1,total:1}:path==='delegatePricingBundles.status'?{enabled:true}:path==='delegatePricingBundles.listPage'?{rows:[bundle],total:1,page:1,delegates:[]}:path==='delegatePricingBundles.detail'?bundle:[];
+      const data=path==='approvedPricingDocuments.listPage'?{rows:[{id:1,bundleNumber:'DPB-APPROVED-1',delegateName:'المندوب التجريبي',approvedAt:'2026-11-02 09:00:00',total:400}],page:1,total:1}:path==='delegatePricingBundles.status'?{enabled:true}:path==='delegatePricingBundles.listPage'?{rows:[bundle],total:1,page:1,delegates:[]}:path==='delegatePricingBundles.detail'?{...bundle,pdfAllowed:state.detailApproved??state.approved}:[];
       return {data:options.enabled===false?undefined:data,isLoading:false,isFetching:false,refetch:vi.fn(),error:null};
     };return proxy(path?`${path}.${String(key)}`:String(key));
   }});return {trpc:proxy()};
@@ -30,7 +31,7 @@ vi.mock('../../client/src/lib/trpc',()=>{
 import DocumentsCenter from '../../client/src/pages/DocumentsCenter';
 const render=()=>{state.cursor=0;state.buttons=[];state.inputs=[];state.selects=[];return renderToStaticMarkup(<DocumentsCenter/>);};
 describe('Account-scoped approved pricing document tab',()=>{
-  beforeEach(()=>{state.user={id:1,role:'user',isActive:1,username:'ANIS'};state.calls=[];state.buttons=[];state.values=[];state.cursor=0;state.approved=true;state.pdf.mockClear();});
+  beforeEach(()=>{state.user={id:1,role:'user',isActive:1,username:'ANIS'};state.calls=[];state.buttons=[];state.values=[];state.cursor=0;state.approved=true;state.detailApproved=undefined;state.pdf.mockClear();});
   it.each(['ANIS','ahmed1'])('shows %s only the final document reader with view and print',username=>{
     state.user.username=username;const html=render();
     for(const value of ['حزم التسعير المعتمدة','DPB-APPROVED-1','المندوب التجريبي','400.00','استعراض','طباعة','تنزيل PDF'])expect(html).toContain(value);
@@ -103,8 +104,8 @@ describe('Account-scoped approved pricing document tab',()=>{
       expect(anchor.click).toHaveBeenCalledTimes(1);expect(state.pdf).toHaveBeenCalledTimes(2);
     }finally{globalThis.URL=originalUrl;(globalThis as any).window=originalWindow;}
   });
-  it('uses the original approval-scoped DPB RPC afresh for each of the three standardized actions',async()=>{
-    state.user={id:7,role:'accountant',isActive:1,username:'OTHER'};render();
+  it.each(['accountant','senior_management'])('uses the final approved DPB RPC afresh for each %s action',async role=>{
+    state.user={id:99,role,isActive:1,username:'OTHER'};render();
     state.selects[0].onValueChange('delegate_pricing_bundle');state.values=state.values.slice(0,1);render();
     const originalUrl=globalThis.URL,originalWindow=(globalThis as any).window;
     const preview={opener:{},location:{replace:vi.fn()},close:vi.fn()},anchor={href:'',download:'',hidden:false,click:vi.fn(),remove:vi.fn()};
@@ -118,5 +119,18 @@ describe('Account-scoped approved pricing document tab',()=>{
       expect(state.calls.some(call=>call.path==='approvedPricingDocuments.listPage')).toBe(false);
       vi.runOnlyPendingTimers();
     }finally{vi.useRealTimers();globalThis.URL=originalUrl;(globalThis as any).window=originalWindow;}
+  });
+  it.each(['accountant','senior_management'])('keeps %s download visible inside final-document details even when ordinary pricing permission belongs to another approver',role=>{
+    state.user={id:99,role,isActive:1,username:'OTHER'};state.detailApproved=false;render();
+    state.selects[0].onValueChange('delegate_pricing_bundle');state.values=state.values.slice(0,1);
+    let html=render();
+    for(const action of ['استعراض','تنزيل PDF','طباعة'])expect(html).toContain(action);
+    expect(html).not.toContain('PDF متاح بعد اعتمادك');expect(html).not.toContain('يُتاح عرض PDF وتنزيله بعد اعتمادك');
+    state.buttons.find(button=>button.children==='تفاصيل').onClick();html=render();
+    expect(state.calls.find(call=>call.path==='delegatePricingBundles.detail'&&call.enabled)).toMatchObject({input:{id:3}});
+    expect(state.buttons.filter(button=>button.children==='تنزيل PDF')).toHaveLength(1);
+    state.approved=false;html=render();
+    expect(state.buttons.filter(button=>button.children==='تنزيل PDF')).toHaveLength(0);
+    expect(html).not.toContain('title="تنزيل PDF"');
   });
 });

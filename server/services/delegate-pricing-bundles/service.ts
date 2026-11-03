@@ -127,20 +127,24 @@ export class PricingBundleService {
       JSON_EXTRACT(b.snapshotJson,'$.rows[*].purchaseOrderId') AS sentOrderIds,JSON_EXTRACT(b.snapshotJson,'$.rows[*].poNumber') AS sentOrderNumbers
       FROM delegate_pricing_bundles b INNER JOIN users u ON u.id=b.delegateId WHERE ${where}
       ORDER BY COALESCE(b.sentAt,b.createdAt) ${direction},b.id ${direction} LIMIT ${input.pageSize} OFFSET ${(page - 1) * input.pageSize}`);
-    return { rows: await this.presentList(actor, bundles), total, page, pageSize: input.pageSize,
+    return { rows: await this.presentList(actor, bundles, true), total, page, pageSize: input.pageSize,
       count: delegates.reduce((n: number, row: any) => n + Number(row.count), 0),
       delegates: delegates.map((row: any) => ({ id: Number(row.delegateId), name: row.delegateName })) };
   }
-  private async presentList(actor: PricingBundleActor, bundles: any[]) {
+  private async presentList(actor: PricingBundleActor, bundles: any[], approvedDocuments = false) {
     const visible = isPurchasePdfApprover(actor) ? bundles.filter((bundle: any) => ["sent", "archived"].includes(bundle.status)) : bundles;
-    const approvals = isPurchasePdfApprover(actor) ? await this.approvalRows(await this.ports.database(), visible.map((bundle: any) => Number(bundle.id))) : [];
+    // listPage filters the complete membership through approvedBundleCondition before
+    // pagination. Its final financial rendition is shared by the two approval roles;
+    // the ordinary pricing list and the delegate's frozen PDF retain exact-actor rules.
+    const completedForRole = approvedDocuments && isPurchasePdfApprover(actor);
+    const approvals = isPurchasePdfApprover(actor) && !completedForRole ? await this.approvalRows(await this.ports.database(), visible.map((bundle: any) => Number(bundle.id))) : [];
     return visible.map(({ openTotal, sentTotals, sentOrderIds, sentOrderNumbers, ...bundle }: any) => {
       const totals = sentTotals == null ? null : json(sentTotals);
       const total = bundle.status === "open" ? Number(openTotal || 0) : Array.isArray(totals) && totals.length > 0 ? totals.reduce((sum: number, value: unknown) => sum + Math.round(Number(value) * 100), 0) / 100 : null;
       const ids = sentOrderIds == null ? [] : json(sentOrderIds), numbers = sentOrderNumbers == null ? [] : json(sentOrderNumbers);
       const purchaseOrders = Array.isArray(ids) ? Array.from(new Map(ids.map((id: any, i: number) => [Number(id), { id: Number(id), poNumber: numbers?.[i] || `PR-${id}` }])).values()) : [];
       return { ...bundle, total: total != null && Number.isFinite(total) ? total : null, purchaseOrders,
-        ...this.permission(actor, bundle, purchaseOrders.map((order: any) => order.id), approvals) };
+        ...(completedForRole ? { pdfAllowed: true, pdfBlockedReason: null } : this.permission(actor, bundle, purchaseOrders.map((order: any) => order.id), approvals)) };
     });
   }
   async detail(actor: PricingBundleActor, id: number) {
@@ -297,7 +301,7 @@ export class PricingBundleService {
     // Authorize every request before consulting the shared render promise, including cached files.
     const bundle = await this.header(database, actor, id);
     if (bundle.status === "open") fail("تنزيل PDF متاح بعد إرسال الحزمة للحسابات فقط", "CONFLICT");
-    if (isPurchasePdfApprover(actor)) {
+    if (isPurchasePdfApprover(actor) && !approvedDocument) {
       const [stored] = await rows(database, sql`SELECT snapshotJson FROM delegate_pricing_bundles WHERE id=${id}`);
       const frozen = json(stored?.snapshotJson);
       const ids = Array.isArray(frozen?.rows) ? frozen.rows.map((item: any) => Number(item?.purchaseOrderId)) : [];
@@ -310,7 +314,9 @@ export class PricingBundleService {
       if (!snapshot || snapshot.number !== bundle.bundleNumber || Number(snapshot.delegate?.id) !== Number(bundle.delegateId)
         || !Array.isArray(snapshot.rows) || !snapshot.rows.length || snapshot.rows.length > PRICING_BUNDLE_LIMIT
         || !Array.isArray(snapshot.signatures)) fail("لقطة الحزمة المحفوظة غير مكتملة؛ تعذر إنشاء PDF");
-      // Separate, read-only rendition: never replace pdfContent or the delegate's frozen snapshot.
+      // This fresh full-membership check is the authorization boundary for the
+      // completed document shared by accounting/management, not a prior list flag.
+      // Never replace pdfContent or the delegate's frozen snapshot.
       const approved = await approvedBundleSnapshot(database, bundle, snapshot, source => this.ports.signature(source));
       const pdf = this.checkedPdf(await this.ports.render(approved));
       return { name: `${bundle.bundleNumber}.pdf`, content: pdf.toString("base64") };

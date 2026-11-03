@@ -101,7 +101,7 @@ describe("Document SQL pagination, search and delegate isolation", () => {
 });
 
 describe("Pricing bundle paged read", () => {
-  it("keeps old list available while paged lists hydrate only this page's approval scopes", async () => {
+  it("authorizes final DPB documents from the paged complete-approval filter without per-row approval queries", async () => {
     const queries: any[] = [];
     const database = { execute: async (statement: any) => {
       const q = dialect.sqlToQuery(statement); queries.push(q);
@@ -112,9 +112,9 @@ describe("Pricing bundle paged read", () => {
     } };
     const service = new PricingBundleService({ database: async () => database } as any);
     const result = await service.listPage(actor(), documentListPageInput.parse({ page: 3 }));
-    expect(result).toMatchObject({ page: 3, total: 80, rows: [{ id: 41, pdfAllowed: false, total: 10 }] });
+    expect(result).toMatchObject({ page: 3, total: 80, rows: [{ id: 41, pdfAllowed: true, total: 10 }] });
     expect(queries[2].params.slice(-2)).toEqual([20, 40]);
-    expect(queries[3].params).toEqual([41]);
+    expect(queries).toHaveLength(3);
   });
   it("runs the new read alias through the central business guard without adding write permissions", () => {
     for (const role of ["accountant", "senior_management"]) {
