@@ -3,6 +3,7 @@ import { ExternalRouteReviewPanel } from "../tickets/ExternalRouteReviewPanel";
 import { useEffect, useRef, useState } from "react";
 import { ExecutionElapsedTime } from "@/components/maintenance/TechnicianExecutionWindow";
 import { TicketExecutionControls } from "./TicketExecutionControls";
+import { useExecutionDraftDirty } from "./ExecutionLeaveGuard";
 import { TicketTechnicianMaterials } from "./TicketTechnicianMaterials";
 import { ticketSessionActionText, ticketExecutionSession } from "@shared/maintenance-team-tickets/execution-session";
 import { trpc } from "@/lib/trpc";
@@ -141,6 +142,7 @@ export function ExecutionPanel({
     ),
     [allocations, setAllocations] = useState<Record<string, number>>({});
   const retry = useRef<{ fingerprint: string; key: string } | null>(null);
+  useExecutionDraftDirty(mode === "execution" && Boolean(reviewNote.trim() || details.data?.assignments[0]?.stage === "external_requested" && recipient));
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
   const state = details.data,
     a = state?.assignments[0],

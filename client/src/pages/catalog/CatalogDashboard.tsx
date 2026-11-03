@@ -30,17 +30,18 @@ export default function CatalogDashboard() {
   const { t } = useTranslation();
   const { user, loading } = useAuth();
   const isCatalogAdmin = isCatalogAdminRole(user?.role);
-  const [activeTab, setActiveTab] = useState("overview");
+  const itemsOnly = user?.role === "it_manager";
+  const [activeTab, setActiveTab] = useState(itemsOnly ? "items" : "overview");
   const [searchQuery, setSearchQuery] = useState("");
 
   // Overview is intentionally limited to System Admin / Owner.
   // Once auth is resolved, other Catalog roles land on Items instead of
   // remaining on a hidden overview tab.
   useEffect(() => {
-    if (!loading && !isCatalogAdmin && activeTab === "overview") {
+    if (!loading && (itemsOnly && activeTab !== "items" || !isCatalogAdmin && activeTab === "overview")) {
       setActiveTab("items");
     }
-  }, [activeTab, isCatalogAdmin, loading]);
+  }, [activeTab, isCatalogAdmin, itemsOnly, loading]);
 
   const { data: nodes } = trpc.catalog.nodes.list.useQuery({
     isActive: true,
@@ -48,7 +49,7 @@ export default function CatalogDashboard() {
 
   const { data: itemsCount } = trpc.catalog.items.count.useQuery();
 
-  const { data: suppliersStats } = trpc.catalog.suppliers.stats.useQuery();
+  const { data: suppliersStats } = trpc.catalog.suppliers.stats.useQuery(undefined, { enabled: !itemsOnly });
 
   const stats = {
     totalCategories: nodes?.length || 0,
@@ -87,12 +88,12 @@ export default function CatalogDashboard() {
             icon={<Package className="w-6 h-6" />}
             color="green"
           />
-          <StatCard
+          {!itemsOnly && <StatCard
             title={t.catalog.stats.suppliers}
             value={stats.activeSuppliers}
             icon={<Truck className="w-6 h-6" />}
             color="orange"
-          />
+          />}
           <StatCard
             title={t.catalog.stats.lastUpdated}
             value={stats.lastUpdated}
@@ -108,19 +109,19 @@ export default function CatalogDashboard() {
           {isCatalogAdmin && (
             <TabsTrigger value="overview" className="flex-1">{t.catalog.tabs.overview}</TabsTrigger>
           )}
-          <TabsTrigger value="taxonomy" className="flex-1">{t.catalog.tabs.taxonomy}</TabsTrigger>
+          {!itemsOnly && <TabsTrigger value="taxonomy" className="flex-1">{t.catalog.tabs.taxonomy}</TabsTrigger>}
           <TabsTrigger value="items" className="flex-1">{t.catalog.tabs.items}</TabsTrigger>
-          <TabsTrigger value="units" className="flex-1 gap-1">
+          {!itemsOnly && <TabsTrigger value="units" className="flex-1 gap-1">
             <Ruler className="w-3.5 h-3.5" />وحدات
-          </TabsTrigger>
-          <TabsTrigger value="suppliers" className="flex-1 gap-1">
+          </TabsTrigger>}
+          {!itemsOnly && <TabsTrigger value="suppliers" className="flex-1 gap-1">
             <Truck className="w-3.5 h-3.5" />
             الموردون
-          </TabsTrigger>
-          <TabsTrigger value="new-items" className="flex-1 gap-1">
+          </TabsTrigger>}
+          {!itemsOnly && <TabsTrigger value="new-items" className="flex-1 gap-1">
             <Inbox className="w-3.5 h-3.5" />
             الأصناف الجديدة
-          </TabsTrigger>
+          </TabsTrigger>}
           {isCatalogAdmin && (
             <TabsTrigger value="settings" className="flex-1">{t.catalog.tabs.settings}</TabsTrigger>
           )}
@@ -157,9 +158,9 @@ export default function CatalogDashboard() {
         )}
 
         {/* Taxonomy Tab */}
-        <TabsContent value="taxonomy">
+        {!itemsOnly && <TabsContent value="taxonomy">
           <TaxonomyManager />
-        </TabsContent>
+        </TabsContent>}
 
         {/* Items Tab */}
         <TabsContent value="items">
@@ -167,17 +168,17 @@ export default function CatalogDashboard() {
         </TabsContent>
 
         {/* Units Tab */}
-        <TabsContent value="units"><UnitsManager /></TabsContent>
+        {!itemsOnly && <TabsContent value="units"><UnitsManager /></TabsContent>}
 
         {/* Suppliers Tab */}
-        <TabsContent value="suppliers">
+        {!itemsOnly && <TabsContent value="suppliers">
           <SuppliersManager />
-        </TabsContent>
+        </TabsContent>}
 
         {/* 2B-6 — New Catalog Item Candidates */}
-        <TabsContent value="new-items">
+        {!itemsOnly && <TabsContent value="new-items">
           <CatalogItemCandidatesManager />
-        </TabsContent>
+        </TabsContent>}
 
         {/* Settings Tab — owner/admin only */}
         {isCatalogAdmin && (

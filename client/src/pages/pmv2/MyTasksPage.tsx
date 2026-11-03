@@ -7,6 +7,7 @@ import { canReadTicketTeamExecution } from "@shared/maintenance-team-tickets/exe
 import AssignedMaintenanceTickets from "../maintenance-teams/AssignedMaintenanceTickets";
 import Pmv2MyTasks from "./Pmv2MyTasks";
 import { TechnicianTicketDashboard } from "../maintenance-teams/TechnicianTicketDashboard";
+import TeamTicketExecutionPage from "../maintenance-teams/TeamTicketExecutionPage";
 
 export default function MyTasksPage() {
   const { user, loading } = useAuth();
@@ -32,6 +33,8 @@ export default function MyTasksPage() {
             : "You cannot view these tasks."}
       </div>
     );
+
+  if (source === "tickets" && ticketsAllowed && params.has("teamExecution")) return <TeamTicketExecutionPage />;
 
   return (
     <Tabs

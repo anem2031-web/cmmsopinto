@@ -6,13 +6,23 @@ import { TicketExecutionTasksView } from "./TicketExecutionTasksView";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
 import { ExecutionPanel } from "./ExecutionPanel";
+import { useRestoreTeamTicketList } from "./team-execution-navigation";
+import { useSearch } from "wouter";
+import TeamTicketExecutionPage from "./TeamTicketExecutionPage";
 
 export default function AssignedMaintenanceTickets() {
+  const search = useSearch();
+  if (new URLSearchParams(search).has("teamExecution")) return <TeamTicketExecutionPage />;
+  return <AssignedMaintenanceTicketList />;
+}
+
+function AssignedMaintenanceTicketList() {
   const { user, loading } = useAuth();
   const { language, dir, t } = useTranslation();
   const utils = trpc.useUtils();
   const allowed = user?.isActive === 1 && canReadTicketTeamExecution(user.role);
   const queue = trpc.ticketTeamAssignments.queue.useQuery(undefined, { enabled: !!allowed, retry: false });
+  useRestoreTeamTicketList(!!queue.data);
   if (loading || (allowed && queue.isLoading)) return <div className="p-6">{t.common.loading}</div>;
   if (!allowed) return <div role="alert" className="p-6">{language === "ar" ? "ليس لديك صلاحية لعرض تذاكر الفريق" : language === "ur" ? "آپ کو ٹیم کے ٹکٹ دیکھنے کی اجازت نہیں ہے۔" : "You cannot view team tickets."}</div>;
   return <div className="space-y-4 p-6" dir={dir}>

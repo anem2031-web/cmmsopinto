@@ -4,7 +4,7 @@ import ts from "typescript";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { router, catalogProcedure } from "../routers/_shared/procedures";
+import { router, catalogProcedure, catalogItemManagerProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure } from "../routers/_shared/procedures";
 import { APP_ROLE } from "../../shared/roles";
 import { catalogItems, attachments, auditLogs, catalogAuditLogs } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -50,18 +50,20 @@ function actualItemProcedure(name: string) {
   property(itemScope!);
   if (!code) throw Error(`Missing catalog items ${name}`);
   return vm.runInNewContext(ts.transpileModule(`(${code})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText,
-    { z, TRPCError, catalogProcedure, APP_ROLE, eq, catalogItems, catalogAuditLogs,
+    { z, TRPCError, catalogProcedure, catalogItemManagerProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure, APP_ROLE, eq, catalogItems, catalogAuditLogs,
       catalogItemImageSchema, assertCatalogImageUpload, saveRequiredCatalogImage, getDb: async () => db,
       assertActiveCatalogMasterUnit: async (_db: any, unit: string) => unit,
+      assertActiveCatalogNodePath: async () => {},
       getLeafCategoryCodeState: async () => ({ node: { code: "7" }, code: "7-001" }),
       isCatalogItemCodeForNode: () => true, assertCatalogCodeAvailable: async () => {},
       catalogAuditRequestMeta: () => ({}), catalogAuditJson: (value: any) => value, pickAuditValues: (value: any) => value });
 }
 const api = router({ catalog: router({ items: router({
   create: actualItemProcedure("create"), update: actualItemProcedure("update"),
+  delete: actualItemProcedure("delete"), reactivate: actualItemProcedure("reactivate"),
 }) }) });
-function caller(role = "admin", id = 9) {
-  const user = { id, role, isActive: 1 };
+function caller(role = "admin", id = 9, isActive = 1) {
+  const user = { id, role, isActive };
   return api.createCaller({ user, authenticatedUser: user, req: {}, res: {} } as any).catalog.items;
 }
 beforeEach(() => { rows = []; files = []; audits = []; failImage = false; });
@@ -72,11 +74,33 @@ describe("manual catalog item save with required image", () => {
     await expect(caller().create(without as any)).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(rows).toEqual([]);
   });
-  it.each(["admin", "owner", "construction_procurement_manager", "maintenance_manager", "general_maintenance_manager", "warehouse"])("keeps existing create/edit grant for %s", async role => {
+  it.each(["admin", "owner", "construction_procurement_manager", "maintenance_manager", "general_maintenance_manager", "warehouse", "it_manager"])("keeps approved create/edit grant for %s", async role => {
     await caller(role).create(input); expect(rows).toHaveLength(1); expect(files).toHaveLength(1);
     expect(files[0]).toMatchObject({ entityId: 1, entityType: "catalog_item", uploadedById: 9 });
     await caller(role).update({ id: 1, nameAr: "تعديل" });
     expect(rows[0].nameAr).toBe("تعديل"); expect(files).toHaveLength(1);
+  });
+  it("IT manager deactivation preserves the item, attachments and audit, and cannot reactivate", async () => {
+    await caller("it_manager").create(input);
+    await caller("it_manager").delete(1);
+    expect(rows).toHaveLength(1); expect(rows[0].isActive).toBe(0); expect(files).toHaveLength(1);
+    expect(audits.at(-1)).toMatchObject({ entityType: "item", action: "delete", entityId: 1 });
+    await expect(caller("it_manager").reactivate(1)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller("it_manager").update({ id: 1, isActive: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(rows[0].isActive).toBe(0);
+  });
+  it("rechecks current IT identity/activity and missing item at each write", async () => {
+    await caller("it_manager").create(input);
+    const before = structuredClone({ rows, files, audits });
+    for (const current of [caller("it_manager", 9, 0), caller("it_member")]) {
+      await expect(current.create(input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(current.update({ id: 1, nameAr: "ممنوع" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(current.delete(1)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+    expect({ rows, files, audits }).toEqual(before);
+    rows = [];
+    await expect(caller("it_manager").update({ id: 99, nameAr: "مفقود" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(caller("it_manager").delete(99)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
   it.each(["delegate", "accountant", "senior_management", "technician", "observer", "gate_security"])("retains denial for %s", async role => {
     await expect(caller(role).create(input)).rejects.toMatchObject({ code: "FORBIDDEN" });

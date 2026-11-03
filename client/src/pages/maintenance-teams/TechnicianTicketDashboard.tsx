@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { readHistoryEntryState, writeHistoryEntryState } from "@/lib/backStack";
+import { useRestoreTeamTicketList } from "./team-execution-navigation";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
@@ -8,6 +10,7 @@ import {
   bucketCounts,
   namedTicketBucket,
   teamTicketBucket,
+  TECHNICIAN_BUCKETS,
   type TechnicianBucket,
 } from "@shared/technician-task-buckets";
 import { TicketSequentialTasksView } from "./TicketSequentialTasksView";
@@ -17,7 +20,11 @@ import { ExecutionPanel } from "./ExecutionPanel";
 export function TechnicianTicketDashboard() {
   const { user } = useAuth();
   const { t, language, dir } = useTranslation();
-  const [bucket, setBucket] = useState<TechnicianBucket>("execution");
+  const [bucket, setBucket] = useState<TechnicianBucket>(() => {
+    const saved = readHistoryEntryState<TechnicianBucket>("teamTicketBucket");
+    return saved && (TECHNICIAN_BUCKETS as readonly string[]).includes(saved) ? saved : "execution";
+  });
+  useEffect(() => { writeHistoryEntryState("teamTicketBucket", bucket); }, [bucket]);
   const utils = trpc.useUtils();
   const allowed = user?.role === "technician" && user.isActive === 1;
   const queue = trpc.ticketTeamAssignments.queue.useQuery(undefined, {
@@ -29,6 +36,7 @@ export function TechnicianTicketDashboard() {
     {},
     { enabled: allowed, retry: false, refetchInterval: 30_000 }
   );
+  useRestoreTeamTicketList(!!queue.data && !!namedQuery.data);
   const teams = queue.data ?? [];
   const teamTicketIds = new Set(teams.map(ticket => ticket.ticketId));
   const named = (namedQuery.data ?? []).filter(

@@ -10,6 +10,7 @@ import en from "@/i18n/en";
 import ur from "@/i18n/ur";
 import { issued, type Snapshot, type Assignment, type Outcome, type CompletionInput } from "@shared/maintenance-team-tickets/model";
 import { ticketExecutionSession } from "@shared/maintenance-team-tickets/execution-session";
+import { useExecutionDraftDirty } from "./ExecutionLeaveGuard";
 
 /** PMV2 presentation and labels; all callbacks operate on the ticket assignment only. */
 export function TicketExecutionControls({ state, assignment: a, actorId, language, busy, onStart, onEndVisit, onNeedsMaterial, onOutcome }: {
@@ -28,6 +29,7 @@ export function TicketExecutionControls({ state, assignment: a, actorId, languag
   const [dependencyNote, setDependencyNote] = useState("");
   const [error, setError] = useState("");
   const [physicalUsages, setPhysicalUsages] = useState<Record<number, string>>({});
+  useExecutionDraftDirty(Boolean(note.trim() || otherMaterials.trim() || Object.keys(usages).length || Object.keys(physicalUsages).length || dependency && dependencyNote.trim()));
   const current = state.needs.filter(n => n.assignmentId === a.id && n.round === a.materialRound);
   const substituted = current.filter(n => state.deliveries.some(d => d.needId === n.id && d.replacementPlanId != null));
   const actualDeliveries = state.deliveries.filter(d => substituted.some(n => n.id === d.needId));

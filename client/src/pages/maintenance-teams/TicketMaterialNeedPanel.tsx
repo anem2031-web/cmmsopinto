@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useExecutionDraftDirty } from "./ExecutionLeaveGuard";
 import { TicketMaterialCatalogPicker, type TicketCatalogCandidate } from "./TicketMaterialCatalogPicker";
 import { PackageSearch, Plus } from "lucide-react";
 import { trpc } from "@/lib/trpc";
@@ -145,6 +146,7 @@ export function TicketMaterialNeedPanel({
   const [name, setName] = useState("");
   const [quantity, setQuantity] = useState("");
   const [confirmation, setConfirmation] = useState<NeedInput | null>(null);
+  useExecutionDraftDirty(Boolean(selected || name.trim() || quantity.trim()));
   const catalog = trpc.ticketTeamExecution.catalog.useQuery(
     { assignmentId, search },
     { enabled: formOpen && mode === "catalog", retry: false }

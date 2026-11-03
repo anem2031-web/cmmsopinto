@@ -2,7 +2,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
-const f = vi.hoisted(() => ({ values: [] as any[], index: 0, buttons: new Map<string, any>(), fields: new Map<string, any>(), commandItems: new Map<string, any>(), search: null as any }));
+const f = vi.hoisted(() => ({ values: [] as any[], index: 0, buttons: new Map<string, any>(), fields: new Map<string, any>(), commandItems: new Map<string, any>(), search: null as any, navigate: vi.fn() }));
 vi.mock("react", async original => {
   const actual = await original<typeof import("react")>();
   return { ...actual, useState: (initial: any) => {
@@ -10,6 +10,7 @@ vi.mock("react", async original => {
     return [f.values[index], (next: any) => { f.values[index] = typeof next === "function" ? next(f.values[index]) : next; }];
   } };
 });
+vi.mock("../../client/src/pages/maintenance-teams/team-execution-navigation", () => ({ useOpenTeamExecution: () => f.navigate }));
 const text = (x: any): string => x == null || typeof x === "boolean" ? "" : Array.isArray(x) ? x.map(text).join("") : typeof x === "object" ? text(x.props?.children) : String(x);
 vi.mock("../../client/src/components/ui/button", async original => {
   const actual = await original<any>();
@@ -97,8 +98,8 @@ describe("ticket execution PMV2 UI boundaries", () => {
     const render = vi.fn(x => <p>{`EXEC-${x.assignmentId}`}</p>); f.index = 0;
     const html = renderToStaticMarkup(<TicketExecutionTasksView tickets={tickets} language="ar" renderExecution={render} />);
     expect(html).toContain("md:grid-cols-2"); expect(html).toContain("MOCK-MT-1"); expect(render).not.toHaveBeenCalled();
-    f.values[0] = 2; f.index = 0; const selected = renderToStaticMarkup(<TicketExecutionTasksView tickets={tickets} language="ar" renderExecution={render} />);
-    expect(render).toHaveBeenCalledTimes(1); expect(selected).toContain("EXEC-2"); expect(selected).not.toContain("EXEC-1");
+    expect(html).not.toContain("EXEC-1"); expect(html).not.toContain("EXEC-2");
+    expect(fs.readFileSync("client/src/pages/maintenance-teams/TicketExecutionTasksView.tsx", "utf8")).toContain("openExecution(ticket.assignmentId)");
   });
   it("saves native-theme fixture preview for visual review without network or a database", () => {
     s = state(true); const html = renderControls();

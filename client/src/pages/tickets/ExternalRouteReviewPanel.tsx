@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useExecutionDraftDirty } from "../maintenance-teams/ExecutionLeaveGuard";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useTranslation } from "@/contexts/LanguageContext";
@@ -11,6 +12,7 @@ function Decision({ row, onChanged }: { row: ExternalRouteReview; onChanged: () 
   const l = (ar: string, en: string, ur: string) => language === "ar" ? ar : language === "ur" ? ur : en;
   const [reason, setReason] = useState("");
   const [path, setPath] = useState<ExternalRoute>("A");
+  useExecutionDraftDirty(Boolean(reason.trim() || path !== "A"));
   const mutation = trpc.externalMaintenance.decideRouteReview.useMutation({ onSuccess: onChanged });
   return <section className="rounded-md border border-orange-300 p-4 space-y-3">
     <p className="font-semibold">{l("مراجعة طلب معاد من المستودع — البند", "Warehouse return — item", "گودام سے واپس — آئٹم")} {row.itemNumber}</p>

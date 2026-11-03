@@ -212,6 +212,20 @@ export const catalogProcedure = roleMiddleware([
   APP_ROLE.WAREHOUSE,
 ]);
 
+/** Existing item CRUD plus the explicitly approved IT Manager item-only grant. */
+export const catalogItemManagerProcedure = roleMiddleware([
+  APP_ROLE.MAINTENANCE_MANAGER,
+  APP_ROLE.GENERAL_MAINTENANCE_MANAGER,
+  APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,
+  APP_ROLE.WAREHOUSE,
+  APP_ROLE.IT_MANAGER,
+]).use(({ ctx, next }) => {
+  if (ctx.user.role === APP_ROLE.IT_MANAGER && ctx.user.isActive !== 1) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
+  }
+  return next({ ctx });
+});
+
 /**
  * تعطيل/إعادة تفعيل أصناف الكتالوج تحديداً (isActive toggle فقط).
  * أوسع من catalogProcedure بإضافة مدير الصيانة والمستودع لهذه الميزة تحديداً،
@@ -222,6 +236,18 @@ export const catalogItemLifecycleProcedure = roleMiddleware([
   APP_ROLE.MAINTENANCE_MANAGER,
   APP_ROLE.WAREHOUSE,
 ]);
+
+/** Item deactivation only; reactivation retains the existing lifecycle grant. */
+export const catalogItemDeactivateProcedure = roleMiddleware([
+  APP_ROLE.MAINTENANCE_MANAGER,
+  APP_ROLE.WAREHOUSE,
+  APP_ROLE.IT_MANAGER,
+]).use(({ ctx, next }) => {
+  if (ctx.user.role === APP_ROLE.IT_MANAGER && ctx.user.isActive !== 1) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
+  }
+  return next({ ctx });
+});
 
 /** Owner/admin-only Catalog actions: delete/deactivate, settings, import/export. */
 export const catalogAdminProcedure = roleMiddleware([]);

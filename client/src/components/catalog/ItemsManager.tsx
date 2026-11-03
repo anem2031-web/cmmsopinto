@@ -5,7 +5,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { isCatalogAdminRole, canManageCatalogItemLifecycle } from "@shared/roles";
+import { isCatalogAdminRole, canManageCatalogItemLifecycle, canDeactivateCatalogItem } from "@shared/roles";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -266,7 +266,7 @@ export default function ItemsManager() {
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
       isActive: true,
-      includeInactive: (isCatalogAdmin || canManageLifecycle) || undefined,
+      includeInactive: (isCatalogAdmin || canDeactivateCatalogItem(user?.role)) || undefined,
       search: debouncedSearch || undefined,
       nodeIds: catalogFilterNodeId !== null ? catalogFilterNodeIds : undefined,
     });
@@ -648,7 +648,7 @@ export default function ItemsManager() {
                 setIsDialogOpen(true);
               }}
               onDuplicate={handleDuplicateFrom}
-              canDelete={isCatalogAdmin || canManageLifecycle}
+              canDelete={canDeactivateCatalogItem(user?.role)}
               canReactivate={isCatalogAdmin || canManageLifecycle}
               onDelete={id => {
                 if (confirm(t.catalog.confirm.deleteItem)) {

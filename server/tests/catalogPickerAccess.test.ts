@@ -3,6 +3,9 @@ import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   catalogItemLifecycleProcedure,
+  catalogItemManagerProcedure,
+  catalogItemDeactivateProcedure,
+  catalogAdminProcedure,
   catalogProcedure,
   catalogReadProcedure,
   catalogReferenceReadProcedure,
@@ -22,9 +25,13 @@ const api = router({
     }),
     items: router({
       list: catalogReferenceReadProcedure.query(() => reads("items")),
-      create: catalogProcedure.mutation(() => writes()),
-      update: catalogProcedure.mutation(() => writes()),
-      delete: catalogItemLifecycleProcedure.mutation(() => writes()),
+      create: catalogItemManagerProcedure.mutation(() => writes()),
+      update: catalogItemManagerProcedure.mutation(() => writes()),
+      delete: catalogItemDeactivateProcedure.mutation(() => writes()),
+      reactivate: catalogItemLifecycleProcedure.mutation(() => writes()),
+      count: catalogItemManagerProcedure.query(() => reads("count")),
+      getById: catalogItemManagerProcedure.query(() => reads("details")),
+      previewNextCode: catalogItemManagerProcedure.query(() => reads("code")),
     }),
     units: router({
       list: catalogReferenceReadProcedure.query(() => reads("units")),
@@ -32,7 +39,10 @@ const api = router({
     }),
     suppliers: router({
       match: catalogReadProcedure.query(() => reads("suppliers")),
+      create: catalogProcedure.mutation(() => writes()),
+      delete: catalogProcedure.mutation(() => writes()),
     }),
+    settings: router({ update: catalogAdminProcedure.mutation(() => writes()) }),
     itemSuppliers: router({
       matchInvoiceItems: catalogReadProcedure.mutation(() => writes()),
     }),
@@ -95,6 +105,21 @@ describe("Purchase picker references through the actual central and role guards"
 });
 
 describe("Picker access does not widen catalog management or invoice matching", () => {
+  it("admits IT manager only to item management and keeps the member and wider catalog actions denied", async () => {
+    const manager = caller("it_manager");
+    expect(canRoleAccessCatalogModule("it_manager")).toBe(true);
+    await manager.items.create(); await manager.items.update(); await manager.items.delete();
+    await manager.items.count(); await manager.items.getById(); await manager.items.previewNextCode();
+    for (const action of [() => manager.nodes.create(), () => manager.units.create(), () => manager.suppliers.create(), () => manager.suppliers.delete(), () => manager.settings.update(), () => manager.items.reactivate()]) {
+      await expect(action()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+    expect(writes).toHaveBeenCalledTimes(3);
+    expect(canRoleAccessCatalogModule("it_member")).toBe(false);
+    for (const action of [() => caller("it_member").items.create(), () => caller("it_member").items.update(), () => caller("it_member").items.delete()]) await expect(action()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    for (const action of [() => caller("it_manager", 0).items.create(), () => caller("it_manager", 0).items.getById()]) await expect(action()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await caller("it_manager").items.update();
+    expect(writes).toHaveBeenCalledTimes(4);
+  });
   it.each(newReferenceRoles)("does not grant %s standalone catalog management or supplier operations", async role => {
     const catalog = caller(role);
     expect(canRoleAccessCatalogModule(role)).toBe(false);
@@ -159,7 +184,14 @@ describe("The production catalog router binds the narrow reference procedure", (
   it.each(["suppliers.match", "itemSuppliers.matchInvoiceItems"])("retains the previous procedure for %s", path => {
     expect(procedure(path)).toMatch(/^catalogReadProcedure\s*\./);
   });
-  it.each(["nodes.create", "items.create", "items.update", "units.create"])("keeps %s behind catalog management", path => {
+  it.each(["nodes.create", "units.create"])("keeps %s behind catalog management", path => {
     expect(procedure(path)).toMatch(/^catalogProcedure\s*\./);
+  });
+  it.each(["items.count", "items.getById", "items.previewNextCode", "items.create", "items.update"])("binds the approved item-only grant to %s", path => {
+    expect(procedure(path)).toMatch(/^catalogItemManagerProcedure\s*\./);
+  });
+  it("binds deactivation separately from reactivation", () => {
+    expect(procedure("items.delete")).toMatch(/^catalogItemDeactivateProcedure\s*\./);
+    expect(procedure("items.reactivate")).toMatch(/^catalogItemLifecycleProcedure\s*\./);
   });
 });

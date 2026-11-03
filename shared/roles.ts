@@ -97,6 +97,7 @@ export const CATALOG_MODULE_ROLES = [
   APP_ROLE.GENERAL_MAINTENANCE_MANAGER,
   APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,
   APP_ROLE.WAREHOUSE,
+  APP_ROLE.IT_MANAGER,
 ] as const;
 
 export function canRoleAccessCatalogModule(role?: string | null): boolean {
@@ -121,6 +122,11 @@ export const CATALOG_ITEM_LIFECYCLE_ROLES = [
 
 export function canManageCatalogItemLifecycle(role?: string | null): boolean {
   return !!role && (CATALOG_ITEM_LIFECYCLE_ROLES as readonly string[]).includes(role);
+}
+
+/** IT Manager manages items only; other Catalog administration remains excluded. */
+export function canDeactivateCatalogItem(role?: string | null): boolean {
+  return role === APP_ROLE.IT_MANAGER || canManageCatalogItemLifecycle(role);
 }
 
 /**
@@ -293,7 +299,7 @@ export function canRoleAccessPath(role: string | null | undefined, path: string)
   if (isItTeamRole(role)) {
     // فريق IT: تنفيذ البلاغات ضمن نطاق الفريق؛ مدير IT وحده يدخل طلبات الشراء.
     // تنفيذ PM V2 لأعضاء الفريق يعالج في حارس المسار أعلاه.
-    // Inventory, purchase-cycle management and Catalog UI remain closed; PM V2 execution is limited to My Tasks by the route guard above.
+    // Inventory and purchase-cycle management remain closed; Catalog items are gated separately above.
     if (normalizedPath === "/" || normalizedPath === "/tickets" || normalizedPath === "/tickets/inbox" || normalizedPath === "/tickets/new") return true;
     if (normalizedPath === "/notifications") return true;
     if (/^\/tickets\/\d+$/.test(normalizedPath)) return true;

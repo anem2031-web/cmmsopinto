@@ -1,3 +1,5 @@
+import { useOpenTeamExecution } from "./team-execution-navigation";
+import { useExecutionCanLeave } from "./ExecutionLeaveGuard";
 import { useState, type ReactNode } from "react";
 import { PlayCircle } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -21,17 +23,23 @@ export function TicketSequentialTasksView({
   language,
   renderExecution,
   bucket,
+  executionAssignmentId,
+  onExit,
 }: {
   tickets: AssignedTeamTicket[];
   language: string;
   bucket?: TechnicianBucket;
+  executionAssignmentId?: number;
+  onExit?: () => void;
   renderExecution: (
     ticket: AssignedTeamTicket,
     onBusyChange?: (busy: boolean) => void
   ) => ReactNode;
 }) {
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [activeId, setActiveId] = useState<number | null>(null);
+  const openExecution = useOpenTeamExecution();
+  const canLeave = useExecutionCanLeave();
+  const selectedId = executionAssignmentId ?? null;
+  const [activeId, setActiveId] = useState<number | null>(executionAssignmentId ?? null);
   const [busy, setBusy] = useState(false);
   const l = (a: string, e: string, u: string) =>
     language === "ar" ? a : language === "ur" ? u : e;
@@ -97,12 +105,11 @@ export function TicketSequentialTasksView({
     ? group.find(ticket => ticket.hasOpenVisit)
     : undefined;
   const open = (ticket: AssignedTeamTicket) => {
-    setSelectedId(ticket.assignmentId);
-    setActiveId(ticket.assignmentId);
+    openExecution(ticket.assignmentId);
   };
   return (
     <div className="space-y-6">
-      {bucket == null &&
+      {selectedId == null && bucket == null &&
         tickets.some(ticket =>
           ["waiting_material", "ready_to_repair"].includes(ticket.stage)
         ) && (
@@ -137,7 +144,7 @@ export function TicketSequentialTasksView({
             </CardContent>
           </Card>
         )}
-      <Card>
+      {selectedId == null && <Card>
         <CardHeader>
           <CardTitle>
             {title} ({visibleGroups.length})
@@ -221,20 +228,18 @@ export function TicketSequentialTasksView({
             })}
           </div>
         </CardContent>
-      </Card>
+      </Card>}
       {selected && (
         <TechnicianExecutionWindow
           open
-          onClose={() => {
-            setSelectedId(null);
-            setActiveId(null);
-          }}
+          presentation="page"
+          onClose={() => { if (canLeave()) onExit?.(); }}
           title={`${title} — ${selected.ticketNumber}`}
           description={`${selected.siteName} / ${selected.sectionName}`}
           language={language}
           steps={steps}
           currentId={step?.id ?? null}
-          onSelect={setActiveId}
+          onSelect={id => { if (id !== step?.id && canLeave()) setActiveId(id); }}
           busy={busy}
         >
           {current && (
@@ -246,11 +251,15 @@ export function TicketSequentialTasksView({
               <p className="mb-4 whitespace-pre-wrap text-sm text-muted-foreground">
                 {current.description}
               </p>
+              <TicketReportMedia media={current.reportMedia} language={language} />
               {renderExecution(current, setBusy)}
             </div>
           )}
           {visitToEnd && (
-            <div className="rounded-lg border p-3">
+            <div id="ticket-selected-task" className="rounded-lg border p-3">
+              <h3 className="mb-2 text-lg font-semibold">{visitToEnd.title}</h3>
+              <p className="mb-3 whitespace-pre-wrap text-sm text-muted-foreground">{visitToEnd.description}</p>
+              <TicketReportMedia media={visitToEnd.reportMedia} language={language} />
               <p className="mb-3 text-sm">
                 {l(
                   "أنهِ الزيارة عند مغادرة الموقع؛ هذا لا يغلق التذكرة.",
@@ -261,6 +270,12 @@ export function TicketSequentialTasksView({
               {renderExecution(visitToEnd, setBusy)}
             </div>
           )}
+          {!current && !visitToEnd && selected && <div id="ticket-selected-task" className="rounded-lg border p-4">
+            <h3 className="mb-2 text-lg font-semibold">{selected.title}</h3>
+            <p className="mb-3 whitespace-pre-wrap text-sm text-muted-foreground">{selected.description}</p>
+            <TicketReportMedia media={selected.reportMedia} language={language} />
+            {renderExecution(selected, setBusy)}
+          </div>}
         </TechnicianExecutionWindow>
       )}
     </div>

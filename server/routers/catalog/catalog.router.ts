@@ -13,7 +13,7 @@ import { catalogAuditJson, catalogAuditRequestMeta, pickAuditValues } from "../.
 import { canShowCatalogBook, loadCatalogBookTotals } from "../../services/inventory-book-summary";
 import { findCatalogUnitByName, getActiveCatalogUnitCanonicalName } from "../../_core/catalog-unit-governance";
 import { executeCatalogTaxonomyMove, previewCatalogTaxonomyMove } from "../../services/catalog/catalogTaxonomyMove.service";
-import { router, catalogAdminProcedure, catalogProcedure, catalogItemLifecycleProcedure, catalogReadProcedure, catalogReferenceReadProcedure } from "../_shared/procedures";
+import { router, catalogAdminProcedure, catalogProcedure, catalogItemManagerProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure, catalogReadProcedure, catalogReferenceReadProcedure } from "../_shared/procedures";
 import { z } from "zod";
 import { getTableColumns, eq, and, or, like, ne, count, desc, asc, inArray, sql, gte, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -759,7 +759,7 @@ export const catalogRouter = router({
 
 items: router({
 
-  count: catalogProcedure
+  count: catalogItemManagerProcedure
     .query(async () => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
@@ -800,7 +800,8 @@ const conditions = [];
 // لأغراض governance/visibility، بينما جميع القراءات التشغيلية تبقى Active-only افتراضياً.
 const role = (ctx as any)?.user?.role;
 const canIncludeInactive = role === APP_ROLE.OWNER || role === APP_ROLE.ADMIN
-  || role === APP_ROLE.MAINTENANCE_MANAGER || role === APP_ROLE.WAREHOUSE;
+  || role === APP_ROLE.MAINTENANCE_MANAGER || role === APP_ROLE.WAREHOUSE
+  || (role === APP_ROLE.IT_MANAGER && ctx.user.isActive === 1);
 const includeInactive = input?.includeInactive === true && canIncludeInactive;
 if (!includeInactive) {
   const activeFilter = input?.isActive !== undefined ? input.isActive : true;
@@ -902,7 +903,7 @@ return itemsWithImages;
     /**
      * Get a single item with all its details
      */
-    getById: catalogProcedure
+    getById: catalogItemManagerProcedure
       .input(z.number())
       .query(async ({ input }) => {
         const db = await getDb();
@@ -954,7 +955,7 @@ return itemsWithImages;
      * Preview the next automatic Catalog Item code for the selected category.
      * The backend is authoritative; create() allocates again inside its DB transaction.
      */
-    previewNextCode: catalogProcedure
+    previewNextCode: catalogItemManagerProcedure
       .input(z.object({ nodeId: z.number() }))
       .query(async ({ input }) => {
         const db = await getDb();
@@ -972,7 +973,7 @@ return itemsWithImages;
      * Create a new catalog item
      */
 // بعد التعديل
-create: catalogProcedure
+create: catalogItemManagerProcedure
   .input(
     z.object({
       nameAr: z.string(),
@@ -1048,7 +1049,7 @@ create: catalogProcedure
     /**
      * Update a catalog item
      */
-    update: catalogProcedure
+    update: catalogItemManagerProcedure
       .input(
         z.object({
           id: z.number(),
@@ -1067,6 +1068,10 @@ create: catalogProcedure
         })
       )
       .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role === APP_ROLE.IT_MANAGER && input.isActive === true) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "صلاحية مدير IT تشمل تعديل الأصناف وتعطيلها فقط" });
+        }
+
         const db = await getDb();
         if (!db) throw new Error("Database unavailable");
 
@@ -1146,9 +1151,9 @@ create: catalogProcedure
 
     /**
      * Delete (deactivate) a catalog item (soft delete).
-     * Owner/Admin/Maintenance Manager/Warehouse — see catalogItemLifecycleProcedure.
+     * Owner/Admin/Maintenance Manager/Warehouse/IT Manager; no physical deletion.
      */
-    delete: catalogItemLifecycleProcedure
+    delete: catalogItemDeactivateProcedure
       .input(z.number())
       .mutation(async ({ input, ctx }) => {
         const db = await getDb();
