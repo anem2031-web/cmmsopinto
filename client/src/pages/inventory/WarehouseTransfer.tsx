@@ -24,6 +24,8 @@ import { requiresBranchTransferConfirmation } from "@shared/branch-transfer-conf
 import { BranchTransferConfirmation } from "@/components/inventory/BranchTransferConfirmation";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { buildPmv2TransferCart } from "@/lib/pmv2-transfer-plan";
+import { MaterialTransferLotPicker } from "@/components/inventory/MaterialTransferLotPicker";
+import { groupMaterialTransferPlan, type MaterialTransferGroup } from "@/lib/material-transfer-lots";
 
 const MAX_ITEMS_PER_TRANSFER = 20;
 
@@ -127,6 +129,8 @@ export default function WarehouseTransfer() {
   const linkConfirmedPmv2TransfersMut = trpc.pmv2.warehouse.linkConfirmedTransfers.useMutation();
   const preparePmv2TransferMut = trpc.pmv2.warehouse.prepareTransferHandoff.useMutation();
   const [pmv2Prepared, setPmv2Prepared] = useState(false);
+  const [materialLotGroups, setMaterialLotGroups] = useState<MaterialTransferGroup[]>([]);
+  const materialLotMode = !!materialHandoff && lotsEnabled;
 
   const [fromWarehouseId, setFromWarehouseId] = useState<string>("");
   const [toWarehouseId, setToWarehouseId] = useState<string>("");
@@ -157,12 +161,12 @@ export default function WarehouseTransfer() {
   const [materialTransferPosted, setMaterialTransferPosted] = useState(false);
 
   useEffect(() => {
-    if (!materialHandoff || pmv2HandoffInitialized || !inventoryList) return;
+    if (!materialHandoff || pmv2HandoffInitialized || !inventoryList || !lotTrackingStatus) return;
     if(materialHandoff.source==="pmv2") {
       setPmv2HandoffInitialized(true);
       void preparePmv2TransferMut.mutateAsync({requestItemId:materialHandoff.requestItemId}).then(handoff=>{
         const prepared=buildPmv2TransferCart(handoff,materialHandoff,inventoryList as any[],MAX_ITEMS_PER_TRANSFER);
-        setFromWarehouseId(String(handoff.sourceWarehouse.id));setToWarehouseId(String(handoff.destinationWarehouse.id));setCart(prepared);setFoundItem(null);setPmv2Prepared(true);
+        setFromWarehouseId(String(handoff.sourceWarehouse.id));setToWarehouseId(String(handoff.destinationWarehouse.id));setCart(lotsEnabled?[]:prepared);setMaterialLotGroups(groupMaterialTransferPlan(handoff.fulfillmentAllocations));setFoundItem(null);setPmv2Prepared(true);
       }).catch(error=>toast.error(error?.message||"تعذر تحميل توزيع مواد PMV2 المعتمد"));
       return;
     }
@@ -179,11 +183,12 @@ export default function WarehouseTransfer() {
       return;
     }
     setFoundItem(item);
+    if(materialHandoff.source==="tickets") setMaterialLotGroups([{key:`ticket:${materialHandoff.requestItemId}`,sourceInventoryId:Number(item.id),catalogItemId:Number(item.linkedItemId),materialName:materialHandoff.materialName,quantity:materialHandoff.quantity,originalQuantity:materialHandoff.quantity,unit:materialHandoff.unit}]);
     setTransferLotInfo(null);
     setSearchQuery("");
     setQty(String(Math.min(materialHandoff.quantity, Number(item.quantity || 0))));
     setPmv2HandoffInitialized(true);
-  }, [inventoryList, materialHandoff, pmv2HandoffInitialized]);
+  }, [inventoryList, materialHandoff, pmv2HandoffInitialized, lotTrackingStatus, lotsEnabled]);
 
   const sourceItems = useMemo(() => {
     if (!fromWarehouseId || !inventoryList) return [];
@@ -660,7 +665,8 @@ export default function WarehouseTransfer() {
                 </p>
               )}
 
-              <div className="space-y-2 p-3 border rounded-lg bg-muted/20">
+              {materialLotMode ? <MaterialTransferLotPicker key={`${materialHandoff.source}:${materialHandoff.requestItemId}`} groups={materialLotGroups} context={materialHandoff} inventory={inventoryList as any[] || []}
+                disabled={materialTransferPosted||isSubmitting} onInvalidate={()=>setCart([])} onPrepared={rows=>{setCart(rows);toast.success("تم تجهيز كامل الكمية من اللوتات المحددة");}} /> : <div className="space-y-2 p-3 border rounded-lg bg-muted/20">
                 <p className="text-sm font-medium">إضافة صنف</p>
 
                 {!fromWarehouseId && (
@@ -828,7 +834,7 @@ export default function WarehouseTransfer() {
                     )}
                   </>
                 )}
-              </div>
+              </div>}
 
               {cart.length > 0 && (
                 <div className="space-y-2">
@@ -871,7 +877,7 @@ export default function WarehouseTransfer() {
               <BranchTransferConfirmation open={branchConfirmation !== null} sourceName={sourceWarehouse?.nameAr || ""} targetName={targetWarehouse?.nameAr || ""}
                 onOpenChange={open => { if (!open) setBranchConfirmation(null); }}
                 onConfirm={() => { void handleSubmitAll(branchConfirmation || undefined); }} />
-              <Button className="w-full gap-1.5" onClick={() => void handleSubmitAll()} disabled={materialTransferPosted || isSubmitting || cart.length === 0}>
+              <Button className="w-full gap-1.5" onClick={() => void handleSubmitAll()} disabled={materialTransferPosted || isSubmitting || cart.length === 0 || (materialLotMode && Math.abs(cart.reduce((sum,item)=>sum+Number(item.originalQuantity??item.quantity),0)-materialHandoff.quantity)>0.0005)}>
                 {isSubmitting
                   ? <Loader2 className="w-4 h-4 animate-spin" />
                   : <><ArrowLeftRight className="w-4 h-4" /> تنفيذ تحويل {cart.length > 0 ? `(${cart.length} ${lotsEnabled ? "بند" : "صنف"})` : ""}</>}

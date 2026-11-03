@@ -47,7 +47,7 @@ function attachmentType(row: any): TicketReportMedia["type"] | null {
   if (/\.(mp4|webm|mov|m4v|ogg|ogv)$/i.test(name)) return "video";
   return null;
 }
-async function mediaForRows(db: Port, records: any[]) {
+export async function reportMediaForRows(db: Port, records: any[]) {
   const parentIds = records
     .flatMap(row => [Number(row.ticketId), Number(row.originalTicketId)])
     .filter(id => id > 0);
@@ -101,7 +101,7 @@ export async function loadTeamReportMedia(
   const records = await readScopeChunks(Array.from(parents.keys()), ids =>
     read(db, reportScope(actor, sql`a.id IN (${identifiers(ids)})`))
   );
-  return mediaForRows(
+  return reportMediaForRows(
     db,
     records.filter(
       row => parents.get(Number(row.assignmentId)) === Number(row.ticketId)
@@ -126,7 +126,7 @@ export async function canReadTeamReportMedia(
     db,
     sql`${reportScope(actor, sql`k.id=${sourceTicketId} OR (original.id=${sourceTicketId} AND originTask.id IS NOT NULL)`)} LIMIT 1`
   );
-  const media = await mediaForRows(db, records);
+  const media = await reportMediaForRows(db, records);
   return Array.from(media.values()).some(items =>
     items.some(item => mediaKeyFromValue(item.url) === key)
   );

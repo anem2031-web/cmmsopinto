@@ -49,6 +49,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { TeamAssignmentSlot, supportsTeamTaskAssignmentDepartment } from "@/pages/maintenance-teams/TeamTaskAssignment";
 import { useStaticLabels, useBatchTranslation } from "@/hooks/useContentTranslation";
+import { WarehouseMaterialTicketView } from "@/pages/maintenance-teams/WarehouseMaterialTicketView";
 import { useResolvedTranslation, getLocalizedName } from "@/hooks/useTranslatedField";
 import DropZone, { type UploadedFile } from "@/components/common/DropZone";
 import { TechnicianCombobox } from "@/components/tickets/TechnicianCombobox";
@@ -102,9 +103,11 @@ function AttachmentVideo({ url, fileName }: { url: string; fileName: string }) {
 
 export default function TicketDetail({ embeddedTicketId, onBack }: { params?: unknown; embeddedTicketId?: number; onBack?: () => void } = {}) {
   const [, params] = useRoute("/tickets/:id");
+  const { user } = useAuth();
   const ticketId = embeddedTicketId ?? parseInt(params?.id || "0");
   // Route changes reuse this page. Remount its forms so no draft, photo or
   // mutation state from one ticket can be submitted on another ticket.
+  if (user?.role === APP_ROLE.WAREHOUSE) return <WarehouseMaterialTicketView key={ticketId} ticketId={ticketId} onBack={onBack} />;
   return <TicketDetailContent key={ticketId} ticketId={ticketId} onBack={onBack} />;
 }
 

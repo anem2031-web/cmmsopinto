@@ -475,6 +475,7 @@ function ExistingDocumentsCenter({typeFilter}: {typeFilter:DocType}) {
       <DocumentFilters values={{search,dateFrom,dateTo,sort,delegateId:delegateFilter}}
         onChange={value=>{setSearch(value.search);setDateFrom(value.dateFrom);setDateTo(value.dateTo);setSort(value.sort);setDelegateFilter(value.delegateId||"all");setPage(1);}}
         onRefresh={refresh} refreshing={isLoading}
+        delegateVisible={["accountant","senior_management"].includes(role)&&typeFilter==="delegate_pricing_bundle"}
         delegates={role!=="delegate"&&["po_financial_batch","delegate_pricing_documents","delegate_pricing_bundle"].includes(typeFilter)?financialDelegateOptions:undefined} />
       {!isLoading&&!activeError&&<p className="text-sm text-muted-foreground" role="status">{resultCount} مستند مطابق</p>}
 

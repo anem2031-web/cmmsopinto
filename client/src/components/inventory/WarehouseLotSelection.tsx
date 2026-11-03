@@ -16,6 +16,7 @@ export function WarehouseLotSelection({
   onReadyChange,
   disabled,
   language = "ar",
+  operation = "issue",
 }: {
   lots: WarehouseLotOption[];
   required: number;
@@ -25,6 +26,7 @@ export function WarehouseLotSelection({
   onReadyChange?(ready: boolean): void;
   disabled?: boolean;
   language?: string;
+  operation?: "issue" | "transfer";
 }) {
   const [expanded, setExpanded] = useState(false);
   const l = (ar: string, en: string, ur: string) =>
@@ -79,7 +81,7 @@ export function WarehouseLotSelection({
             setExpanded(false);
           }}
         >
-          {l("صرف بالأقدم", "Oldest lots first", "پہلے پرانی لاٹس")}
+          {l(operation === "transfer" ? "تحويل بالأقدم" : "صرف بالأقدم", "Oldest lots first", "پہلے پرانی لاٹس")}
         </Button>
         <Button
           type="button"
@@ -98,7 +100,7 @@ export function WarehouseLotSelection({
       {value.mode === "fifo" && (
         <p className="text-xs text-muted-foreground">
           {l(
-            "اختيار أقدم اللوتات المتوافقة داخل المخزن تلقائيًا عند التأكيد، دون صرف جزئي.",
+            operation === "transfer" ? "توزيع كامل الكمية على أقدم اللوتات المتوافقة داخل المخزن تلقائيًا، دون تحويل جزئي." : "اختيار أقدم اللوتات المتوافقة داخل المخزن تلقائيًا عند التأكيد، دون صرف جزئي.",
             "Select oldest compatible warehouse lots at confirmation; full issue only.",
             "تصدیق پر گودام کی پرانی موزوں لاٹس منتخب ہوں گی؛ صرف مکمل اجرا۔"
           )}

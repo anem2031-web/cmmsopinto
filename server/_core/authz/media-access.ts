@@ -12,12 +12,16 @@ export interface MediaAccessPort {
 const denied = () => new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لفتح هذا الملف" });
 
 async function teamReportMediaReadable(user: MediaActor, ticketId: number, key?: string): Promise<boolean> {
-  if (!key || !["technician", "it_manager", "it_member"].includes(user.role)) return false;
+  if (!key || !["technician", "it_manager", "it_member", "warehouse"].includes(user.role)) return false;
   const [{ getDb }, { canReadTeamReportMedia }] = await Promise.all([
     import("../db/client"), import("../../maintenance-team-tickets/report-media"),
   ]);
   const db = await getDb();
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر التحقق من وسائط البلاغ" });
+  if (user.role === "warehouse") {
+    const { canReadWarehouseMaterialTicketMedia } = await import("../../maintenance-team-tickets/warehouse-ticket-reader");
+    return canReadWarehouseMaterialTicketMedia(db, user, ticketId, key);
+  }
   return canReadTeamReportMedia(db, { id: user.id, role: user.role, active: user.isActive === 1 }, ticketId, key);
 }
 

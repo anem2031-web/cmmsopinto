@@ -74,7 +74,14 @@ export function createTicketTeamExecutionRouter(
     }
   ) => MaintenanceTeamTicketService = executionService,
   identityReader = searchTicketIdentityCandidates,
-  unitsReader = readTicketMaterialUnits
+  unitsReader = readTicketMaterialUnits,
+  warehouseTicketReader = async (user: { id: number; role: string; isActive: number }, ticketId: number) => {
+    const { getDb } = await import("../../_core/db/client");
+    const { readWarehouseMaterialTicket } = await import("../../maintenance-team-tickets/warehouse-ticket-reader");
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "قاعدة البيانات غير متاحة" });
+    return readWarehouseMaterialTicket(db, user, ticketId);
+  }
 ) {
   const service = (ctx: any, input: { assignmentId: number }, options = {}) => {
     const a = actor(ctx);
@@ -86,6 +93,10 @@ export function createTicketTeamExecutionRouter(
     return factory(input.assignmentId, a, options);
   };
   return router({
+    warehouseTicket: protectedProcedure.input(z.object({ ticketId: id }).strict()).query(({ ctx, input }) => {
+      if (ctx.user.role !== "warehouse" || ctx.user.isActive !== 1) throw new TRPCError({ code: "FORBIDDEN" });
+      return warehouseTicketReader(ctx.user, input.ticketId);
+    }),
     units: protectedProcedure
       .input(z.object({ assignmentId: id }).strict())
       .query(({ ctx, input }) => result(async () => {

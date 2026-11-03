@@ -16,7 +16,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.ticket.mockResolvedValue({ id: 9, beforePhotoUrl: `/api/media?key=${encodeURIComponent(key)}` });
   mocks.getDb.mockResolvedValue({ execute: mocks.execute });
-  mocks.execute.mockResolvedValue([[{ id: 10 }]]);
+  mocks.execute.mockImplementation(async statement => new MySqlDialect().sqlToQuery(statement).sql.includes("FROM ticket_team_assignments") ? [[]] : [[{ id: 10 }]]);
   mocks.readable.mockRejectedValue(new TRPCError({ code: "FORBIDDEN" }));
 });
 describe("warehouse external preparation initial photo only", () => {
@@ -32,13 +32,14 @@ describe("warehouse external preparation initial photo only", () => {
   });
   it("denies unrelated/after photos even for an eligible ticket", async () => {
     await expect(assertMediaAccess(user, "cmms/uploads/after.jpg", port)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(new MySqlDialect().sqlToQuery(mocks.execute.mock.calls[0][0]).sql).toContain("ticket_team_material_needs");
   });
   it("rechecks stage on consecutive reads rather than caching permission", async () => {
     await expect(assertMediaAccess(user, key, port)).resolves.toBe(key);
     mocks.execute.mockResolvedValue([[]]);
     await expect(assertMediaAccess(user, key, port)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(mocks.execute).toHaveBeenCalledTimes(2);
+    expect(mocks.execute).toHaveBeenCalledTimes(3);
   });
   it("denies missing tickets and inactive actors", async () => {
     mocks.ticket.mockResolvedValue(null);

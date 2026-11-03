@@ -7,6 +7,8 @@ const files = [
   "server/tests/teamTicketReportMedia.test.ts",
   "server/tests/teamTicketReportMediaUi.test.tsx",
   "server/tests/externalPreparationPhoto.test.ts",
+  "server/tests/warehouseMaterialTicket.test.ts",
+  "server/tests/warehouseMaterialTicketUi.test.tsx",
 ];
 const runner = await startVitest(
   "test",
