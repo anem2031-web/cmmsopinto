@@ -12,6 +12,7 @@ import { isItTeamRole, MAINTENANCE_RESPONSIBLE_DEPARTMENT } from "@shared/roles"
 import { createCatalogStockProcedure } from "./catalog-stock.procedure";
 import { shouldExposeTicketMaterialLink } from "@shared/ticketMaterialDelivery";
 import { createInventoryBookProcedures } from "./books.procedure";
+import { filterSpecificationLots } from "../../services/purchase-specification-guards";
 
 export const inventoryRouter = router({
   ...createInventoryBookProcedures(db.getDb),
@@ -53,7 +54,7 @@ export const inventoryRouter = router({
   // 2B-8 — الدفعات الموجودة فعليًا داخل سجل Inventory/المستودع المحدد.
   // يعيد فقط الـBalances الموجبة؛ QR هو هوية الـLot نفسها وليس هوية Inventory.
   listLots: inventoryReadProcedure
-    .input(z.object({ inventoryId: z.number() }))
+    .input(z.object({ inventoryId: z.number(), movementKind: z.enum(["issue", "transfer", "supplier_return", "disposal"]).optional() }))
     .query(async ({ input }) => {
       if (!isInventoryLotsEnabled()) return [];
       const database = await db.getDb();
@@ -95,7 +96,10 @@ export const inventoryRouter = router({
         ))
         .orderBy(desc(inventoryLots.createdAt), desc(inventoryLots.id));
 
-      return rows.map((row: any) => ({
+      const displayedRows = input.movementKind
+        ? await filterSpecificationLots(database, rows, (row: any) => Number(row.lotId), input.movementKind)
+        : rows;
+      return displayedRows.map((row: any) => ({
         ...row,
         lotId: Number(row.lotId),
         catalogItemId: row.catalogItemId == null ? null : Number(row.catalogItemId),

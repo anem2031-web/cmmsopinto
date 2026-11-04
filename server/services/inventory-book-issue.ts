@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { planBookFifo } from "../../shared/inventory-book";
+import { filterSpecificationLots } from "./purchase-specification-guards";
 
 /** Orchestration only: every allocated line goes through the existing delivery writer. */
 export async function issueInventoryBook(
@@ -68,7 +69,8 @@ export async function issueInventoryBook(
       WHERE i.linkedItemId=${input.catalogItemId} AND i.warehouseId=${input.warehouseId}
       AND l.catalogItemId=${input.catalogItemId} AND i.isFrozen=0 AND b.quantity>0
       ORDER BY l.createdAt,l.id,i.id FOR UPDATE`);
-    const plan = planBookFifo(lots, input.deliveryQty, input.deliveryUnit);
+    const eligibleLots = await filterSpecificationLots(tx, lots, (row: any) => Number(row.lotId));
+    const plan = planBookFifo(eligibleLots, input.deliveryQty, input.deliveryUnit);
     if (plan.some(line => !Number.isInteger(line.quantity)))
       throw Error(
         "سند الصرف الحالي يتطلب كمية صحيحة لكل لوت؛ اختر لوتًا يدويًا أو راجع الكمية"

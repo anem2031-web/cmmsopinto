@@ -57,13 +57,12 @@ const managementQueries = [
   "kpi.getTicketTimelines", "kpi.getPOTimelines",
 ];
 const managementMutations = ["tickets.create", "tickets.createTicket", "tickets.update", "tickets.submitForTriage", "tickets.confirmCompletion", "improvementIdeas.decide", "ai.analyze"];
-/** Full existing Catalog functionality, without granting any other module's administration. */
+/** Granted Catalog functionality; overview/settings stay owner/admin only. */
 const seniorCatalogQueries = [
   "catalog.audit.list",
   ...paths("catalog.nodes", "list getById getChildren"),
   ...paths("catalog.items", "list count getById previewNextCode"),
   ...paths("catalog.itemCandidates", "listPending previewNextCode"),
-  ...paths("catalog.settings", "list get"),
   "catalog.units.list",
   ...paths("catalog.suppliers", "match list getById stats"),
   "catalog.suppliers.candidates.listPending",
@@ -80,6 +79,7 @@ const seniorCatalogMutations = [
   ...paths("catalog.importExport", "exportExcel exportItemsExcel exportTaxonomyTreeExcel importPreview importCommit"),
 ];
 const warehouseQueries = [
+  ...paths("purchaseSpecifications", "status rejectedReturns rejectedReturnSource"),
   ...paths("supplierReturns", "status list delegates valuePreview"),
   ...paths("inventory", "list books bookPages taxonomy lotSummaries listLots getTransactions issueCostAllocations scanBarcode getItemSummary getPurchaseHistory getLedger"),
   ...paths("inventoryCount", "searchCandidates uncountedItems countDiscrepancies"),

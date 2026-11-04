@@ -1,9 +1,10 @@
-import { and, asc, eq, gt, inArray, like, ne, or, type SQL } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, like, ne, or, sql, type SQL } from "drizzle-orm";
 import { assets, catalogItems, catalogNodes, deliveryDocuments, inventory, inventoryLotBalances, inventoryLots, materialExecutionCostContexts, purchaseOrderItems, purchaseOrders, sections, sites, tickets, users, warehouseReceiptItems, warehouseReceipts, warehouses, warehouseTransfers } from "../../../drizzle/schema";
 import { materialExecutionCostsEnabled } from "../../services/material-costs/feature";
 import { getDb } from "../../_core/db/client";
 import { createRecipientWarehouseReturn, issueDelivery } from "../../_core/db/warehouse-returns";
 import { isInventoryLotsEnabled } from "../../_core/inventory-lots";
+import { filterSpecificationLots } from "../../services/purchase-specification-guards";
 import type {
   CatalogAdapter,
   DeliveryAdapter,
@@ -441,6 +442,7 @@ async function getCatalogAvailabilitiesReadOnly(
   if (lotsRequired && rows.length > 0) {
     const balances = await db
       .select({
+        lotId: inventoryLotBalances.lotId,
         inventoryId: inventoryLotBalances.inventoryId,
         quantity: inventoryLotBalances.quantity,
       })
@@ -451,7 +453,8 @@ async function getCatalogAvailabilitiesReadOnly(
           gt(inventoryLotBalances.quantity, "0"),
         ),
       );
-    for (const balance of balances) {
+    const eligibleBalances = await filterSpecificationLots(db, balances, (row) => Number(row.lotId));
+    for (const balance of eligibleBalances) {
       lotTotals.set(
         balance.inventoryId,
         (lotTotals.get(balance.inventoryId) ?? 0) + Number(balance.quantity || 0),
@@ -514,11 +517,13 @@ export const currentInventoryAdapter: InventoryAdapter = {
           })
           .from(inventory)
           .innerJoin(inventoryLotBalances, eq(inventoryLotBalances.inventoryId, inventory.id))
+          .innerJoin(inventoryLots, eq(inventoryLots.id, inventoryLotBalances.lotId))
           .where(
             and(
               eq(inventory.warehouseId, warehouseId),
               eq(inventory.isFrozen, 0),
               gt(inventoryLotBalances.quantity, "0"),
+              or(isNull(inventoryLots.specificationStatus), eq(inventoryLots.specificationStatus, "approved")),
             ),
           )
           .groupBy(inventory.id, inventory.linkedItemId)
@@ -610,7 +615,8 @@ export const currentInventoryAdapter: InventoryAdapter = {
       .where(and(eq(inventoryLotBalances.inventoryId, inventoryId), gt(inventoryLotBalances.quantity, "0")))
       .orderBy(asc(inventoryLots.createdAt), asc(inventoryLots.id));
 
-    return rows.map((row) => ({
+    const eligibleRows = await filterSpecificationLots(db, rows, (row) => Number(row.id));
+    return eligibleRows.map((row) => ({
       id: Number(row.id),
       inventoryId: Number(row.inventoryId),
       lotCode: String(row.lotCode),
@@ -796,6 +802,11 @@ export const currentWarehouseTransferAdapter: WarehouseTransferAdapter = {
 
 
 /** Read-only boundary over the current Purchase and confirmed Warehouse Receipt truth. */
+const specificationHeldReceiptQuantity = sql<number>`CASE WHEN EXISTS (
+  SELECT 1 FROM inventory_lots sl WHERE sl.receiptItemId=${warehouseReceiptItems.id}
+  AND sl.specificationStatus IN ('pending','rejected') AND sl.remainingQuantity>0
+) THEN ${warehouseReceiptItems.receivedQuantity} ELSE 0 END`;
+
 export const currentPurchaseAdapter: PurchaseAdapter = {
   async getOrdersByIds(ids) {
     const uniqueIds = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))];
@@ -829,6 +840,7 @@ export const currentPurchaseAdapter: PurchaseAdapter = {
         .select({
           purchaseOrderItemId: warehouseReceiptItems.purchaseOrderItemId,
           receivedQuantity: warehouseReceiptItems.receivedQuantity,
+          specificationHeldQuantity: specificationHeldReceiptQuantity,
         })
         .from(warehouseReceiptItems)
         .innerJoin(warehouseReceipts, eq(warehouseReceipts.id, warehouseReceiptItems.receiptId))
@@ -838,10 +850,12 @@ export const currentPurchaseAdapter: PurchaseAdapter = {
         )),
     ]);
     const receivedByItemId = new Map<number, number>();
+    const heldByItemId = new Map<number, number>();
     for (const receipt of receiptRows) {
       if (receipt.purchaseOrderItemId == null) continue;
       const itemId = Number(receipt.purchaseOrderItemId);
       receivedByItemId.set(itemId, Number(((receivedByItemId.get(itemId) || 0) + Number(receipt.receivedQuantity || 0)).toFixed(3)));
+      heldByItemId.set(itemId, Number(((heldByItemId.get(itemId) || 0) + Number(receipt.specificationHeldQuantity || 0)).toFixed(3)));
     }
     return rows.map((row) => ({
       id: Number(row.id),
@@ -852,6 +866,7 @@ export const currentPurchaseAdapter: PurchaseAdapter = {
       unit: row.unit == null ? null : String(row.unit),
       status: String(row.status),
       inventoryReceivedQuantity: receivedByItemId.get(Number(row.id)) || 0,
+      specificationHeldQuantity: heldByItemId.get(Number(row.id)) || 0,
     } satisfies Pmv2PurchaseOrderItemRef));
   },
 
@@ -883,6 +898,7 @@ export const currentPurchaseAdapter: PurchaseAdapter = {
           .select({
             purchaseOrderItemId: warehouseReceiptItems.purchaseOrderItemId,
             receivedQuantity: warehouseReceiptItems.receivedQuantity,
+            specificationHeldQuantity: specificationHeldReceiptQuantity,
           })
           .from(warehouseReceiptItems)
           .innerJoin(warehouseReceipts, eq(warehouseReceipts.id, warehouseReceiptItems.receiptId))
@@ -892,10 +908,12 @@ export const currentPurchaseAdapter: PurchaseAdapter = {
           ))
       : [];
     const receivedByItemId = new Map<number, number>();
+    const heldByItemId = new Map<number, number>();
     for (const receipt of receiptRows) {
       if (receipt.purchaseOrderItemId == null) continue;
       const itemId = Number(receipt.purchaseOrderItemId);
       receivedByItemId.set(itemId, Number(((receivedByItemId.get(itemId) || 0) + Number(receipt.receivedQuantity || 0)).toFixed(3)));
+      heldByItemId.set(itemId, Number(((heldByItemId.get(itemId) || 0) + Number(receipt.specificationHeldQuantity || 0)).toFixed(3)));
     }
     return {
       order: { id: Number(orderRow.id), poNumber: String(orderRow.poNumber), status: String(orderRow.status) },
@@ -908,6 +926,7 @@ export const currentPurchaseAdapter: PurchaseAdapter = {
         unit: row.unit == null ? null : String(row.unit),
         status: String(row.status),
         inventoryReceivedQuantity: receivedByItemId.get(Number(row.id)) || 0,
+        specificationHeldQuantity: heldByItemId.get(Number(row.id)) || 0,
       })),
     };
   },

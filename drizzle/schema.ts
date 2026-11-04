@@ -1361,6 +1361,12 @@ export const inventoryLots = mysqlTable("inventory_lots", {
 	conversionFactor: decimal({ precision: 10, scale: 4 }).default('1.0000').notNull(),
 	purchaseUnitCost: decimal({ precision: 12, scale: 4 }),
 	issueUnitCost: decimal({ precision: 12, scale: 4 }).default('0.0000').notNull(),
+	// NULL preserves historical/non-construction lots. Only new construction receipts await a decision.
+	specificationStatus: mysqlEnum(['pending','approved','rejected']),
+	specificationRevision: int().default(0).notNull(),
+	specificationReviewedById: int(),
+	specificationReviewedAt: timestamp({ mode: 'string' }),
+	specificationNotes: text(),
 	supplierItemName: varchar({ length: 300 }),
 	supplierItemCode: varchar({ length: 100 }),
 	batchNumber: varchar({ length: 100 }),
@@ -1379,6 +1385,7 @@ export const inventoryLots = mysqlTable("inventory_lots", {
 	index("idx_inventory_lots_catalogSupplierId").on(table.catalogSupplierId),
 	index("idx_inventory_lots_sourceCountOperationId").on(table.sourceCountOperationId),
 	index("idx_inventory_lots_sourceSettlementId").on(table.sourceSettlementId),
+	index("idx_inventory_lots_specification_queue").on(table.specificationStatus, table.createdAt, table.id),
 ]);
 
 export const inventoryLotBalances = mysqlTable("inventory_lot_balances", {

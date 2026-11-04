@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowRight, RotateCcw, FileText, Loader2, Plus } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { SupplierReturns } from "@/components/purchase/SupplierReturns";
+import { RejectedSpecificationReturns } from "@/components/purchase/PurchaseSpecifications";
 
 
 export default function WarehouseReturnsList() {
@@ -36,6 +37,7 @@ export default function WarehouseReturnsList() {
         </CardContent></Card>
       )}
 
+      {canCreateReturn && <RejectedSpecificationReturns />}
       {canCreateReturn && <SupplierReturns />}
 
       {!isLoading && (!docs || docs.length === 0) && (

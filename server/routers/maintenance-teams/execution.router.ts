@@ -483,6 +483,7 @@ export function createTicketTeamExecutionRouter(
             sql`SELECT c.id,c.nameAr AS name,c.nameEn,c.unit,c.code,COALESCE(teamStock.quantity,0) AS availableQuantity,(history.catalogItemId IS NOT NULL) AS usedByTeam FROM catalog_items c
               LEFT JOIN (SELECT v.linkedItemId,SUM(b.quantity) AS quantity FROM inventory v
                 INNER JOIN inventory_lot_balances b ON b.inventoryId=v.id
+                INNER JOIN inventory_lots l ON l.id=b.lotId AND (l.specificationStatus IS NULL OR l.specificationStatus='approved')
                 WHERE v.warehouseId=${assignment.warehouseId} AND COALESCE(v.isFrozen,0)=0 AND v.quantity>0 AND b.quantity>0
                 GROUP BY v.linkedItemId) teamStock ON teamStock.linkedItemId=c.id
               LEFT JOIN (SELECT DISTINCT n.catalogItemId FROM ticket_team_material_needs n

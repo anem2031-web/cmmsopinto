@@ -14,6 +14,9 @@ import { techniciansRouter } from "./technicians/technicians.router";
 import { ticketsMergedRouter } from "./tickets/index";
 
 import { purchaseOrdersRouter } from "./purchase/purchase-orders.router";
+import { createPurchaseSpecificationsRouter } from "./purchase/specifications.router";
+import { getDb } from "../_core/db";
+import { createPurchaseOrderReadGuard } from "../_core/authz/guard";
 import { deliveryDocumentsRouter } from "./purchase/delivery-documents.router";
 import { returnDocumentsRouter } from "./inventory/return-documents.router";
 import { approvalsRouter } from "./purchase/approvals.router";
@@ -93,6 +96,7 @@ export const appRouter = router({
   operationalIssues: operationalIssuesRouter,
   delegatePricingBundles: delegatePricingBundlesRouter,
   approvedPricingDocuments: approvedPricingDocumentsRouter,
+  purchaseSpecifications: createPurchaseSpecificationsRouter({ database: getDb, readGuard: createPurchaseOrderReadGuard }),
 
 purchaseOrders: router({
   ...purchaseOrdersRouter._def.procedures,

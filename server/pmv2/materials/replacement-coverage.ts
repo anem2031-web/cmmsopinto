@@ -159,7 +159,7 @@ export async function loadPmv2ReplacementStock(tx:FollowupTx,replacements:Pmv2Re
       FROM inventory_lot_balances b INNER JOIN inventory v ON v.id=b.inventoryId
       INNER JOIN inventory_lots l ON l.id=b.lotId AND l.catalogItemId=v.linkedItemId
       INNER JOIN warehouses w ON w.id=v.warehouseId AND w.isActive=1
-      WHERE b.quantity>0 AND b.lotId IN (${sql.join(lots.slice(start,start+500).map(id=>sql`${id}`),sql`,`)})
+      WHERE b.quantity>0 AND (l.specificationStatus IS NULL OR l.specificationStatus='approved') AND b.lotId IN (${sql.join(lots.slice(start,start+500).map(id=>sql`${id}`),sql`,`)})
         AND v.warehouseId IN (${sql.join(warehouses.slice(ws,ws+500).map(id=>sql`${id}`),sql`,`)}) ORDER BY l.createdAt,l.id`);
     for(const row of rows) {
       const expected=provenance.get(Number(row.lotId));

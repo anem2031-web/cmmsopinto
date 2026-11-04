@@ -1,4 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
+import { pendingPurchaseCoverageQuantity } from "./specification-purchase-coverage";
 import {
   pmv2MaterialPurchaseLinks,
   pmv2MaterialRequestItems,
@@ -56,17 +57,6 @@ async function unitsEquivalent(
   return normalizeUnit(left) === normalizeUnit(right);
 }
 
-function pendingPurchaseCoverageQuantity(
-  linkedQuantity: number,
-  orderStatus: string | null | undefined,
-  itemStatus: string | null | undefined,
-  inventoryReceivedQuantity: number | null | undefined,
-) {
-  if (["rejected", "received", "closed"].includes(String(orderStatus || ""))) return 0;
-  if (["rejected", "cancelled", "purchase_cancelled", "delivered_to_requester"].includes(String(itemStatus || ""))) return 0;
-  return roundQuantity(Number(linkedQuantity || 0) - Number(inventoryReceivedQuantity || 0));
-}
-
 async function requireDb() {
   const db = await getDb();
   if (!db) throw new Error("تعذر الاتصال بقاعدة البيانات");
@@ -122,7 +112,7 @@ async function listPurchaseLinks(db: any, requestItemId: number) {
     const item = itemById.get(Number(link.purchaseOrderItemId)) ?? null;
     const linkedQuantity = roundQuantity(Number(link.linkedQuantity || 0));
     const pendingCoverageQuantity = order && item
-      ? pendingPurchaseCoverageQuantity(linkedQuantity, order.status, item.status, item.inventoryReceivedQuantity)
+      ? pendingPurchaseCoverageQuantity(linkedQuantity, order.status, item.status, item.inventoryReceivedQuantity, item.specificationHeldQuantity)
       : 0;
     return {
       id: Number(link.id),

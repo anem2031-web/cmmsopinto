@@ -117,7 +117,7 @@ describe.each(["tickets", "pmv2"] as const)(
       expect(add().disabled).toBe(false);
       await add().onClick();
       expect(state.query).toHaveBeenCalledTimes(1);
-      expect(state.query).toHaveBeenCalledWith({ inventoryId: 100 });
+      expect(state.query).toHaveBeenCalledWith({ inventoryId: 100, movementKind: "transfer" });
       expect(prepared.mock.calls[0][0].map((row: any) => row.quantity)).toEqual(
         [2, 3, 1]
       );

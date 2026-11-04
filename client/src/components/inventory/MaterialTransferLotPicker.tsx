@@ -49,7 +49,7 @@ export function MaterialTransferLotPicker({
       await Promise.all(
         inventoryIds.map(async inventoryId => [
           inventoryId,
-          await utils.client.inventory.listLots.query({ inventoryId }),
+          await utils.client.inventory.listLots.query({ inventoryId, movementKind: "transfer" }),
         ])
       )
     ) as Record<number, any[]>;

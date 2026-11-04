@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  adminOwnerProcedure,
   catalogAdminProcedure,
   catalogImportExportProcedure,
   catalogItemDeactivateProcedure,
@@ -68,8 +69,8 @@ const api = router({
     itemSuppliers: router({ listByItem: catalogViewProcedure.query(() => read("item-suppliers")) }),
     itemCandidates: router({ approveNew: catalogProcedure.mutation(writeWith("candidate-approve")) }),
     settings: router({
-      list: catalogAdminProcedure.query(() => read("settings")),
-      get: catalogAdminProcedure.query(() => read("setting")),
+      list: adminOwnerProcedure.query(() => read("settings")),
+      get: adminOwnerProcedure.query(() => read("setting")),
     }),
     importExport: router({
       exportExcel: catalogImportExportProcedure.mutation(writeWith("export-all")),
@@ -92,7 +93,7 @@ const fullCatalogActions = (catalog: ReturnType<typeof caller>) => [
   () => catalog.nodes.create(), () => catalog.nodes.update(), () => catalog.nodes.delete(),
   () => catalog.units.create(), () => catalog.units.update(), () => catalog.units.delete(),
   () => catalog.suppliers.create(), () => catalog.suppliers.update(), () => catalog.suppliers.delete(),
-  () => catalog.itemCandidates.approveNew(), () => catalog.settings.list(), () => catalog.settings.get(),
+  () => catalog.itemCandidates.approveNew(),
 ];
 beforeEach(() => vi.clearAllMocks());
 
@@ -122,8 +123,29 @@ describe("Senior management Catalog permissions at the direct API boundary", () 
     expect(canManageCatalogItemLifecycle("senior_management")).toBe(true);
     expect(isCatalogAdminRole("senior_management")).toBe(true);
     for (const action of fullCatalogActions(caller("senior_management"))) await expect(action()).resolves.toBeDefined();
-    expect(read).toHaveBeenCalledTimes(3);
+    expect(read).toHaveBeenCalledTimes(1);
     expect(write).toHaveBeenCalledTimes(12);
+  });
+
+  it("denies both settings reads on direct calls without affecting the other Catalog grants", async () => {
+    const catalog = caller("senior_management");
+    for (const path of ["catalog.settings.list", "catalog.settings.get"]) {
+      expect(businessRpcAllowed(context("senior_management").user, "query", path)).toBe(false);
+    }
+    await expect(catalog.settings.list()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(catalog.settings.get()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(read).not.toHaveBeenCalled();
+    await expect(catalog.nodes.create()).resolves.toMatchObject({ actorRole: "senior_management" });
+  });
+
+  it("does not retain an owner/admin settings grant after the actor changes to senior management", async () => {
+    const ctx = context("admin");
+    const catalog = api.createCaller(ctx).catalog;
+    await catalog.settings.list();
+    ctx.user.role = "senior_management";
+    await expect(catalog.settings.list()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(catalog.settings.get()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(read).toHaveBeenCalledTimes(1);
   });
 
   it("does not reuse a prior permission when activity or role changes on consecutive requests", async () => {
@@ -181,6 +203,12 @@ describe("Construction deactivation is additive and limited", () => {
 });
 
 describe("Unchanged roles and authentication", () => {
+  it.each(["senior_management", "construction_procurement_manager", "maintenance_manager", "general_maintenance_manager", "warehouse", "it_manager", "accountant", "executive_director", "delegate", "technician"])("keeps settings reads owner/admin-only for %s", async role => {
+    const catalog = caller(role);
+    await expect(catalog.settings.list()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(catalog.settings.get()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(read).not.toHaveBeenCalled();
+  });
   it.each(["owner", "admin"])("retains %s item lifecycle and all transfer actions", async role => {
     const catalog = caller(role);
     for (const action of [() => catalog.items.create(), () => catalog.items.update(), () => catalog.items.delete(), () => catalog.items.reactivate(), ...transferNames.map(name => () => catalog.importExport[name]())]) await expect(action()).resolves.toMatchObject({ actorRole: role });
@@ -285,6 +313,7 @@ function productionCatalogRoutes(): CatalogRoute[] {
 
 const productionRoutes = productionCatalogRoutes();
 const catalogProcedures: Record<string, any> = {
+  adminOwnerProcedure,
   catalogAdminProcedure, catalogImportExportProcedure, catalogItemDeactivateProcedure,
   catalogItemLifecycleProcedure, catalogItemManagerProcedure, catalogItemReadProcedure,
   catalogItemUpdateProcedure, catalogProcedure, catalogReadProcedure,
@@ -310,11 +339,13 @@ const allCatalogApi = (() => {
 const invokeProductionGuard = (ctx: any, path: string) => path.split(".").reduce((value: any, key) => value[key], allCatalogApi.createCaller(ctx))();
 
 describe("Complete Catalog-only capability parity with the actual production RPC surface", () => {
-  it.each(productionRoutes)("allows the full senior grant on $kind $path through its actual guard", async route => {
+  it.each(productionRoutes)("checks the reviewed senior grant on $kind $path through its actual guard", async route => {
     const senior = context("senior_management");
-    expect(businessRpcAllowed(senior.user, route.kind, route.path)).toBe(true);
+    const allowed = !["catalog.settings.list", "catalog.settings.get"].includes(route.path);
+    expect(businessRpcAllowed(senior.user, route.kind, route.path)).toBe(allowed);
     expect(businessRpcAllowed(senior.user, route.kind === "query" ? "mutation" : "query", route.path)).toBe(false);
-    await expect(invokeProductionGuard(senior, route.path)).resolves.toBeDefined();
+    if (allowed) await expect(invokeProductionGuard(senior, route.path)).resolves.toBeDefined();
+    else await expect(invokeProductionGuard(senior, route.path)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
   it("retains owner/admin parity and checks all newly granted operations again when the actor becomes inactive", async () => {
     for (const role of ["owner", "admin"]) {

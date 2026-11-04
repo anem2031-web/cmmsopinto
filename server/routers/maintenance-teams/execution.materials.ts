@@ -1,5 +1,6 @@
 import { selectFullIssueLots, type WarehouseLotOption, type WarehouseLotSelection } from "../../../shared/warehouse-lot-selection";
 import { sql } from "drizzle-orm";
+import { filterSpecificationLots } from "../../services/purchase-specification-guards";
 import {
   TeamTicketError,
   type Snapshot,
@@ -221,7 +222,8 @@ export class ProductionMaterialGateway implements MaterialGateway {
       this.tx,
       sql`SELECT b.lotId,b.quantity,l.trackingToken,l.lotCode,l.issueUnit,l.catalogItemId,l.createdAt FROM inventory_lot_balances b INNER JOIN inventory_lots l ON l.id=b.lotId WHERE b.inventoryId=${Number(inventory.id)} AND b.quantity>0 ORDER BY l.expiryDate,l.createdAt,l.id FOR UPDATE`
     );
-    const matching = lots.filter(
+    const eligibleLots = await filterSpecificationLots(this.tx, lots, (row: any) => Number(row.lotId));
+    const matching = eligibleLots.filter(
       l =>
         Number(l.catalogItemId) === catalogItemId &&
         (l.issueUnit || inventory.issueUnit || inventory.unit) ===
@@ -612,7 +614,7 @@ export class ProductionMaterialGateway implements MaterialGateway {
       );
     const lots = await selectRows(
       this.tx,
-      sql`SELECT SUM(b.quantity) AS quantity FROM inventory_lots l INNER JOIN inventory_lot_balances b ON b.lotId=l.id INNER JOIN inventory v ON v.id=b.inventoryId WHERE l.purchaseOrderItemId=${input.sourceId} AND v.warehouseId=${main}`
+      sql`SELECT SUM(b.quantity) AS quantity FROM inventory_lots l INNER JOIN inventory_lot_balances b ON b.lotId=l.id INNER JOIN inventory v ON v.id=b.inventoryId WHERE l.purchaseOrderItemId=${input.sourceId} AND v.warehouseId=${main} AND (l.specificationStatus IS NULL OR l.specificationStatus='approved')`
     );
     if (
       Number(r.receivedQuantity) < link.quantity ||

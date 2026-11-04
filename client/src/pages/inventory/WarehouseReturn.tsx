@@ -1,7 +1,7 @@
 import { InventoryBooks } from "@/components/inventory/InventoryBooks";
 import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +48,16 @@ export default function WarehouseReturn() {
   const { data: warehousesList } = trpc.warehouse.list.useQuery();
   const { data: lotTrackingStatus } = trpc.inventoryCount.lotTrackingStatus.useQuery();
   const lotsEnabled = !!lotTrackingStatus?.enabled;
+  const specificationParam = new URLSearchParams(useSearch()).get("specificationId");
+  const specificationId = Number(specificationParam || 0);
+  const specificationRequested = specificationParam !== null;
+  const validSpecificationId = Number.isSafeInteger(specificationId) && specificationId > 0;
+  const specificationSource = trpc.purchaseSpecifications.rejectedReturnSource.useQuery(
+    { id: specificationId }, { enabled: specificationRequested && validSpecificationId && lotsEnabled, retry: false }
+  );
+  const [specificationReady, setSpecificationReady] = useState(false);
+  const [specificationError, setSpecificationError] = useState("");
+  const specificationLot = trpc.warehouseReturns.resolveReturnLot.useMutation();
 
   // Search inventory
   const searchQuery_debounced = searchQuery.trim();
@@ -120,6 +130,43 @@ export default function WarehouseReturn() {
     },
   });
 
+  useEffect(() => {
+    const source = specificationSource.data;
+    if (!source || !lotsEnabled || !specificationRequested) return;
+    let cancelled = false;
+    setSpecificationReady(false);
+    setSpecificationError("");
+    setReturnMode("supplier");
+    setReturnWarehouseId(String(source.warehouseId));
+    setReturnLotInfo(null);
+    setSelectedItem(null);
+    void specificationLot.mutateAsync({ warehouseId: Number(source.warehouseId), trackingToken: source.trackingToken }).then(resolved => {
+      if (cancelled) return;
+      const quantity = Math.min(Number(source.remainingReturnableQuantity), Number(resolved.availableQuantity));
+      if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("لا توجد كمية متبقية قابلة للإرجاع لهذا الصنف");
+      setReturnLotInfo(resolved);
+      setSelectedItem(resolved.item);
+      setSelectedSource(null);
+      setSelectedVendorKey(null);
+      setReturnedQuantity(quantity);
+      setReason(source.notes?.trim() || "رفض مطابقة المواصفات");
+      setStep("confirm");
+      setSpecificationReady(true);
+    }).catch(error => {
+      if (!cancelled) setSpecificationError(error instanceof Error ? error.message : "تعذر تجهيز المرتجع من قرار المطابقة");
+    });
+    return () => { cancelled = true; };
+  }, [specificationSource.data?.id, specificationSource.data?.revision, specificationId, specificationRequested, lotsEnabled]);
+
+  const specificationBlocked = specificationRequested && (!validSpecificationId || !specificationReady
+    || Number(specificationSource.data?.id) !== specificationId
+    || returnLotInfo?.trackingToken !== specificationSource.data?.trackingToken
+    || Number(returnWarehouseId) !== Number(specificationSource.data?.warehouseId)
+    || !!specificationSource.error || !!specificationError);
+  const specificationLimit = specificationRequested && specificationSource.data
+    ? Math.min(Number(specificationSource.data.remainingReturnableQuantity), Number(returnLotInfo?.availableQuantity || 0))
+    : undefined;
+
   const resolveRecipientReturnSourceMut = trpc.warehouseReturns.resolveRecipientReturnSource.useMutation({
     onSuccess: (data: any) => {
       setRecipientSourceInfo(data);
@@ -171,6 +218,14 @@ export default function WarehouseReturn() {
   const handleSelectItem = (item: any) => selectItem(item);
 
   const handleSubmit = () => {
+    if (specificationBlocked) {
+      toast.error("يجب التحقق من الصنف المرفوض والدفعة الأصلية قبل تأكيد الإرجاع");
+      return;
+    }
+    if (specificationLimit !== undefined && returnedQuantity > specificationLimit) {
+      toast.error("الكمية أكبر من المتبقي المرفوض القابل للإرجاع");
+      return;
+    }
     if (!selectedItem || !reason.trim()) {
       toast.error(t.inventory.returnReasonRequired);
       return;
@@ -259,11 +314,22 @@ export default function WarehouseReturn() {
         </Button>
       </div>
 
+      {specificationRequested && <Card className="border-amber-200 bg-amber-50/40"><CardContent className="space-y-2 pt-4 text-sm">
+        <p className="font-semibold">مرتجع بسبب رفض مطابقة المواصفات</p>
+        {!validSpecificationId ? <p role="alert" className="text-destructive">رقم قرار المطابقة غير صالح</p>
+          : lotTrackingStatus && !lotsEnabled ? <p role="alert" className="text-destructive">يتطلب هذا المرتجع تفعيل تتبع اللوتات</p>
+          : specificationSource.error || specificationError ? <p role="alert" className="text-destructive">{specificationSource.error?.message || specificationError}</p>
+          : !specificationReady ? <p className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />جارٍ التحقق من قرار المطابقة والدفعة الأصلية...</p>
+          : <p>{specificationSource.data?.poNumber} — {specificationSource.data?.itemName} — {specificationSource.data?.lotCode}</p>}
+        <p className="text-muted-foreground">تُستكمل عملية الإرجاع بعد مراجعة الكمية والسبب واختيار المندوب. لم يُنفّذ الإرجاع بعد.</p>
+      </CardContent></Card>}
+
       <Card>
         <CardContent className="pt-4">
           <div className="grid grid-cols-2 gap-2">
             <Button
               variant={returnMode === "supplier" ? "default" : "outline"}
+              disabled={specificationRequested}
               onClick={() => {
                 setReturnMode("supplier");
                 setStep("search");
@@ -279,6 +345,7 @@ export default function WarehouseReturn() {
             </Button>
             <Button
               variant={returnMode === "recipient" ? "default" : "outline"}
+              disabled={specificationRequested}
               onClick={() => {
                 setReturnMode("recipient");
                 setStep("search");
@@ -296,7 +363,7 @@ export default function WarehouseReturn() {
         </CardContent>
       </Card>
 
-      {step === "search" && (
+      {step === "search" && !specificationRequested && (
         returnMode === "recipient" ? (
           <Card className="border-blue-200">
             <CardHeader className="pb-2">
@@ -709,15 +776,15 @@ export default function WarehouseReturn() {
                   type="number"
                   min={1}
                   step={1}
-                  max={returnMode === "recipient" ? recipientSourceInfo?.returnableQuantity : (lotsEnabled ? returnLotInfo?.availableQuantity : selectedItem.quantity)}
+                  max={specificationLimit ?? (returnMode === "recipient" ? recipientSourceInfo?.returnableQuantity : (lotsEnabled ? returnLotInfo?.availableQuantity : selectedItem.quantity))}
                   value={Number.isFinite(returnedQuantity) ? returnedQuantity : ""}
                   onChange={e => setReturnedQuantity(returnMode === "supplier" && lotsEnabled && followupStatus.data?.enabled ? e.target.valueAsNumber : (parseInt(e.target.value) || 1))}
                 />
                 {returnMode === "supplier" && lotsEnabled && returnLotInfo && followupStatus.data?.enabled && <>
                   <p className="text-xs text-muted-foreground">حدد الكمية المرتجعة؛ يمكن إرجاع جزء من رصيد اللوت أو كامل المتاح. تُثبّت الكمية بعد التأكيد.</p>
-                  {Number.isInteger(Number(returnLotInfo.availableQuantity)) && Number(returnLotInfo.availableQuantity) > 0 &&
+                  {Number.isInteger(Number(specificationLimit ?? returnLotInfo.availableQuantity)) && Number(specificationLimit ?? returnLotInfo.availableQuantity) > 0 &&
                     <Button type="button" size="sm" variant="outline" disabled={followupMut.isPending || returnMut.isPending}
-                      onClick={() => setReturnedQuantity(Number(returnLotInfo.availableQuantity))}>إرجاع كامل المتاح ({returnLotInfo.availableQuantity})</Button>}
+                      onClick={() => setReturnedQuantity(Number(specificationLimit ?? returnLotInfo.availableQuantity))}>إرجاع كامل المتاح ({specificationLimit ?? returnLotInfo.availableQuantity})</Button>}
                   {followupStatus.data?.enabled && <SupplierReturnValuePreview warehouseId={Number(returnWarehouseId)} trackingToken={returnLotInfo.trackingToken} quantity={returnedQuantity} />}
                 </>}
               </div>
@@ -759,12 +826,12 @@ export default function WarehouseReturn() {
 
           {/* Actions */}
           <div className="flex gap-3">
-            <Button variant="outline" onClick={() => { setStep("search"); setSelectedItem(null); setReturnLotInfo(null); setRecipientSourceInfo(null); setSelectedSource(null); setSelectedVendorKey(null); }} className="flex-1">
+            <Button variant="outline" onClick={() => { if (specificationRequested) { navigate("/warehouse/returns"); return; } setStep("search"); setSelectedItem(null); setReturnLotInfo(null); setRecipientSourceInfo(null); setSelectedSource(null); setSelectedVendorKey(null); }} className="flex-1">
               {t.common.back}
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={followupMut.isPending || returnMut.isPending || recipientReturnMut.isPending || resolveReturnLotMut.isPending || resolveRecipientReturnSourceMut.isPending || !reason.trim() || !Number.isInteger(returnedQuantity) || returnedQuantity < 1 || (returnMode === "recipient" ? !recipientSourceInfo : (lotsEnabled && (!returnWarehouseId || !returnLotInfo)))}
+              disabled={specificationBlocked || (specificationLimit !== undefined && returnedQuantity > specificationLimit) || followupMut.isPending || returnMut.isPending || recipientReturnMut.isPending || resolveReturnLotMut.isPending || resolveRecipientReturnSourceMut.isPending || !reason.trim() || !Number.isInteger(returnedQuantity) || returnedQuantity < 1 || (returnMode === "recipient" ? !recipientSourceInfo : (lotsEnabled && (!returnWarehouseId || !returnLotInfo)))}
               className="flex-1 gap-2"
             >
               {(followupMut.isPending || returnMut.isPending || recipientReturnMut.isPending)

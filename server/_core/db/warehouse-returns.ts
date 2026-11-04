@@ -54,6 +54,7 @@ import { getPOItemById, getPurchaseOrderById, getPOItems, updatePurchaseOrder } 
 import { getNextDeliveryNumber, getNextReturnNumber } from "./warehouse-receipts";
 import { calculateInventoryValue, calculateMovementTotal, normalizeInventoryQuantity, roundTo } from "../inventory-costing";
 import { consumeInventoryLotForIssue, isInventoryLotsEnabled, resolveInventoryLotForSupplierReturn } from "../inventory-lots";
+import { assertNoSpecificationAggregateBypass, assertSpecificationPurchaseItemCompletion } from "../../services/purchase-specification-guards";
 import { materialExecutionCostsEnabled } from "../../services/material-costs/feature";
 import { resolveExecutionCostContext } from "../../services/material-costs/context";
 import { getActiveCatalogUnitCanonicalName } from "../catalog-unit-governance";
@@ -258,6 +259,7 @@ export async function createLotAwareSupplierReturn(params: {
       inventoryCatalogItemId,
       quantity: returnedQuantity,
       actionLabel: "المرتجع",
+      specificationMovementKind: "supplier_return",
     });
 
     // Phase 5.2: بعد حجز رصيد الـLot نقفل Aggregate Inventory ونقرأ الرصيد
@@ -428,6 +430,7 @@ export async function createLegacySupplierReturn(params: {
     await tx.execute(sql`SELECT id FROM inventory WHERE id = ${params.inventoryId} FOR UPDATE`);
     const inventoryItem = await getInventoryItemById(params.inventoryId, tx) as any;
     if (!inventoryItem) throw new Error("الصنف غير موجود في المخزون");
+    await assertNoSpecificationAggregateBypass(tx, params.inventoryId);
     if (returnedQuantity > Number(inventoryItem.quantity || 0)) {
       throw new Error(`الكمية المتاحة في المخزون ${inventoryItem.quantity} أقل من الكمية المُرجَعة`);
     }
@@ -1327,6 +1330,10 @@ export async function issueDelivery(params: {
     await tx.execute(sql`SELECT id FROM inventory WHERE id = ${params.inventoryId} FOR UPDATE`);
     const item = await getInventoryItemById(params.inventoryId, tx);
     if (!item) throw new Error("الصنف غير موجود في المخزون");
+    if (!lotsEnabled) await assertNoSpecificationAggregateBypass(tx, params.inventoryId);
+    if (params.markPurchaseOrderItemDelivered && params.purchaseOrderItemId) {
+      await assertSpecificationPurchaseItemCompletion(tx, params.purchaseOrderItemId);
+    }
     const operational = await assertOperationalIssueReference(tx, {
       ...params, selectedTicketItemId: params.costAllocations?.[0]?.ticketItemId,
       operationKey: params.operationalOperationKey, catalogItemId: (item as any).linkedItemId ?? null,

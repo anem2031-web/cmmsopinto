@@ -13,7 +13,7 @@ import { catalogAuditJson, catalogAuditRequestMeta, pickAuditValues } from "../.
 import { canShowCatalogBook, loadCatalogBookTotals } from "../../services/inventory-book-summary";
 import { findCatalogUnitByName, getActiveCatalogUnitCanonicalName } from "../../_core/catalog-unit-governance";
 import { executeCatalogTaxonomyMove, previewCatalogTaxonomyMove } from "../../services/catalog/catalogTaxonomyMove.service";
-import { router, catalogAdminProcedure, catalogProcedure, catalogViewProcedure, catalogItemManagerProcedure, catalogItemReadProcedure, catalogItemUpdateProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure, catalogReadProcedure, catalogReferenceReadProcedure } from "../_shared/procedures";
+import { router, adminOwnerProcedure, catalogAdminProcedure, catalogProcedure, catalogViewProcedure, catalogItemManagerProcedure, catalogItemReadProcedure, catalogItemUpdateProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure, catalogReadProcedure, catalogReferenceReadProcedure } from "../_shared/procedures";
 import { z } from "zod";
 import { getTableColumns, eq, and, or, like, ne, count, desc, asc, inArray, sql, gte, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -1779,13 +1779,13 @@ create: catalogItemManagerProcedure
   // ────────────────────────────────────────────────────────
 
   settings: router({
-    list: catalogAdminProcedure.query(async () => {
+    list: adminOwnerProcedure.query(async () => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
       return await db.select().from(catalogSettings);
     }),
 
-    get: catalogAdminProcedure
+    get: adminOwnerProcedure
       .input(z.string())
       .query(async ({ input }) => {
         const db = await getDb();

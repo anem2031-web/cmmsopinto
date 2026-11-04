@@ -67,6 +67,7 @@ import {
   isInventoryLotsEnabled,
   resolveInventoryLotForCount,
 } from "../inventory-lots";
+import { assertSpecificationReceiptTracking } from "../../services/purchase-specifications";
 import {
   calculateInventoryValue,
   calculateMovementTotal,
@@ -302,6 +303,15 @@ export async function processApprovedReceiptItems(
   }> = [];
 
   const applyApprovedReceipt = async (writer: any) => {
+    await assertSpecificationReceiptTracking(writer,
+      ((receipt as any).items || []).map((item: any) => Number(item.purchaseOrderItemId)).filter((id: number) => Number.isSafeInteger(id) && id > 0), lotsEnabled);
+    if (lotsEnabled) {
+      // Register inspection from a confirmed source inside the same transaction.
+      // Any failure below rolls this state back together with the stock.
+      await writer.update(warehouseReceipts)
+        .set({ status: "confirmed", isDraft: false } as any)
+        .where(eq(warehouseReceipts.id, receiptId));
+    }
     let receiptWarehouseId: number | null = null;
     const getReceiptWarehouseId = async () => {
       if (receiptWarehouseId) return receiptWarehouseId;

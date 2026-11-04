@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { pendingPurchaseCoverageQuantity } from "./specification-purchase-coverage";
 import {
   pmv2ItemActions,
   pmv2MaterialPurchaseLinks,
@@ -73,17 +74,6 @@ function normalizeUnit(value: string | null | undefined) {
 
 function roundQuantity(value: number) {
   return Number(Math.max(0, value).toFixed(3));
-}
-
-function pendingPurchaseCoverageQuantity(
-  linkedQuantity: number,
-  orderStatus: string | null | undefined,
-  itemStatus: string | null | undefined,
-  inventoryReceivedQuantity: number | null | undefined,
-) {
-  if (["rejected", "received", "closed"].includes(String(orderStatus || ""))) return 0;
-  if (["rejected", "cancelled", "purchase_cancelled", "delivered_to_requester"].includes(String(itemStatus || ""))) return 0;
-  return roundQuantity(Number(linkedQuantity || 0) - Number(inventoryReceivedQuantity || 0));
 }
 
 async function requireDb() {
@@ -233,7 +223,7 @@ export class Pmv2WarehouseQueueService {
       const purchaseItem = purchaseItemById.get(Number(link.purchaseOrderItemId)) ?? null;
       const linkedQuantity = roundQuantity(Number(link.linkedQuantity || 0));
       const pendingCoverageQuantity = order && purchaseItem
-        ? pendingPurchaseCoverageQuantity(linkedQuantity, order.status, purchaseItem.status, purchaseItem.inventoryReceivedQuantity)
+        ? pendingPurchaseCoverageQuantity(linkedQuantity, order.status, purchaseItem.status, purchaseItem.inventoryReceivedQuantity, purchaseItem.specificationHeldQuantity)
         : 0;
       const row = {
         id: Number(link.id),

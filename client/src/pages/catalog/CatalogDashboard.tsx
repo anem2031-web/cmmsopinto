@@ -3,7 +3,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { isCatalogAdminRole } from "@shared/roles";
+import { isOwnerOrAdminRole } from "@shared/restricted-module-policy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,19 +29,18 @@ import SmartSearch from "@/components/catalog/SmartSearch";
 export default function CatalogDashboard() {
   const { t } = useTranslation();
   const { user, loading } = useAuth();
-  const isCatalogAdmin = isCatalogAdminRole(user?.role);
+  const canViewAdministrationTabs = isOwnerOrAdminRole(user?.role);
   const itemsOnly = user?.role === "it_manager";
-  const [activeTab, setActiveTab] = useState(itemsOnly ? "items" : "overview");
+  const [activeTab, setActiveTab] = useState(!user || canViewAdministrationTabs ? "overview" : "items");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Overview follows the explicit full Catalog administration grant.
-  // Once auth is resolved, other Catalog roles land on Items instead of
-  // remaining on a hidden overview tab.
+  // Overview/settings are owner/admin only. Other Catalog grants remain
+  // independent; an actor change cannot retain a now-hidden tab.
   useEffect(() => {
-    if (!loading && (itemsOnly && activeTab !== "items" || !isCatalogAdmin && activeTab === "overview")) {
+    if (!loading && (itemsOnly && activeTab !== "items" || !canViewAdministrationTabs && ["overview", "settings"].includes(activeTab))) {
       setActiveTab("items");
     }
-  }, [activeTab, isCatalogAdmin, itemsOnly, loading]);
+  }, [activeTab, canViewAdministrationTabs, itemsOnly, loading]);
 
   const { data: nodes } = trpc.catalog.nodes.list.useQuery({
     isActive: true,
@@ -106,7 +105,7 @@ export default function CatalogDashboard() {
       {/* Main Content */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="flex w-full flex-row h-auto mb-6 gap-1 p-1">
-          {isCatalogAdmin && (
+          {canViewAdministrationTabs && (
             <TabsTrigger value="overview" className="flex-1">{t.catalog.tabs.overview}</TabsTrigger>
           )}
           {!itemsOnly && <TabsTrigger value="taxonomy" className="flex-1">{t.catalog.tabs.taxonomy}</TabsTrigger>}
@@ -122,13 +121,13 @@ export default function CatalogDashboard() {
             <Inbox className="w-3.5 h-3.5" />
             الأصناف الجديدة
           </TabsTrigger>}
-          {isCatalogAdmin && (
+          {canViewAdministrationTabs && (
             <TabsTrigger value="settings" className="flex-1">{t.catalog.tabs.settings}</TabsTrigger>
           )}
         </TabsList>
 
-        {/* Overview Tab — full Catalog administration */}
-        {isCatalogAdmin && (
+        {/* Overview Tab — owner/admin only */}
+        {canViewAdministrationTabs && (
           <TabsContent value="overview" className="space-y-6">
             <Card>
               <CardHeader>
@@ -180,8 +179,8 @@ export default function CatalogDashboard() {
           <CatalogItemCandidatesManager />
         </TabsContent>}
 
-        {/* Settings Tab — full Catalog administration */}
-        {isCatalogAdmin && (
+        {/* Settings Tab — owner/admin only */}
+        {canViewAdministrationTabs && (
           <TabsContent value="settings">
             <CatalogSettings />
           </TabsContent>

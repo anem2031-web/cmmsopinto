@@ -14,11 +14,14 @@ const source = readFileSync("client/src/pages/purchase/CreatePurchaseOrder.tsx",
 const ast = ts.createSourceFile("Create.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const initializers = new Map<string, string>();
 let itemContext = "";
+let addItemHandler = "";
 const effects: string[] = [];
 function find(node: ts.Node) {
   if (ts.isVariableDeclaration(node) && node.initializer) initializers.set(node.name.getText(ast), node.initializer.getText(ast));
   if (ts.isCallExpression(node) && node.expression.getText(ast) === "useEffect") effects.push(node.arguments[0].getText(ast));
   if (ts.isJsxElement(node) && node.openingElement.getText(ast).includes('className="rounded-md border bg-muted/20 p-3 space-y-3"')) itemContext = node.getText(ast);
+  if (ts.isJsxAttribute(node) && node.name.getText(ast) === "onClick" && node.initializer && ts.isJsxExpression(node.initializer)
+    && node.initializer.expression?.getText(ast).includes('emptyItem("", prev[0] || initialContext')) addItemHandler = node.initializer.expression.getText(ast);
   ts.forEachChild(node, find);
 }
 find(ast);
@@ -53,6 +56,57 @@ function harness(items = [fixture()], overrides: any = {}) {
 }
 
 describe("Purchase creation with context entered on items only", () => {
+  it.each(["construction_procurement_manager", "general_maintenance_manager", "senior_management", "owner", "admin", "warehouse", "it_manager", undefined])("initializes the first new item department only for the construction creator: %s", role => {
+    const h = harness([]);
+    h.defaultReviewRole = evaluate(initializers.get("defaultReviewRole")!, { user: role ? { role } : undefined });
+    h.emptyItem = evaluate(initializers.get("emptyItem")!, h);
+    const initializer = [...initializers].find(([name]) => name.includes("items, setItems"))![1];
+    const [created] = evaluate(initializer, { ...h, useState: (init: any) => [init(), vi.fn()] });
+    expect(created[0].reviewRole).toBe(role === "construction_procurement_manager" ? role : "");
+    expect(created[0].catalogItemId).toBeNull();
+  });
+
+  it("defaults each added construction item independently while allowing a different review department", () => {
+    const h = harness([fixture({ reviewRole: "senior_management" })], { defaultReviewRole: "construction_procurement_manager" });
+    h.emptyItem = evaluate(initializers.get("emptyItem")!, h);
+    evaluate(addItemHandler, h)();
+    expect(h.items.map((item: any) => item.reviewRole)).toEqual(["senior_management", "construction_procurement_manager"]);
+    h.updateItem(1, "reviewRole", "general_maintenance_manager");
+    expect(h.items.map((item: any) => item.reviewRole)).toEqual(["senior_management", "general_maintenance_manager"]);
+    const roleSelect = itemContext.match(/<Select value=\{item.reviewRole\}[^>]*>/)?.[0];
+    expect(roleSelect).toBeDefined();
+    expect(roleSelect).not.toContain("disabled");
+  });
+
+  it.each(["replacement", "material"])("keeps %s source identity/quantity while defaulting its new construction item department", sourceKind => {
+    const h = harness([], { defaultReviewRole: "construction_procurement_manager", isReturnReplacement: sourceKind === "replacement",
+      hasMaterialPurchaseContext: sourceKind === "material", params: new URLSearchParams("returnItemName=Replacement&returnUnit=piece&siteId=1&sectionId=11"),
+      returnCatalogItemId: 900, returnQuantity: 2, materialCatalogItemId: 800, materialItemName: "Material", materialUnit: "piece",
+      materialTaskNumber: "PM-1", materialItemCode: "800", materialPurchaseTotalUnits: 3, materialMinimumPurchaseUnits: 3 });
+    h.emptyItem = evaluate(initializers.get("emptyItem")!, h);
+    const initializer = [...initializers].find(([name]) => name.includes("items, setItems"))![1];
+    const [created] = evaluate(initializer, { ...h, useState: (init: any) => [init(), vi.fn()] });
+    expect(created[0]).toMatchObject({ reviewRole: "construction_procurement_manager", sourceType: "catalog", unit: "piece",
+      catalogItemId: sourceKind === "replacement" ? 900 : 800, quantity: sourceKind === "replacement" ? 2 : 3 });
+  });
+
+  it("fills the new-order default after auth arrives without overwriting choices or draft data", () => {
+    const effect = effects.find(text => text.includes("if (draftId || !defaultReviewRole)"))!;
+    const h = harness([fixture({ reviewRole: "" }), fixture({ reviewRole: "senior_management" })], { defaultReviewRole: "" });
+    evaluate(effect, h)();
+    expect(h.items[0].reviewRole).toBe("");
+    h.defaultReviewRole = "construction_procurement_manager";
+    evaluate(effect, h)();
+    expect(h.items.map((item: any) => item.reviewRole)).toEqual(["construction_procurement_manager", "senior_management"]);
+    h.updateItem(0, "reviewRole", "general_maintenance_manager");
+    evaluate(effect, h)();
+    expect(h.items[0].reviewRole).toBe("general_maintenance_manager");
+    const saved = harness([fixture({ reviewRole: "" }), fixture()], { draftId: 50, defaultReviewRole: "construction_procurement_manager" });
+    const before = structuredClone(saved.items);
+    evaluate(effect, saved)();
+    expect(saved.items).toEqual(before);
+  });
+
   it("removes the header inputs while keeping independent context on every item", () => {
     expect(source).not.toContain("t.purchaseOrders.requestContext");
     expect(source).not.toContain('id="purchase-site"');

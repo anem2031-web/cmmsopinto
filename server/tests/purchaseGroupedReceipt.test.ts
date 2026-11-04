@@ -5,7 +5,7 @@ import { router } from "../routers/_shared/procedures";
 const f = vi.hoisted(() => ({
   orders: [] as any[], items: [] as any[], receipts: [] as any[], lines: [] as any[],
   lots: [] as any[], movements: [] as any[], inventory: [] as any[], reads: [] as any[],
-  failLot: false, changeAtLock: false, tx: null as any,
+  failLot: false, changeAtLock: false, lotsEnabled: true, tx: null as any,
 }));
 // No environment, connection pool, OCR, network or live DB is loaded.
 vi.mock("../_core/db/client", () => ({ getDb: async () => { throw Error("live database forbidden"); } }));
@@ -14,7 +14,7 @@ vi.mock("../_core/ai-response-cache", () => ({ withAiResponseCache: vi.fn() }));
 vi.mock("../services/ocr/invoiceOcr.service", () => ({ analyzeInvoiceFromUrl: vi.fn(), analyzeInvoiceFromBase64: vi.fn() }));
 vi.mock("../_core/catalog-unit-governance", () => ({ getActiveCatalogUnitCanonicalName: async (unit: string) => unit }));
 vi.mock("../_core/inventory-lots", () => ({
-  isInventoryLotsEnabled: () => true,
+  isInventoryLotsEnabled: () => f.lotsEnabled,
   createReceiptInventoryLot: async (data: any) => {
     if (f.failLot && f.lots.length === 1) throw Error("second lot failed");
     f.lots.push(data);
@@ -49,7 +49,11 @@ function txFixture() {
     // The existing supplier-return gate probes the database name even for an
     // ordinary receipt. Keep this fixture outside that unrelated workflow.
     execute: async (query:any) => {
-      if(dialect.sqlToQuery(query).sql.includes("SELECT DATABASE()")) return [[{databaseName:"isolated_receipt_fixture"}]];
+      const statement = dialect.sqlToQuery(query);
+      if(statement.sql.includes("SELECT DATABASE()")) return [[{databaseName:"isolated_receipt_fixture"}]];
+      if (/SELECT id FROM purchase_order_items/.test(statement.sql) && statement.sql.includes("reviewRole=")) {
+        return [f.items.filter(item => statement.params.includes(item.id) && item.reviewRole === "construction_procurement_manager").slice(0, 1).map(item => ({ id: item.id })), []];
+      }
       throw Error("unexpected raw query in isolated grouped receipt fixture");
     },
     select(fields: any) {
@@ -81,9 +85,23 @@ const input=()=>({purchaseOrderId:1,purchaseOrderIds:[1,2],sourceInvoiceNumber:'
 beforeEach(()=>{
   f.orders=[{id:1,poNumber:'PR-A',status:'received'},{id:2,poNumber:'PR-B',status:'received'}];
   f.items=[{id:11,purchaseOrderId:1,status:'delivered_to_warehouse',supplierInvoiceNumber:'SAME-INVOICE',catalogItemId:100,unit:'قطعة',quantity:1},{id:22,purchaseOrderId:2,status:'delivered_to_warehouse',supplierInvoiceNumber:'SAME-INVOICE',catalogItemId:100,unit:'قطعة',quantity:1}];
-  f.receipts=[];f.lines=[];f.lots=[];f.movements=[];f.inventory=[];f.reads=[];f.failLot=false;f.changeAtLock=false;f.tx=txFixture();
+  f.receipts=[];f.lines=[];f.lots=[];f.movements=[];f.inventory=[];f.reads=[];f.failLot=false;f.changeAtLock=false;f.lotsEnabled=true;f.tx=txFixture();
 });
 describe('real grouped receipt writer on disposable transactional data',()=>{
+  it('refuses a construction receipt before any stock/header write if lot tracking is disabled',async()=>{
+    f.lotsEnabled=false;
+    f.items[1].reviewRole='construction_procurement_manager';
+    const items=structuredClone(f.items),orders=structuredClone(f.orders);
+    await expect(caller().warehouseReceiptsV2.receiveFromPurchaseV2(input())).rejects.toMatchObject({code:'BAD_REQUEST'});
+    expect([f.receipts.length,f.lines.length,f.lots.length,f.movements.length,f.inventory.length]).toEqual([0,0,0,0,0]);
+    expect(f.items).toEqual(items); expect(f.orders).toEqual(orders);
+  });
+  it('preserves ordinary grouped receipt behavior when optional lot tracking is disabled',async()=>{
+    f.lotsEnabled=false;
+    await caller().warehouseReceiptsV2.receiveFromPurchaseV2(input());
+    expect(f.receipts).toHaveLength(1); expect(f.lines).toHaveLength(2);
+    expect(f.movements).toHaveLength(2); expect(f.lots).toEqual([]);
+  });
   it('saves both source links, lots and movements in one invoice without rewriting their parent',async()=>{
     const saved=await caller().warehouseReceiptsV2.receiveFromPurchaseV2(input());
     expect(saved.lotLabels).toHaveLength(2);

@@ -50,6 +50,7 @@ import { getDb } from "./client";
 import { getInventoryItemById, getUserById } from "./deletes";
 import { calculateMovementTotal, normalizeInventoryQuantity } from "../inventory-costing";
 import { consumeInventoryLotForIssue, isInventoryLotsEnabled, resolveInventoryLotForDisposal } from "../inventory-lots";
+import { assertNoSpecificationAggregateBypass } from "../../services/purchase-specification-guards";
 
 export async function getNextReceiptNumber(tx?: any): Promise<string> {
   const db = tx || await getDb();
@@ -172,6 +173,7 @@ async function issueDisposalWith(writer: any, disposalOperationId: number): Prom
 
     const inv: any = invRows[0];
     if (!inv) throw new Error(`الصنف رقم ${item.inventoryId} غير موجود في المخزون`);
+    await assertNoSpecificationAggregateBypass(writer, item.inventoryId);
     if (qty > Number(inv.quantity || 0)) {
       throw new Error(`الكمية المطلوب استبعادها (${qty}) أكبر من الرصيد المتاح (${inv.quantity}) للصنف "${inv.itemName}"`);
     }
@@ -342,6 +344,7 @@ export async function createDisposal(params: {
         inventoryCatalogItemId: initialInv.linkedItemId ?? null,
         quantity: qty,
         actionLabel: "الاستبعاد",
+        specificationMovementKind: "disposal",
       });
 
       // بعد حجز رصيد الـLot نقفل Aggregate Inventory ونقرأ الرصيد/التكلفة

@@ -295,7 +295,7 @@ describe("direct book RPC grants preserve existing roles", () => {
       expect(canShowCatalogBook({ role, isActive: 1 })).toBe(false);
   });
 });
-function issuePort() {
+function issuePort(specificationById: Record<number, "pending" | "approved" | "rejected" | null> = {}) {
   const actor = { id: 5, role: "admin", isActive: 1 };
   let stored: any = null,
     writes: any[] = [];
@@ -316,6 +316,8 @@ function issuePort() {
             return [stored ? [{ newValues: stored }] : []];
           if (parsed.sql.includes("SELECT id FROM inventory"))
             return [[{ id: 101 }, { id: 102 }]];
+          if (parsed.sql.startsWith("SELECT id,specificationStatus FROM inventory_lots"))
+            return [parsed.params.map(id => ({ id, specificationStatus: specificationById[Number(id)] ?? null }))];
           if (parsed.sql.includes("JOIN inventory_lot_balances"))
             return [
               [
@@ -526,6 +528,12 @@ describe("book delivery orchestration", () => {
     expect(
       port.calls.filter(call => call.sql.includes("FOR UPDATE")).length
     ).toBeGreaterThan(2);
+  });
+  it("skips an older held construction receipt while allowing approved older stock in the same book", async () => {
+    const port = issuePort({ 1: "pending", 2: "approved" });
+    const write = vi.fn(async (line: any) => { port.add(line); return {}; });
+    await issueInventoryBook(port.database, issueInput(), 5, write);
+    expect(port.writes().map(line => [line.inventoryId, line.deliveryQty])).toEqual([[102, 7]]);
   });
   it("rolls back all earlier lines and never fires post-commit work when a later lot becomes unavailable", async () => {
     const port = issuePort();

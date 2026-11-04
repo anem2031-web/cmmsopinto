@@ -241,7 +241,7 @@ export async function loadExecution(
       // item's physically received lots in the single active main warehouse.
       const [receipt] = await selectRows(
         tx,
-        sql`SELECT COALESCE(SUM(b.quantity),0) AS quantity FROM inventory_lots l INNER JOIN inventory_lot_balances b ON b.lotId=l.id INNER JOIN inventory v ON v.id=b.inventoryId INNER JOIN warehouses w ON w.id=v.warehouseId WHERE l.purchaseOrderItemId=${num(s.sourceId)} AND w.type='main' AND w.isActive=1 AND (SELECT COUNT(*) FROM warehouses WHERE type='main' AND isActive=1)=1`
+        sql`SELECT COALESCE(SUM(b.quantity),0) AS quantity FROM inventory_lots l INNER JOIN inventory_lot_balances b ON b.lotId=l.id INNER JOIN inventory v ON v.id=b.inventoryId INNER JOIN warehouses w ON w.id=v.warehouseId WHERE l.purchaseOrderItemId=${num(s.sourceId)} AND w.type='main' AND w.isActive=1 AND (SELECT COUNT(*) FROM warehouses WHERE type='main' AND isActive=1)=1 AND (l.specificationStatus IS NULL OR l.specificationStatus='approved')`
       );
       if (num(receipt?.quantity) >= num(s.linkedQuantity))
         s.status = "received";

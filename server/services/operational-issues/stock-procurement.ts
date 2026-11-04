@@ -50,7 +50,7 @@ export async function loadOperationalStock(tx: any, lines: OperationalLine[], lo
     FROM inventory i INNER JOIN warehouses w ON (w.id=i.warehouseId OR (i.warehouseId IS NULL AND w.id=(SELECT MIN(m.id) FROM warehouses m WHERE m.type='main' AND m.isActive=1)))
     WHERE i.linkedItemId IN (${catalogIds}) AND i.isFrozen=0 AND w.isActive=1 ${warehouseId ? sql`AND w.id=${warehouseId}` : sql``} ORDER BY i.id ${lock ? sql`FOR UPDATE` : sql``}`);
   const lots = await rows(tx, sql`SELECT b.inventoryId,b.quantity,l.id AS lotId,l.catalogItemId,l.lotCode,l.trackingToken,
-    l.issueUnit,l.issueUnitCost,l.remainingQuantity,l.createdAt AS receivedAt
+    l.issueUnit,l.issueUnitCost,l.remainingQuantity,l.createdAt AS receivedAt,l.specificationStatus
     FROM inventory_lot_balances b INNER JOIN inventory_lots l ON l.id=b.lotId
     INNER JOIN inventory i ON i.id=b.inventoryId WHERE i.linkedItemId IN (${catalogIds}) AND b.quantity>0 ORDER BY l.createdAt,l.id,b.inventoryId`);
   return lines.map(line => {
@@ -60,16 +60,21 @@ export async function loadOperationalStock(tx: any, lines: OperationalLine[], lo
       || (Number(i.quantity) > 0 && String(i.unit || "").trim() !== line.unit.trim())
       || (Number(i.quantity) <= 0 && lots.some(lot => Number(lot.inventoryId) === Number(i.id))));
     const choices: OperationalStock["lots"] = [];
+    let specificationHeldQuantity = 0;
     for (const inventory of stock) {
       const balances = lots.filter(lot => Number(lot.inventoryId) === Number(inventory.id));
       let covered = 0;
       for (const lot of balances) {
+        covered += Number(lot.quantity);
+        if (lot.specificationStatus === "pending" || lot.specificationStatus === "rejected") {
+          if (String(inventory.unit || "").trim() === line.unit.trim()) specificationHeldQuantity += Number(lot.quantity);
+          continue;
+        }
         const valid = Number(lot.catalogItemId) === Number(line.catalogItemId)
           && String(lot.issueUnit || inventory.unit || "").trim() === line.unit.trim()
           && String(inventory.unit || "").trim() === line.unit.trim()
           && lot.issueUnitCost != null && lot.issueUnitCost !== "" && Number.isFinite(Number(lot.issueUnitCost)) && Number(lot.issueUnitCost) >= 0 && Boolean(lot.trackingToken)
           && Number(lot.remainingQuantity) >= Number(lot.quantity);
-        covered += Number(lot.quantity);
         if (!valid) { needsReview = true; continue; }
         choices.push({ inventoryId: Number(inventory.id), warehouseId: Number(inventory.warehouseId),
           warehouseNameAr: String(inventory.warehouseNameAr), warehouseNameEn: inventory.warehouseNameEn || null,
@@ -86,7 +91,7 @@ export async function loadOperationalStock(tx: any, lines: OperationalLine[], lo
     }
     if (choices.some(choice => identities.get(`${choice.warehouseId}:${choice.trackingToken}`)! > 1)) needsReview = true;
     return { itemId: Number(line.id), unit: line.unit,
-      totalQuantity: Number(stock.filter(i => String(i.unit || "").trim() === line.unit.trim()).reduce((sum, i) => sum + Number(i.quantity), 0).toFixed(3)),
+      totalQuantity: Number(Math.max(0, stock.filter(i => String(i.unit || "").trim() === line.unit.trim()).reduce((sum, i) => sum + Number(i.quantity), 0) - specificationHeldQuantity).toFixed(3)),
       lots: choices.filter(choice => identities.get(`${choice.warehouseId}:${choice.trackingToken}`) === 1), needsReview, purchase: null };
   });
 }

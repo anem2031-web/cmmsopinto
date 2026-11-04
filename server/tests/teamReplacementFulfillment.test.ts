@@ -16,6 +16,7 @@ function fixture() {
   const writes: any[] = [];
   const tx = { execute: async (q: any) => {
     const { sql: text, params } = dialect.sqlToQuery(q);
+    if (text.startsWith("SELECT id,specificationStatus FROM inventory_lots")) return [params.map(id => ({ id, specificationStatus: null }))];
     if (text.startsWith("SELECT c.id,c.isActive")) return [params.map(id => ({ id, isActive: facts.active ? 1 : 0, inactiveUnit: 0 }))];
     if (text.startsWith("SELECT id,isActive FROM warehouses")) return [[{ id: params[0], isActive: 1 }]];
     if (text.startsWith("SELECT id,quantity,issueUnit")) return [[params[1] === 12

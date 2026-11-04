@@ -30,6 +30,7 @@ import { getPurchaseReceiptContext, lockAndValidatePurchaseReceiptItems, receipt
 import { createPurchaseReceiptContextProcedure } from "./purchaseReceiptContext.procedure";
 import { readRows, trialEnabled } from "../../supplier-return-followup/runtime";
 import { linkReplacementReceipt } from "../../supplier-return-followup/receipt-bridge";
+import { assertSpecificationReceiptTracking } from "../../services/purchase-specifications";
 
 // ─── مخطط الصنف المستلم ─────────────────────────────────────
 const receivedItemSchema = z.object({
@@ -560,6 +561,7 @@ export const receiptsV2Router = router({
       const lotsEnabled = isInventoryLotsEnabled();
       const { receiptId, receiptNumber, processedItems } = await db.withTransaction(async (tx) => {
         await lockAndValidatePurchaseReceiptItems(tx, input.purchaseOrderId, input.items, input.purchaseOrderIds, input.sourceInvoiceNumber);
+        await assertSpecificationReceiptTracking(tx, input.items.map(item => item.purchaseOrderItemId).filter((id): id is number => id != null), lotsEnabled);
         const replacementItemIds = await trialEnabled(tx)
           ? new Set((await readRows(tx, sql`SELECT purchaseOrderItemId FROM supplier_return_replacement_plans
               WHERE purchaseOrderId IN (${sql.join(receiptOrderIds.map(id => sql`${id}`), sql`,`)}) AND purchaseOrderItemId IS NOT NULL`))

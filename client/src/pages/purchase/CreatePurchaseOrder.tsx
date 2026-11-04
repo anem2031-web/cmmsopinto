@@ -66,7 +66,7 @@ type PurchaseFormErrors = {
 
 const emptyPurchaseFormErrors = (): PurchaseFormErrors => ({ items: {} });
 
-const emptyItem = (defaultUnit = "", context: Partial<Pick<ItemForm, "siteId" | "sectionId" | "assetId" | "categoryId">> = {}): ItemForm => ({
+const emptyItem = (defaultUnit = "", context: Partial<Pick<ItemForm, "siteId" | "sectionId" | "assetId" | "categoryId">> = {}, reviewRole: PurchaseReviewRole | "" = ""): ItemForm => ({
   sourceType: "catalog",
   catalogItemId: null,
 
@@ -83,7 +83,7 @@ const emptyItem = (defaultUnit = "", context: Partial<Pick<ItemForm, "siteId" | 
   sectionId: context.sectionId || "",
   assetId: context.assetId || "",
   categoryId: context.categoryId || "",
-  reviewRole: "",
+  reviewRole,
   _contextTouched: {},
 });
 
@@ -93,6 +93,7 @@ export default function CreatePurchaseOrder() {
   const [, setLocation] = useLocation();
   const { t, language, dir } = useTranslation();
   const { user } = useAuth();
+  const defaultReviewRole: PurchaseReviewRole | "" = user?.role === "construction_procurement_manager" ? "construction_procurement_manager" : "";
   const searchStr = useSearch();
   const params = new URLSearchParams(searchStr);
   const supplierReturnPlanId = Number(params.get("supplierReturnPlanId"));
@@ -308,7 +309,7 @@ export default function CreatePurchaseOrder() {
         sectionId: params.get("itemSectionId") || params.get("sectionId") || "",
         assetId: params.get("itemAssetId") || params.get("assetId") || "",
         categoryId: params.get("itemCategoryId") || params.get("categoryId") || "",
-      }), sourceType: Number.isSafeInteger(returnCatalogItemId) && returnCatalogItemId > 0 ? "catalog" : "manual",
+      }, defaultReviewRole), sourceType: Number.isSafeInteger(returnCatalogItemId) && returnCatalogItemId > 0 ? "catalog" : "manual",
       catalogItemId: Number.isSafeInteger(returnCatalogItemId) && returnCatalogItemId > 0 ? returnCatalogItemId : null,
       itemName: params.get("returnItemName") || "", quantity: Number.isFinite(returnQuantity) && returnQuantity > 0 ? returnQuantity : 1,
       photoUrls: params.get("returnPhotoUrl") ? [params.get("returnPhotoUrl")!] : [],
@@ -317,7 +318,7 @@ export default function CreatePurchaseOrder() {
     ? [{
         sourceType: "catalog",
         catalogItemId: materialCatalogItemId!,
-        reviewRole: "",
+        reviewRole: defaultReviewRole,
         itemName: materialItemName,
         description: "",
         quantity: materialPurchaseTotalUnits,
@@ -331,7 +332,16 @@ export default function CreatePurchaseOrder() {
         categoryId: "",
         _contextTouched: {},
       }]
-    : [emptyItem("", initialContext)]);
+    : [emptyItem("", initialContext, defaultReviewRole)]);
+
+  // Auth may finish loading after the form mounts. Fill only an unselected
+  // department on a new order; saved draft choices and user selections survive.
+  useEffect(() => {
+    if (draftId || !defaultReviewRole) return;
+    setItems(prev => prev.some(item => !item.reviewRole)
+      ? prev.map(item => item.reviewRole ? item : { ...item, reviewRole: defaultReviewRole })
+      : prev);
+  }, [draftId, defaultReviewRole]);
 
   const canReadCatalogStock = canRoleAccessPath(user?.role, "/inventory");
   const stockCatalogItemIds = useMemo(() => Array.from(new Set(items
@@ -1174,7 +1184,7 @@ const handleCatalogSelect = (catalogItem: any) => {
 {!hasMaterialPurchaseContext && !isReturnReplacement && (
   <Button
     variant="outline"
-    onClick={() => setItems(prev => [...prev, emptyItem("", prev[0] || initialContext)])}
+    onClick={() => setItems(prev => [...prev, emptyItem("", prev[0] || initialContext, defaultReviewRole)])}
     className="w-full gap-2 border-dashed h-12"
   >
     <Plus className="w-4 h-4" /> {t.common.add}

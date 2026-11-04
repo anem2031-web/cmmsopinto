@@ -115,6 +115,16 @@ describe("Operational catalog availability and original physical lots", () => {
 });
 
 describe("Zero-stock requirement → existing purchase draft", () => {
+  it.each(["pending", "rejected"])("withholds %s construction lots without reporting a false balance mismatch or hiding ordinary lots", async specificationStatus => {
+    const f = fixture();
+    f.state().inventories.push(inventory(1, 5));
+    f.state().lots.push({ ...lot(1, 10, 2), specificationStatus }, { ...lot(1, 11, 3), specificationStatus: null });
+    const stock = (await f.service.availability(warehouse, 1)).items[0];
+    expect(stock.totalQuantity).toBe(3);
+    expect(stock.needsReview).toBe(false);
+    expect(stock.lots.map((entry: any) => entry.lotId)).toEqual([11]);
+    expect(f.state().inventories[0].quantity).toBe(5);
+  });
   it("retains the prepared line's site/section in its purchase draft and link comparison", async () => {
     const f = fixture();
     f.state().items[1].dispatchContext = JSON.stringify({version:1,warehouseId:1,warehouseName:"Main",siteId:3,siteName:"Site3",sectionId:4,sectionName:"Section4",collectorId:101,collectorName:"Technician",source:"catalog"});

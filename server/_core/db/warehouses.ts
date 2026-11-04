@@ -21,6 +21,7 @@ import { getDb, withTransaction } from "./client";
 import { addInventoryTransactionV2, createInventoryItemV2, updateInventoryItemV2 } from "./warehouse-returns";
 import { calculateMovementTotal, calculateMovingWeightedAverage, normalizeInventoryQuantity } from "../inventory-costing";
 import { isInventoryLotsEnabled, moveInventoryLotBalanceForTransfer } from "../inventory-lots";
+import { assertNoSpecificationAggregateBypass } from "../../services/purchase-specification-guards";
 
 // ─────────────────────────────────────────────────────────────
 // المخازن — قراءة
@@ -214,6 +215,7 @@ export async function createWarehouseTransfer(params: {
       await tx.select().from(inventory).where(eq(inventory.id, params.fromInventoryId)).limit(1)
     )[0];
     if (!source) throw new Error("الصنف غير موجود");
+    if (!lotsEnabled) await assertNoSpecificationAggregateBypass(tx, params.fromInventoryId);
     if (source.warehouseId !== params.fromWarehouseId) {
       throw new Error("هذا الصنف لا ينتمي للمخزن المصدر المحدد");
     }

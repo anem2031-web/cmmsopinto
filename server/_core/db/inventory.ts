@@ -52,6 +52,7 @@ import { getDb } from "./client";
 import { calculateInventoryValue, calculateMovementTotal, normalizeInventoryQuantity } from "../inventory-costing";
 import { operationalIssuesEnabled } from "../../services/operational-issues/feature";
 import { activeBookStockUnit } from "../inventory-book-policy";
+import { assertNoSpecificationAggregateBypass } from "../../services/purchase-specification-guards";
 
 // ============================================================
 // INVENTORY
@@ -327,36 +328,44 @@ export async function addInventoryTransaction(data: any) {
   const db = await getDb();
   if (!db) return;
 
-  const item = await db.select().from(inventory).where(eq(inventory.id, data.inventoryId)).limit(1);
-  if (!item[0]) return;
+  const executeMovement = async (writer: any) => {
+    if (data.type === "out") {
+      await writer.execute(sql`SELECT id FROM inventory WHERE id=${data.inventoryId} FOR UPDATE`);
+      await assertNoSpecificationAggregateBypass(writer, data.inventoryId);
+    }
 
-  const currentQty = normalizeInventoryQuantity(Number(item[0].quantity || 0));
-  const averageCost = parseFloat((item[0] as any).averageCost || "0");
-  const movementQuantity = normalizeInventoryQuantity(Number(data.quantity));
-  const rawNewQty = data.type === "in"
-    ? currentQty + movementQuantity
-    : currentQty - movementQuantity;
-  // نحافظ على السلوك القديم في هذه المرحلة (عدم النزول تحت صفر)،
-  // ونوحد فقط القيمة المحاسبية للحركة والرصيد.
-  const newQty = normalizeInventoryQuantity(Math.max(0, rawNewQty));
-  const movementUnitCost = data.unitCost != null
-    ? parseFloat(String(data.unitCost))
-    : averageCost;
-  const movementTotalCost = data.totalCost != null
-    ? parseFloat(String(data.totalCost))
-    : calculateMovementTotal(movementQuantity, movementUnitCost);
+    const item = await writer.select().from(inventory).where(eq(inventory.id, data.inventoryId)).limit(1);
+    if (!item[0]) return;
 
-  await db.insert(inventoryTransactions).values({
-    ...data,
-    quantity: movementQuantity,
-    unitCost: movementUnitCost.toFixed(4),
-    totalCost: movementTotalCost.toFixed(2),
-  });
+    const currentQty = normalizeInventoryQuantity(Number(item[0].quantity || 0));
+    const averageCost = parseFloat((item[0] as any).averageCost || "0");
+    const movementQuantity = normalizeInventoryQuantity(Number(data.quantity));
+    const rawNewQty = data.type === "in"
+      ? currentQty + movementQuantity
+      : currentQty - movementQuantity;
+    // نحافظ على السلوك القديم في هذه المرحلة (عدم النزول تحت صفر)،
+    // ونوحد فقط القيمة المحاسبية للحركة والرصيد.
+    const newQty = normalizeInventoryQuantity(Math.max(0, rawNewQty));
+    const movementUnitCost = data.unitCost != null
+      ? parseFloat(String(data.unitCost))
+      : averageCost;
+    const movementTotalCost = data.totalCost != null
+      ? parseFloat(String(data.totalCost))
+      : calculateMovementTotal(movementQuantity, movementUnitCost);
 
-  await db.update(inventory).set({
-    quantity: newQty,
-    totalCostValue: calculateInventoryValue(newQty, averageCost).toFixed(2),
-  } as any).where(eq(inventory.id, data.inventoryId));
+    await writer.insert(inventoryTransactions).values({
+      ...data,
+      quantity: movementQuantity,
+      unitCost: movementUnitCost.toFixed(4),
+      totalCost: movementTotalCost.toFixed(2),
+    });
+
+    await writer.update(inventory).set({
+      quantity: newQty,
+      totalCostValue: calculateInventoryValue(newQty, averageCost).toFixed(2),
+    } as any).where(eq(inventory.id, data.inventoryId));
+  };
+  return data.type === "out" ? db.transaction(executeMovement) : executeMovement(db);
 }
 
 export async function getInventoryByBarcode(code: string) {

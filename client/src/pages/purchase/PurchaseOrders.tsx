@@ -2,6 +2,7 @@ import { PricingBundleLink, PricingBundleAddButton } from "@/components/purchase
 import { DelegateSupplyRows } from "@/components/purchase/DelegateSupplyRows";
 import { DelegateCompletedItems, completedLabels } from "@/components/purchase/DelegateCompletedItems";
 import { SupplierReturns } from "@/components/purchase/SupplierReturns";
+import { SpecificationReviewList } from "@/components/purchase/PurchaseSpecifications";
 import { BundleApprovalCards } from "@/components/purchase/UnifiedBundleApproval";
 import { trpc } from "@/lib/trpc";
 import { isRoutedPurchaseItem, canReviewPurchaseItem } from "@shared/purchase-item-review";
@@ -63,7 +64,7 @@ type PurchaseOrdersHistoryState = {
   requestedById: string;
   searchQuery: string;
   currentPage: number;
-  view: "actionable" | "items" | "tracking" | "supply" | "completed" | "returns" | "all";
+  view: "actionable" | "items" | "tracking" | "supply" | "completed" | "returns" | "specifications" | "all";
 };
 
 type DelegateActionFilter = "all" | "estimate" | "purchase";
@@ -126,11 +127,22 @@ export default function PurchaseOrders() {
   // ── عرض "بانتظار إجرائي" مقابل "جميع الطلبات" ──
   // مدير الصيانة دوره إشرافي ويتابع جميع الطلبات بغض النظر عن منشئها، لذلك
   // يبدأ من العرض الكامل. المندوب يبدأ بأصنافه، وبقية الأدوار تبدأ بانتظار إجرائها.
-  const [selectedView, setView] = useState<"actionable" | "items" | "tracking" | "supply" | "completed" | "returns" | "all">(savedHistoryState?.view ?? "actionable");
+  const [selectedView, setView] = useState<"actionable" | "items" | "tracking" | "supply" | "completed" | "returns" | "specifications" | "all">(savedHistoryState?.view ?? "actionable");
+  const canReviewSpecifications = ["construction_procurement_manager", "admin", "owner"].includes(user?.role || "");
+  const [specificationPage, setSpecificationPage] = useState(1);
+  const specifications = trpc.purchaseSpecifications.list.useQuery({ page: specificationPage, pageSize: PAGE_SIZE }, { enabled: canReviewSpecifications, retry: false, ...independentReadOptions });
+  useEffect(() => {
+    if (!specifications.data) return;
+    const lastPage = Math.max(1, Math.ceil(specifications.data.total / PAGE_SIZE));
+    if (specificationPage > lastPage) setSpecificationPage(lastPage);
+  }, [specifications.data?.total, specificationPage]);
   // Old saved views remain valid for other roles; delegates enter their existing item queue.
   const canViewReturns = ["delegate", "admin", "owner", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "it_manager", "purchase_manager", "accountant", "senior_management", "executive_director", "user", "operator", "technician", "it_member", "supervisor", "purchase_requester", "food_warehouse_manager", "food_warehouse_assistant"].includes(user?.role || "");
   const returnStatus = trpc.supplierReturns.status.useQuery(undefined, { enabled: canViewReturns });
   const view = user?.role === "delegate" && selectedView !== "items" && selectedView !== "supply" && selectedView !== "completed" && selectedView !== "returns" ? "items" : selectedView;
+  useEffect(() => {
+    if (view === "specifications" && user?.role && !canReviewSpecifications) setView("actionable");
+  }, [view, user?.role, canReviewSpecifications]);
   useEffect(() => {
     if (["maintenance_manager", "general_maintenance_manager", "construction_procurement_manager"].includes(user?.role || "")) {
       setView("all");
@@ -724,7 +736,9 @@ export default function PurchaseOrders() {
 
       <PricingBundleLink />
       {/* ── ملخص + تبويبات العرض ─────────────────────────────────── */}
-      {view === "items" && isDelegatePricingActionRole ? (
+      {view === "specifications" && canReviewSpecifications ? (
+        <p className="text-base font-medium">مطابقة المواصفات ({specifications.data?.total || 0})</p>
+      ) : view === "items" && isDelegatePricingActionRole ? (
         delegateActionableItemsLoading ? (
           <Skeleton className="h-6 w-64" />
         ) : (
@@ -809,6 +823,7 @@ export default function PurchaseOrders() {
         )}
         {user?.role === "delegate" && <Button variant={view === "completed" ? "default" : "outline"} size="sm" onClick={() => setView("completed")}>{completedLabels[language].title}</Button>}
         {canViewReturns && returnStatus.data?.enabled && <Button variant={view === "returns" ? "default" : "outline"} size="sm" onClick={() => setView("returns")}>المرتجعات</Button>}
+        {canReviewSpecifications && <Button variant={view === "specifications" ? "default" : "outline"} size="sm" onClick={() => setView("specifications")}>مطابقة المواصفات ({specifications.data?.total || 0})</Button>}
         {user?.role !== "delegate" && <Button
           variant={view === "all" ? "default" : "outline"}
           size="sm"
@@ -817,6 +832,8 @@ export default function PurchaseOrders() {
           {t.workflow.purchase.allOrdersTab}
         </Button>}
       </div>
+
+      {view === "specifications" && canReviewSpecifications && <SpecificationReviewList data={specifications.data} isLoading={specifications.isLoading} error={specifications.error} page={specificationPage} onPageChange={setSpecificationPage} onDecisionSaved={() => { void utils.purchaseSpecifications.invalidate(); }} />}
 
       {/* ── قائمة "بانتظار إجرائي" ────────────────────────────────── */}
       {view === "actionable" && (

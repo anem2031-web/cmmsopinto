@@ -203,7 +203,7 @@ export const catalogReferenceReadProcedure = roleMiddleware([
 /**
  * Standalone Catalog management policy (2B-10):
  * - owner/admin: always allowed by roleMiddleware
- * - senior management: full Catalog functionality by explicit module grant
+ * - senior management: granted Catalog operations; settings remain owner/admin only
  * - maintenance manager / general maintenance manager / construction-procurement manager:
  *   day-to-day Catalog management
  * - remaining roles: no Catalog management mutations

@@ -11,6 +11,8 @@ import {
   inventorySettlements,
 } from "../../drizzle/schema";
 import { normalizeInventoryQuantity } from "./inventory-costing";
+import { assertSpecificationLotMovement, type SpecificationMovementKind } from "../services/purchase-specification-guards";
+import { receiptSpecificationFields } from "../services/purchase-specifications";
 
 export type InventoryLotSourceType = "receipt" | "opening_balance";
 
@@ -141,6 +143,7 @@ async function insertLotWithInitialBalance(params: {
   batchNumber?: string | null;
   expiryDate?: string | Date | null;
   createdById: number;
+  specificationStatus?: "pending" | null;
 }): Promise<InventoryLotIdentity> {
   const quantity = normalizeInventoryQuantity(params.originalQuantity);
   if (!(quantity > 0)) throw new Error("كمية الدفعة يجب أن تكون أكبر من صفر");
@@ -172,6 +175,7 @@ async function insertLotWithInitialBalance(params: {
     batchNumber: params.batchNumber?.trim() || null,
     expiryDate: params.expiryDate ? new Date(params.expiryDate) : null,
     createdById: params.createdById,
+    specificationStatus: params.specificationStatus ?? null,
   } as any);
 
   const lotId = Number((result as any).insertId);
@@ -208,8 +212,18 @@ export async function createReceiptInventoryLot(params: {
   expiryDate?: string | Date | null;
   createdById: number;
 }): Promise<InventoryLotIdentity> {
+  const specification = await receiptSpecificationFields(params.tx, {
+    purchaseOrderItemId: params.purchaseOrderItemId,
+    purchaseOrderId: params.purchaseOrderId,
+    receiptId: params.receiptId,
+    receiptItemId: params.receiptItemId,
+    inventoryId: params.inventoryId,
+    createdById: params.createdById,
+    issueQuantity: params.issueQuantity,
+  });
   return insertLotWithInitialBalance({
     ...params,
+    ...specification,
     sourceType: "receipt",
     originalQuantity: params.issueQuantity,
   });
@@ -547,6 +561,8 @@ export async function moveInventoryLotBalanceForTransfer(params: {
     fromWarehouseId: params.fromWarehouseId,
     fromInventoryId: params.fromInventoryId,
   });
+
+  await assertSpecificationLotMovement(params.tx, { lotId: lot.lotId, kind: "transfer" });
 
   await assertInventoryLotMovementAllowedDuringCount({
     tx: params.tx,
@@ -1012,12 +1028,15 @@ export async function consumeInventoryLotForIssue(params: {
   inventoryCatalogItemId?: number | null;
   quantity: number;
   actionLabel?: string;
+  specificationMovementKind?: SpecificationMovementKind;
 }): Promise<InventoryLotIssueResolution> {
   const quantity = normalizeInventoryQuantity(params.quantity);
   const actionLabel = String(params.actionLabel || "الصرف").trim() || "الصرف";
   if (!(quantity > 0)) throw new Error(`كمية ${actionLabel} يجب أن تكون أكبر من صفر`);
 
   const lot = await resolveInventoryLotForIssue(params);
+
+  await assertSpecificationLotMovement(params.tx, { lotId: lot.lotId, kind: params.specificationMovementKind ?? "issue" });
 
   await assertInventoryLotMovementAllowedDuringCount({
     tx: params.tx,

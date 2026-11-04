@@ -152,6 +152,7 @@ export interface Pmv2PurchaseOrderItemRef {
   unit: string | null;
   status: string;
   inventoryReceivedQuantity: number;
+  specificationHeldQuantity?: number;
 }
 
 export type Pmv2MaintenanceTargetRef =
