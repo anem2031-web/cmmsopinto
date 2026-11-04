@@ -31,6 +31,7 @@ import { getLocalizedCatalogDescription, getLocalizedCatalogName, getLocalizedCa
 import { getLocalizedName } from "@/hooks/useTranslatedField";
 import { WarehousePurchaseQuantities } from "../maintenance-teams/WarehousePurchaseQuantities";
 import { MAX_TICKET_PURCHASE_QUANTITY, validWarehouseExtra } from "@shared/maintenance-team-tickets/purchase-quantities";
+import { PURCHASE_REVIEW_ROLES, purchaseReviewRoleSchema, type PurchaseReviewRole } from "@shared/purchase-item-review";
 
 type ItemForm = {
   sourceType: "catalog" | "manual";
@@ -51,12 +52,13 @@ type ItemForm = {
   sectionId: string;
   assetId: string;
   categoryId: string;
+  reviewRole: PurchaseReviewRole | "";
   _contextTouched?: Partial<Record<"siteId" | "sectionId" | "assetId" | "categoryId", boolean>>;
   _catalogNameAr?: string;
   _catalogNameEn?: string;
 };
 
-type ItemValidationField = "itemName" | "quantity" | "deliveryLeadDays" | "unit" | "siteId" | "sectionId" | "categoryId";
+type ItemValidationField = "itemName" | "quantity" | "deliveryLeadDays" | "unit" | "siteId" | "sectionId" | "categoryId" | "reviewRole";
 
 type PurchaseFormErrors = {
   items: Record<number, Partial<Record<ItemValidationField, string>>>;
@@ -81,6 +83,7 @@ const emptyItem = (defaultUnit = "", context: Partial<Pick<ItemForm, "siteId" | 
   sectionId: context.sectionId || "",
   assetId: context.assetId || "",
   categoryId: context.categoryId || "",
+  reviewRole: "",
   _contextTouched: {},
 });
 
@@ -220,6 +223,7 @@ export default function CreatePurchaseOrder() {
       siteId: { field: "siteId", message: itemMessage(t.purchaseOrders.validationSiteRequired, itemIndex) },
       sectionId: { field: "sectionId", message: itemMessage(t.purchaseOrders.validationSectionRequired, itemIndex) },
       categoryId: { field: "categoryId", message: itemMessage(t.purchaseOrders.validationCategoryRequired, itemIndex) },
+      reviewRole: { field: "reviewRole", message: itemMessage(t.purchaseOrders.validationReviewRoleRequired, itemIndex) },
       itemName: { field: "itemName", message: itemMessage(t.purchaseOrders.validationItemNameRequired, itemIndex) },
       quantity: { field: "quantity", message: itemMessage(t.purchaseOrders.validationQuantityInvalid, itemIndex) },
       requiredDate: { field: "deliveryLeadDays", message: itemMessage(t.purchaseOrders.validationDeliveryLeadDays, itemIndex) },
@@ -313,6 +317,7 @@ export default function CreatePurchaseOrder() {
     ? [{
         sourceType: "catalog",
         catalogItemId: materialCatalogItemId!,
+        reviewRole: "",
         itemName: materialItemName,
         description: "",
         quantity: materialPurchaseTotalUnits,
@@ -408,6 +413,7 @@ export default function CreatePurchaseOrder() {
           sectionId: String(i.sectionId ?? draftPO.sectionId ?? ""),
           assetId: String(i.assetId ?? draftPO.assetId ?? ""),
           categoryId: String(i.categoryId ?? draftPO.categoryId ?? ""),
+          reviewRole: purchaseReviewRoleSchema.safeParse(i.reviewRole).success ? i.reviewRole : "",
           _contextTouched: {},
           _existingId: i.id, // نحفظ id الصنف الأصلي
         })));
@@ -444,7 +450,7 @@ export default function CreatePurchaseOrder() {
         ? { _contextTouched: { ...item._contextTouched, [field]: true, ...(field === "siteId" ? { sectionId: true, assetId: true } : field === "sectionId" ? { assetId: true } : {}) } }
         : {}),
     } : item));
-    if (["itemName", "quantity", "deliveryLeadDays", "unit", "siteId", "sectionId", "categoryId"].includes(field)) {
+    if (["itemName", "quantity", "deliveryLeadDays", "unit", "siteId", "sectionId", "categoryId", "reviewRole"].includes(field)) {
       setFormErrors(prev => {
         const current = prev.items[idx];
         if (!current?.[field as ItemValidationField]) return prev;
@@ -522,6 +528,7 @@ const handleCatalogSelect = (catalogItem: any) => {
   const buildItemsPayload = () =>
     purchaseItemsForSubmit().map(i => ({
       catalogItemId: i.catalogItemId,
+      reviewRole: i.reviewRole || null,
       itemName:    i.itemName,
       deliveryLeadDays: i.deliveryLeadDays,
       requiredDate: i.requiredDate || null,
@@ -591,6 +598,7 @@ const handleCatalogSelect = (catalogItem: any) => {
       if (!item.siteId) addItemError(itemIndex, "siteId", itemMessage(t.purchaseOrders.validationSiteRequired, itemIndex));
       if (!item.sectionId) addItemError(itemIndex, "sectionId", itemMessage(t.purchaseOrders.validationSectionRequired, itemIndex));
       if (!item.categoryId) addItemError(itemIndex, "categoryId", itemMessage(t.purchaseOrders.validationCategoryRequired, itemIndex));
+      if (!purchaseReviewRoleSchema.safeParse(item.reviewRole).success) addItemError(itemIndex, "reviewRole", itemMessage(t.purchaseOrders.validationReviewRoleRequired, itemIndex));
       if (!item.itemName.trim()) {
         addItemError(itemIndex, "itemName", itemMessage(t.purchaseOrders.validationItemNameRequired, itemIndex));
       }
@@ -638,6 +646,7 @@ const handleCatalogSelect = (catalogItem: any) => {
       items: (sourceItems as any[]).map(i => ({
         id: i._existingId || undefined,
         catalogItemId: i.catalogItemId ?? null,
+        reviewRole: i.reviewRole || null,
         itemName: i.itemName,
         deliveryLeadDays: i.deliveryLeadDays,
         requiredDate: i.requiredDate || null,
@@ -890,6 +899,14 @@ const handleCatalogSelect = (catalogItem: any) => {
 
       <div className="rounded-md border bg-muted/20 p-3 space-y-3">
         <p className="text-xs font-semibold">{language === "ar" ? "بيانات الصنف" : "Item context"}</p>
+        <div className="space-y-1">
+          <Label htmlFor={`purchase-item-${idx}-reviewRole`}>{t.purchaseOrders.reviewRoleLabel} *</Label>
+          <Select value={item.reviewRole} onValueChange={value => updateItem(idx, "reviewRole", value)}>
+            <SelectTrigger id={`purchase-item-${idx}-reviewRole`} aria-invalid={Boolean(itemErrors.reviewRole)} className={cn(itemErrors.reviewRole && "border-destructive focus:ring-destructive")}><SelectValue placeholder={t.purchaseOrders.reviewRolePlaceholder} /></SelectTrigger>
+            <SelectContent>{PURCHASE_REVIEW_ROLES.map(role => <SelectItem key={role} value={role}>{role === "general_maintenance_manager" ? t.purchaseOrders.reviewRoleGeneral : role === "construction_procurement_manager" ? t.purchaseOrders.reviewRoleConstruction : t.purchaseOrders.reviewRoleOther}</SelectItem>)}</SelectContent>
+          </Select>
+          {itemErrors.reviewRole && <p className="text-xs text-destructive">{itemErrors.reviewRole}</p>}
+        </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div className="space-y-1">
             <Label>{t.tickets.site} *</Label>

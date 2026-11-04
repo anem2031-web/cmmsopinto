@@ -8,6 +8,7 @@ import { supplierReturnDatabaseEnabled } from "../../supplier-return-followup/fe
 import { approvedBundleCondition, approvedBundleSnapshot } from "./approved-document";
 import { initializeUnifiedApproval, unifiedBundleApprovalsEnabled } from "./unified-feature";
 import type { UnifiedApprovalPorts } from "./unified-approval";
+import { isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
 export interface PricingBundlePorts {
   database(): Promise<any>;
   submitPO(poId: number, actor: PricingBundleActor, options: { selectedItemIds: number[]; tx: any; purchasePackageSubmissionId?: number; skipArchive: true; bundleId: number; delegateSignatureSnapshot?: string | null }): Promise<any>;
@@ -89,7 +90,9 @@ export class PricingBundleService {
   }
   private eligible(item: any, actorId: number) { try { assertBundleItemEligible(item, actorId); } catch (error: any) { fail(error.message, "CONFLICT"); } }
   private snapshotRow(item: any): PricingBundleRow {
-    return { id: Number(item.id), purchaseOrderId: Number(item.purchaseOrderId), poNumber: item.poNumber, packageId: item.packageId ?? null, itemName: item.itemName, categoryName: item.categoryName, sectionName: item.sectionName, siteName: item.siteName, siteId: item.siteId ?? null, sectionId: item.sectionId ?? null, ticketId: item.ticketId ?? null, ticketItemId: item.ticketItemId ?? null, quantity: Number(item.quantity), unit: item.unit || "—", estimatedUnitCost: String(item.estimatedUnitCost), estimatedTotalCost: String(item.estimatedTotalCost), supplierName: item.supplierName || "—", delegateId: Number(item.delegateId), status: item.status };
+    return { id: Number(item.id), purchaseOrderId: Number(item.purchaseOrderId), poNumber: item.poNumber, packageId: item.packageId ?? null, itemName: item.itemName, categoryName: item.categoryName, sectionName: item.sectionName, siteName: item.siteName, siteId: item.siteId ?? null, sectionId: item.sectionId ?? null, ticketId: item.ticketId ?? null, ticketItemId: item.ticketItemId ?? null, quantity: Number(item.quantity), unit: item.unit || "—", estimatedUnitCost: String(item.estimatedUnitCost), estimatedTotalCost: String(item.estimatedTotalCost), supplierName: item.supplierName || "—", delegateId: Number(item.delegateId), status: item.status,
+      ...(isRoutedPurchaseItem(item) ? { reviewRole: item.reviewRole, reviewedById: Number(item.reviewedById), reviewedAt: item.reviewedAt instanceof Date ? item.reviewedAt.toISOString() : String(item.reviewedAt || "") } : {}),
+    };
   }
   async list(actor: PricingBundleActor) {
     this.read(actor);
@@ -204,7 +207,13 @@ export class PricingBundleService {
     const links = await rows(tx, sql`SELECT purchaseOrderItemId FROM delegate_pricing_bundle_items WHERE bundleId=${bundle.id} AND removedAt IS NULL ORDER BY purchaseOrderItemId FOR UPDATE`);
     if (links.length === 0 || links.length > PRICING_BUNDLE_LIMIT) fail("الحزمة يجب أن تحتوي من 1 إلى 20 صنفًا");
     const items: PricingBundleRow[] = [];
-    for (const link of links) { const item = await this.source(tx, Number(link.purchaseOrderItemId), true); this.eligible(item, Number(bundle.delegateId)); items.push(this.snapshotRow(item)); }
+    const sources = new Map<number, any>();
+    for (const link of links) { const item = await this.source(tx, Number(link.purchaseOrderItemId), true); this.eligible(item, Number(bundle.delegateId)); sources.set(Number(item.id), item); items.push(this.snapshotRow(item)); }
+    const routedItems = Array.from(sources.values()).filter(isRoutedPurchaseItem);
+    if (routedItems.some(item => !Number.isSafeInteger(Number(item.reviewedById)) || Number(item.reviewedById) <= 0 || !item.reviewedAt)) fail("لم يكتمل توثيق مراجع أحد أصناف الحزمة", "CONFLICT");
+    const reviewerIds = Array.from(new Set(routedItems.map(item => Number(item.reviewedById))));
+    const reviewerRows = reviewerIds.length ? await rows(tx, sql`SELECT id,name FROM users WHERE id IN (${sql.join(reviewerIds.map(id => sql`${id}`), sql`,`)})`) : [];
+    const reviewers = new Map(reviewerRows.map((row: any) => [Number(row.id), row]));
     const [delegate] = await rows(tx, sql`SELECT id,name,signatureUrl FROM users WHERE id=${bundle.delegateId}`);
     const signatures: PricingBundleSnapshot["signatures"] = [];
     // Keep the signature bytes frozen at send, but fetch each distinct image only once.
@@ -216,7 +225,26 @@ export class PricingBundleService {
     };
     for (const poId of Array.from(new Set(items.map(item => item.purchaseOrderId))).sort((a,b) => a-b)) {
       const [po] = await rows(tx, sql`SELECT p.poNumber,r.name AS requesterName,v.name AS reviewerName,p.requestedById AS requesterId,p.reviewedById AS reviewerId,COALESCE(NULLIF(p.requesterSignatureSnapshot,''),r.signatureUrl) AS requesterSignature,COALESCE(NULLIF(p.reviewerSignatureSnapshot,''),v.signatureUrl) AS reviewerSignature FROM purchase_orders p LEFT JOIN users r ON r.id=p.requestedById LEFT JOIN users v ON v.id=p.reviewedById WHERE p.id=${poId}`);
-      signatures.push({ purchaseOrderId: poId, poNumber: po.poNumber, requesterId: po.requesterId == null ? null : Number(po.requesterId), requesterName: po.requesterName || "—", reviewerId: po.reviewerId == null ? null : Number(po.reviewerId), reviewerName: po.reviewerName || "—", requesterSignature: po.requesterSignature || "", reviewerSignature: po.reviewerSignature || "", requesterSource: po.requesterSignature || null, reviewerSource: po.reviewerSignature || null });
+      if (!po) fail("طلب أصناف الحزمة غير موجود", "CONFLICT");
+      const included = items.filter(item => item.purchaseOrderId === poId);
+      const groups = new Map<string, PricingBundleSnapshot["signatures"][number]>();
+      for (const includedItem of included) {
+        const source = sources.get(includedItem.id)!;
+        const routed = isRoutedPurchaseItem(source), reviewer = routed ? reviewers.get(Number(source.reviewedById)) : null;
+        if (routed && !reviewer) fail("مراجع أحد أصناف الحزمة غير موجود", "CONFLICT");
+        const reviewerId = routed ? Number(source.reviewedById) : po.reviewerId == null ? null : Number(po.reviewerId);
+        // A missing signature at review time remains blank; never borrow today's profile signature.
+        const reviewerSource = routed ? source.reviewerSignatureSnapshot || null : po.reviewerSignature || null;
+        const reviewedAt = routed ? includedItem.reviewedAt : undefined;
+        const key = `${reviewerId}|${reviewerSource || ""}|${reviewedAt || ""}`;
+        const previous = groups.get(key);
+        if (previous) { previous.purchaseOrderItemIds?.push(includedItem.id); continue; }
+        groups.set(key, { purchaseOrderId: poId, poNumber: po.poNumber, requesterId: po.requesterId == null ? null : Number(po.requesterId), requesterName: po.requesterName || "—", reviewerId,
+          reviewerName: routed ? reviewer.name || "—" : po.reviewerName || "—", requesterSignature: po.requesterSignature || "", reviewerSignature: reviewerSource || "", requesterSource: po.requesterSignature || null, reviewerSource,
+          ...(routedItems.length ? { purchaseOrderItemIds: [includedItem.id], ...(reviewedAt ? { reviewedAt } : {}) } : {}),
+        });
+      }
+      signatures.push(...Array.from(groups.values()));
     }
     const [delegateSignature, frozenSignatures] = await Promise.all([
       image(delegate.signatureUrl),
@@ -225,7 +253,7 @@ export class PricingBundleService {
         return { ...signature, requesterSignature, reviewerSignature };
       })),
     ]);
-    return { number: bundle.bundleNumber, submittedAt: new Date().toISOString(), delegate: { id: Number(delegate.id), name: delegate.name || "—", signature: delegateSignature, signatureSource: delegate.signatureUrl || null }, rows: items, signatures: frozenSignatures } satisfies PricingBundleSnapshot;
+    return { number: bundle.bundleNumber, submittedAt: new Date().toISOString(), delegate: { id: Number(delegate.id), name: delegate.name || "—", signature: delegateSignature, signatureSource: delegate.signatureUrl || null }, rows: items, signatures: frozenSignatures, ...(routedItems.length ? { reviewSignatureVersion: 2 as const } : {}) } satisfies PricingBundleSnapshot;
   }
   async send(actor: PricingBundleActor, id: number, revision: number) {
     this.write(actor);
@@ -261,7 +289,11 @@ export class PricingBundleService {
         const submissionId = items[0].packageId == null ? undefined : submissions.get(items[0].packageId);
         const signature = snapshot.signatures.find(entry => entry.purchaseOrderId === poId)!;
         // Existing PDF snapshot columns are initialized once, inside the same send transaction.
-        await tx.execute(sql`UPDATE purchase_orders SET requesterSignatureSnapshot=COALESCE(NULLIF(requesterSignatureSnapshot,''),${signature.requesterSource ?? null}),reviewerSignatureSnapshot=COALESCE(NULLIF(reviewerSignatureSnapshot,''),${signature.reviewerSource ?? null}) WHERE id=${poId}`);
+        if (items.some(item => isRoutedPurchaseItem(item))) {
+          await tx.execute(sql`UPDATE purchase_orders SET requesterSignatureSnapshot=COALESCE(NULLIF(requesterSignatureSnapshot,''),${signature.requesterSource ?? null}) WHERE id=${poId}`);
+        } else {
+          await tx.execute(sql`UPDATE purchase_orders SET requesterSignatureSnapshot=COALESCE(NULLIF(requesterSignatureSnapshot,''),${signature.requesterSource ?? null}),reviewerSignatureSnapshot=COALESCE(NULLIF(reviewerSignatureSnapshot,''),${signature.reviewerSource ?? null}) WHERE id=${poId}`);
+        }
         const batch = await this.ports.submitPO(poId, actor, { selectedItemIds: items.map(item => item.id), tx, purchasePackageSubmissionId: submissionId, skipArchive: true, bundleId: id, delegateSignatureSnapshot: snapshot.delegate.signatureSource });
         if (!batch.batchId || batch.itemCount !== items.length) fail("لم تتطابق دفعة الحسابات مع أصناف الحزمة", "CONFLICT");
         if (batch.replacementCompensation) compensations.push(batch.replacementCompensation);
@@ -311,9 +343,12 @@ export class PricingBundleService {
     if (approvedDocument && actor.role !== "delegate") {
       const [stored] = await rows(database, sql`SELECT snapshotJson FROM delegate_pricing_bundles WHERE id=${id}`);
       const snapshot = json(stored?.snapshotJson) as PricingBundleSnapshot;
+      // Retain the historical approved-document shape; new routed snapshots
+      // additionally require exact item/reviewer membership before rendering.
       if (!snapshot || snapshot.number !== bundle.bundleNumber || Number(snapshot.delegate?.id) !== Number(bundle.delegateId)
         || !Array.isArray(snapshot.rows) || !snapshot.rows.length || snapshot.rows.length > PRICING_BUNDLE_LIMIT
         || !Array.isArray(snapshot.signatures)) fail("لقطة الحزمة المحفوظة غير مكتملة؛ تعذر إنشاء PDF");
+      if (snapshot.reviewSignatureVersion !== undefined || snapshot.rows.some(item => item.reviewRole != null)) this.readSnapshot(snapshot, bundle);
       // This fresh full-membership check is the authorization boundary for the
       // completed document shared by accounting/management, not a prior list flag.
       // Never replace pdfContent or the delegate's frozen snapshot.
@@ -334,21 +369,38 @@ export class PricingBundleService {
       fail("تعذر تجهيز ملف PDF؛ الحزمة مرسلة للحسابات. أعد محاولة التنزيل");
     return Buffer.from(value as Uint8Array);
   }
-  private async storedPdf(database: any, bundle: any): Promise<Buffer> {
-    const [stored] = await rows(database, sql`SELECT pdfContent,snapshotJson FROM delegate_pricing_bundles WHERE id=${bundle.id}`);
-    if (stored?.pdfContent != null) return this.checkedPdf(stored.pdfContent);
+  private readSnapshot(raw: unknown, bundle: any): PricingBundleSnapshot {
     let snapshot: PricingBundleSnapshot;
     try {
-      snapshot = json(stored?.snapshotJson);
+      snapshot = json(raw);
       if (!snapshot || snapshot.number !== bundle.bundleNumber || Number(snapshot.delegate?.id) !== Number(bundle.delegateId)
         || typeof snapshot.delegate?.signature !== "string" || !Array.isArray(snapshot.rows)
         || snapshot.rows.length === 0 || snapshot.rows.length > PRICING_BUNDLE_LIMIT || !Array.isArray(snapshot.signatures)
         || snapshot.rows.some(item => !item || !Number.isInteger(item.id) || !Number.isInteger(item.purchaseOrderId)
           || !snapshot.signatures.some(signature => signature.purchaseOrderId === item.purchaseOrderId
             && typeof signature.requesterSignature === "string" && typeof signature.reviewerSignature === "string"))) throw Error("Invalid frozen snapshot");
+      if (snapshot.reviewSignatureVersion !== undefined && snapshot.reviewSignatureVersion !== 2) throw Error("Unknown review snapshot version");
+      if (snapshot.reviewSignatureVersion === 2) {
+        const byItem = new Map(snapshot.rows.map(item => [item.id, item]));
+        if (snapshot.signatures.some(signature => !Array.isArray(signature.purchaseOrderItemIds) || !signature.purchaseOrderItemIds.length
+          || new Set(signature.purchaseOrderItemIds).size !== signature.purchaseOrderItemIds.length
+          || signature.purchaseOrderItemIds.some(id => byItem.get(id)?.purchaseOrderId !== signature.purchaseOrderId))) throw Error("Invalid signature membership");
+        for (const item of snapshot.rows) {
+          const linked = snapshot.signatures.filter(signature => signature.purchaseOrderItemIds?.includes(item.id));
+          if (linked.length !== 1) throw Error("Ambiguous item reviewer");
+          if (item.reviewRole != null && (!isRoutedPurchaseItem(item) || !item.reviewedAt || !Number.isSafeInteger(item.reviewedById)
+            || Number(item.reviewedById) <= 0 || linked[0].reviewerId !== item.reviewedById || linked[0].reviewedAt !== item.reviewedAt)) throw Error("Invalid item review decision");
+        }
+      } else if (snapshot.rows.some(item => item.reviewRole != null)) throw Error("Missing review snapshot version");
     } catch {
       fail("لقطة الحزمة المحفوظة غير مكتملة؛ تعذر إنشاء PDF");
     }
+    return snapshot!;
+  }
+  private async storedPdf(database: any, bundle: any): Promise<Buffer> {
+    const [stored] = await rows(database, sql`SELECT pdfContent,snapshotJson FROM delegate_pricing_bundles WHERE id=${bundle.id}`);
+    if (stored?.pdfContent != null) return this.checkedPdf(stored.pdfContent);
+    const snapshot = this.readSnapshot(stored?.snapshotJson, bundle);
     let pdf: Buffer;
     try { pdf = this.checkedPdf(await this.ports.render(snapshot!)); }
     catch (cause) { throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر تجهيز ملف PDF؛ الحزمة مرسلة للحسابات. أعد محاولة التنزيل", cause }); }

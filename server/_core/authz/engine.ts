@@ -15,6 +15,7 @@
  */
 
 import { TRPCError } from "@trpc/server";
+import { canReviewPurchaseItem, canResolvePurchaseItemReviewer, isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
 import {
   ACTION_POLICY,
   BYPASS_ALL_ROLES,
@@ -24,6 +25,7 @@ import {
   DELEGATE_CHANGE_REQUEST_ROLES,
   DELEGATE_CHANGE_RESOLVER_ROLES,
   VISIBILITY_POLICY,
+  ROUTED_REVIEW_BLOCKED_PO_STATUSES,
   type ActionName,
   type POStatus,
   type Role,
@@ -40,6 +42,8 @@ export interface VisibilityContext {
   assistantUserIds?: number[];
   /** مطلوبة فقط لدور delegate: معرّفات الطلبات التي له فيها صنف مخصَّص */
   delegateAssignedPoIds?: number[];
+  /** Loaded inside this read operation only, scoped to the active reviewer. */
+  routedReviewPoIds?: number[];
 }
 
 export interface POVisibilitySubject {
@@ -79,7 +83,9 @@ export function isPOVisible(ctx: VisibilityContext, po: POVisibilitySubject): bo
     case "status_exact":
       return po.status === rule.status;
     case "status_range":
-      return !rule.excludedStatuses.includes(po.status as POStatus);
+      return !rule.excludedStatuses.includes(po.status as POStatus) ||
+        (ctx.role === "senior_management" && !(ROUTED_REVIEW_BLOCKED_PO_STATUSES as readonly string[]).includes(po.status) &&
+          (ctx.routedReviewPoIds ?? []).includes(po.id));
     default:
       return false; // exhaustiveness safety net
   }
@@ -100,6 +106,7 @@ export function filterVisiblePOs<T extends POVisibilitySubject>(ctx: VisibilityC
 export interface ActionContext {
   role: string;
   userId: number;
+  isActive?: number | boolean | null;
   /** هل منفّذ الإجراء هو منشئ الطلب؟ (يحدده الراوتر، الحارس لا يفترضه) */
   isCreator?: boolean;
 }
@@ -165,6 +172,9 @@ export interface ItemActionSubject {
   itemStatus: string;
   /** حالة الطلب الأب الذي يتبعه الصنف */
   poStatus: string;
+  reviewRole?: string | null;
+  reviewedById?: number | null;
+  reviewedAt?: string | Date | null;
 }
 
 /**
@@ -182,7 +192,21 @@ export function canPerformItemAction(
   // حتى بواسطة owner/admin. أي استعادة مستقبلية يجب أن تكون بإجراء صريح مستقل.
   if (subject.itemStatus === "cancelled") return false;
 
+  if (subject.reviewRole != null && ctx.isActive !== 1 && ctx.isActive !== true) return false;
+  if (subject.reviewRole != null && subject.itemStatus === "pending_review" &&
+    (ROUTED_REVIEW_BLOCKED_PO_STATUSES as readonly string[]).includes(subject.poStatus)) return false;
+
   if (BYPASS_ALL_ROLES.includes(ctx.role as Role)) return true;
+
+  if (subject.reviewRole != null) {
+    // A routed item must never inherit another manager's broad header-stage grant.
+    // Returned-item choices remain with their creator under the existing rules.
+    if (ctx.isCreator && CREATOR_RETURNED_ITEM_STATUSES.includes(subject.itemStatus as any)) return true;
+    return !(ROUTED_REVIEW_BLOCKED_PO_STATUSES as readonly string[]).includes(subject.poStatus) &&
+      canReviewPurchaseItem({ id: ctx.userId, role: ctx.role, isActive: ctx.isActive }, {
+        reviewRole: subject.reviewRole, reviewedById: subject.reviewedById, reviewedAt: subject.reviewedAt, status: subject.itemStatus,
+      });
+  }
 
   const rule = ITEM_ACTION_POLICY[actionName];
   if (!rule) return false;
@@ -288,6 +312,7 @@ export interface DelegateChangeSubject {
    * راجع assertCanResolvePOItemDelegateChange أدناه لسبب هذا القيد (2026-08-13).
    */
   reviewedById?: number | null;
+  reviewRole?: string | null;
 }
 
 export function canRequestPOItemDelegateChange(
@@ -317,9 +342,15 @@ export function assertCanRequestPOItemDelegateChange(
 }
 
 export function canResolvePOItemDelegateChange(
-  ctx: { role: string; userId: number },
+  ctx: { role: string; userId: number; isActive?: number | boolean | null },
   subject: DelegateChangeSubject
 ): boolean {
+  if (subject.reviewRole != null) {
+    return isRoutedPurchaseItem(subject) && subject.itemStatus === "pending" && !subject.batchId &&
+      !!subject.delegateChangeRequestedAt && canResolvePurchaseItemReviewer(
+        { id: ctx.userId, role: ctx.role, isActive: ctx.isActive }, subject,
+      );
+  }
   const baseEligible =
     DELEGATE_CHANGE_RESOLVER_ROLES.includes(ctx.role as Role) &&
     subject.itemStatus === "pending" &&
@@ -341,7 +372,7 @@ export function canResolvePOItemDelegateChange(
 }
 
 export function assertCanResolvePOItemDelegateChange(
-  ctx: { role: string; userId: number },
+  ctx: { role: string; userId: number; isActive?: number | boolean | null },
   subject: DelegateChangeSubject
 ): void {
   if (!canResolvePOItemDelegateChange(ctx, subject)) {

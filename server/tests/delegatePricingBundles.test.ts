@@ -10,6 +10,7 @@ import { router } from "../routers/_shared/procedures";
 import { reservedPricingItemIds } from "../services/delegate-pricing-bundles/reservations";
 import { canRoleAccessPath } from "../../shared/roles";
 import { readAccountingSignature } from "../services/pdf/accountingSignature";
+import { assertRoutedPurchaseItemReady } from "../services/purchase-review-routing";
 import type { TrpcContext } from "../_core/context";
 const actor = { id: 11, role: "delegate", isActive: 1, name: "Delegate" };
 function extract(file: string, name: string) {
@@ -44,6 +45,7 @@ function fixture() {
     if (q.startsWith("UPDATE delegate_pricing_bundle_items SET reservedItemId=NULL,removedAt=")) { Object.assign(state.members.find((m: any) => m.id === p[0]), { removedAt: "now", reservedItemId: null }); return [{ affectedRows: 1 }]; }
     if (q.startsWith("SELECT purchaseOrderItemId FROM delegate_pricing_bundle_items")) return rows(state.members.filter((m: any) => m.bundleId === p[0] && !m.removedAt).sort((a: any,b: any) => a.purchaseOrderItemId-b.purchaseOrderItemId));
     if (q.startsWith("SELECT id,name,signatureUrl FROM users")) return rows([{ id: 11, name: "Delegate", signatureUrl: "delegate-signature" }]);
+    if (q.startsWith("SELECT id,name FROM users WHERE id IN")) return rows((state.reviewers || []).filter((user: any) => p.includes(user.id)));
     if (q.startsWith("SELECT p.poNumber,r.name")) return rows([{ poNumber: `PR-${p[0]}`, requesterId: p[0], requesterName: `Requester-${p[0]}`, reviewerId: Number(p[0]) + 1000, reviewerName: `Reviewer-${p[0]}`, requesterSignature: "requester-signature", reviewerSignature: "reviewer-signature" }]);
     if (q.startsWith("SELECT id FROM purchase_packages")) return rows([{ id: p[0] }]);
     if (q.startsWith("UPDATE purchase_orders SET requesterSignatureSnapshot=")) return [{ affectedRows: 1 }];
@@ -68,7 +70,7 @@ function fixture() {
   } };
   const database: any = { execute: tx.execute, transaction: (work: any) => { const next = queue.then(async () => { const old = structuredClone(state); transactionDepth++; try { return await work(tx); } catch (error) { state = old; throw error; } finally { transactionDepth--; } }); queue = next.catch(() => {}); return next; } };
   const submit = vm.runInNewContext(submitCode, {
-    TRPCError, pricingBundlesEnabled: () => true, reservedPricingItemIds,
+    TRPCError, pricingBundlesEnabled: () => true, reservedPricingItemIds, assertRoutedPurchaseItemReady,
     reserveReplacementPricing: async () => null,
     isItemAssignedToPODelegate: (user: any, item: any) => user.id === item.delegateId,
     db: {
@@ -94,6 +96,44 @@ function fixture() {
 beforeEach(() => vi.stubEnv("DELEGATE_PRICING_BUNDLES_ENABLED", "true"));
 afterEach(() => vi.unstubAllEnvs());
 describe("Pricing bundle → existing accounting batches, isolated with no database", () => {
+  it("freezes each included routed item's actual reviewer and review-time signature, excluding other items in the same order", async () => {
+    const f = fixture();
+    f.state().reviewers = [{ id: 201, name: "Construction reviewer", signatureUrl: "changed-profile" }, { id: 202, name: "Senior reviewer", signatureUrl: "new-profile-signature" }, { id: 203, name: "Unselected reviewer" }];
+    Object.assign(f.state().items[0], { reviewRole: "construction_procurement_manager", reviewedById: 201, reviewedAt: "2026-11-03T08:00:00Z", reviewerSignatureSnapshot: "captured-construction" });
+    Object.assign(f.state().items[1], { reviewRole: "senior_management", reviewedById: 202, reviewedAt: "2026-11-03T09:00:00Z", reviewerSignatureSnapshot: null });
+    Object.assign(f.state().items[2], { purchaseOrderId: 101, reviewRole: "general_maintenance_manager", reviewedById: 203, reviewedAt: "2026-11-03T10:00:00Z", reviewerSignatureSnapshot: "unselected-signature" });
+    const id = await f.add(1, 2); await f.service.send(actor, id, 2);
+    const snapshot = JSON.parse(f.state().bundles[0].snapshotJson);
+    expect(snapshot.reviewSignatureVersion).toBe(2);
+    expect(snapshot.signatures.map((entry: any) => [entry.reviewerId, entry.reviewerName, entry.purchaseOrderItemIds])).toEqual([[201, "Construction reviewer", [1]], [202, "Senior reviewer", [2]]]);
+    expect(snapshot.signatures[0].reviewerSource).toBe("captured-construction");
+    expect(snapshot.signatures[1].reviewerSource).toBeNull(); expect(snapshot.signatures[1].reviewerSignature).toBe("");
+    expect(JSON.stringify(snapshot)).not.toContain("Unselected reviewer"); expect(JSON.stringify(snapshot)).not.toContain("Reviewer-101");
+    expect(f.ports.signature.mock.calls.flat()).not.toContain("changed-profile"); expect(f.ports.signature.mock.calls.flat()).not.toContain("new-profile-signature");
+    const original = await f.service.pdf(actor, id);
+    f.state().reviewers[0].name = "Changed after send"; f.state().items[0].reviewerSignatureSnapshot = "changed-after-send";
+    expect(await f.service.pdf(actor, id)).toEqual(original);
+    const parsed = JSON.parse(f.state().bundles[0].snapshotJson); expect(parsed.signatures[0].reviewerName).toBe("Construction reviewer");
+    expect(f.queries.filter(q => q.startsWith("SELECT id,name FROM users WHERE id IN"))).toHaveLength(1);
+    expect(f.queries.filter(q => q.startsWith("UPDATE purchase_orders SET requesterSignatureSnapshot=")).every(q => !q.includes("reviewerSignatureSnapshot="))).toBe(true);
+    let html = "";
+    const render = vm.runInNewContext(extract("server/services/export/exportService.ts", "generatePurchaseRequestPDF"), { db: new Proxy({}, { get: () => () => { throw Error("Live reads forbidden"); } }), getSignatureDataUrl: async () => "", escapeHtml: (v: any) => String(v).replaceAll("<", "&lt;"), fmtSAR: (n: number) => n.toFixed(2), amountToArabicCurrencyPhrase: String, readAccountingSignature, htmlToPdf: async (value: string) => { html = value; return Buffer.from("%PDF-local"); } });
+    await render(0, actor.id, undefined, undefined, snapshot);
+    expect(html).toContain("Construction reviewer"); expect(html).toContain("Senior reviewer"); expect(html).not.toContain("Unselected reviewer");
+    expect(html.match(/>مراجع الطلب<\/td>/g)).toHaveLength(2);
+    expect(html).toContain(Buffer.from("captured-construction").toString("base64"));
+    fs.mkdirSync("tmp/purchase-item-review/docs", { recursive: true }); fs.writeFileSync("tmp/purchase-item-review/docs/multiple-reviewers.html", html);
+  });
+  it.each(["missing decision", "missing reviewer", "wrong frozen membership"])("refuses routed signature metadata that has %s", async issue => {
+    const f = fixture(); f.state().reviewers = [{ id: 201, name: "Reviewer" }];
+    Object.assign(f.state().items[0], { reviewRole: "senior_management", reviewedById: 201, reviewedAt: "2026-11-03T08:00:00Z", reviewerSignatureSnapshot: "captured" });
+    const id = await f.add(1);
+    if (issue === "missing decision") { f.state().items[0].reviewedAt = null; await expect(f.service.send(actor, id, 1)).rejects.toThrow(); expect(f.state().batches).toHaveLength(0); return; }
+    if (issue === "missing reviewer") { f.state().reviewers = []; await expect(f.service.send(actor, id, 1)).rejects.toThrow("مراجع"); expect(f.state().batches).toHaveLength(0); return; }
+    await f.service.send(actor, id, 1); const frozen = JSON.parse(f.state().bundles[0].snapshotJson);
+    frozen.signatures[0].purchaseOrderItemIds = [999]; f.state().bundles[0].snapshotJson = JSON.stringify(frozen); f.state().bundles[0].pdfContent = null;
+    await expect(f.service.pdf(actor, id)).rejects.toThrow("لقطة");
+  });
   it('initializes unified approval atomically with the original send only when rollout is enabled',async()=>{
     const f=fixture();vi.stubEnv('DELEGATE_PRICING_BUNDLE_APPROVALS_ENABLED','true');const id=await f.add(1,3);await f.service.send(actor,id,2);
     expect(f.state().unifiedApprovals).toEqual([{bundleId:id,status:'pending_accounting'}]);expect(f.state().batches).toHaveLength(2);

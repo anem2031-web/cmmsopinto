@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import type { FollowupTx } from "./commands";
 import { ReturnFollowupError } from "./policy";
 import { readRows, trialEnabled } from "./runtime";
+import { canApprovePricingBundleStage } from "../../shared/business-role-policy";
 
 const conflict = (message: string): never => { throw new ReturnFollowupError("CONFLICT", message); };
 
@@ -25,11 +26,44 @@ export async function assertSingleReplacementRejection(tx: FollowupTx, purchaseO
  * The caller must run this within one database transaction.
  */
 export async function returnReplacementToDelegate(tx: FollowupTx, actorId: number, actorRole: string, stage: "accounting" | "management", batchId: number, itemId: number, reason: string) {
+  return returnReplacementPrice(tx, actorId, actorRole, stage, batchId, itemId, reason, false);
+}
+
+/** Explicit DPB accounting exception; legacy callers cannot request this grant. */
+export async function returnReplacementToDelegateFromUnifiedBundle(tx: FollowupTx, actorId: number, actorRole: string, stage: "accounting" | "management", bundleId: number, batchId: number, itemId: number, reason: string) {
+  if (!await trialEnabled(tx)) return false;
+  if (actorRole !== "senior_management" || stage !== "accounting" || !Number.isSafeInteger(bundleId) || bundleId <= 0) {
+    throw new ReturnFollowupError("FORBIDDEN", "هذا الإجراء مقصور على اعتماد حسابات حزمة التسعير" );
+  }
+  const [scope] = await readRows(tx, sql`SELECT a.status AS approvalStatus,b.bundleNumber,b.delegateId AS bundleDelegateId,b.snapshotJson,
+      pb.status AS batchStatus,pb.submittedById,i.*,p.ticketId,p.ticketItemId
+    FROM delegate_pricing_bundle_approvals a
+    INNER JOIN delegate_pricing_bundles b ON b.id=a.bundleId AND b.status IN ('sent','archived')
+    INNER JOIN delegate_pricing_bundle_batches l ON l.bundleId=a.bundleId AND l.pricingBatchId=${batchId}
+    INNER JOIN po_pricing_batches pb ON pb.id=l.pricingBatchId AND pb.purchaseOrderId=l.purchaseOrderId
+    INNER JOIN delegate_pricing_bundle_items m ON m.bundleId=a.bundleId AND m.purchaseOrderItemId=${itemId} AND m.removedAt IS NULL
+    INNER JOIN purchase_order_items i ON i.id=m.purchaseOrderItemId AND i.purchaseOrderId=l.purchaseOrderId AND i.batchId=pb.id
+    INNER JOIN purchase_orders p ON p.id=i.purchaseOrderId
+    WHERE a.bundleId=${bundleId} FOR UPDATE`);
+  if (!scope || scope.approvalStatus !== "pending_accounting" || scope.batchStatus !== "pending_accounting"
+    || scope.status !== "estimated" || Number(scope.delegateId) !== Number(scope.submittedById)
+    || Number(scope.bundleDelegateId) !== Number(scope.submittedById)) conflict("تغير ارتباط البديل بحزمة التسعير أو مرحلة اعتمادها");
+  let snapshot: any;
+  try { snapshot = typeof scope.snapshotJson === "string" ? JSON.parse(scope.snapshotJson) : scope.snapshotJson; } catch { conflict("لقطة حزمة التسعير غير صالحة"); }
+  const frozen = Array.isArray(snapshot?.rows) ? snapshot.rows.find((row: any) => Number(row.id) === itemId) : null;
+  if (!frozen || snapshot.number !== scope.bundleNumber || Number(snapshot.delegate?.id) !== Number(scope.submittedById)
+    || Number(frozen.purchaseOrderId) !== Number(scope.purchaseOrderId) || Number(frozen.quantity) !== Number(scope.quantity)
+    || Number(frozen.estimatedTotalCost) !== Number(scope.estimatedTotalCost)) conflict("صنف البديل لا يطابق لقطة حزمة التسعير");
+  return returnReplacementPrice(tx, actorId, actorRole, stage, batchId, itemId, reason, true);
+}
+
+async function returnReplacementPrice(tx: FollowupTx, actorId: number, actorRole: string, stage: "accounting" | "management", batchId: number, itemId: number, reason: string, verifiedDpbAccounting: boolean) {
   if (!await trialEnabled(tx)) return false;
   if (reason.trim().length < 10) conflict("سبب رفض تسعير البديل يجب أن يكون 10 أحرف على الأقل");
   const [actor] = await readRows(tx, sql`SELECT id,role,isActive FROM users WHERE id=${actorId} FOR UPDATE`);
   if (!actor || actor.role !== actorRole || Number(actor.isActive) !== 1
-    || !(stage === "accounting" ? ["accountant", "owner", "admin"] : ["senior_management", "owner", "admin"]).includes(actorRole))
+    || !((stage === "accounting" ? ["accountant", "owner", "admin"] : ["senior_management", "owner", "admin"]).includes(actorRole)
+      || verifiedDpbAccounting && stage === "accounting" && actorRole === "senior_management" && canApprovePricingBundleStage({ id: actorId, role: actorRole, isActive: Number(actor.isActive) }, stage)))
     throw new ReturnFollowupError("FORBIDDEN", "حساب المعتمد غير متاح");
   const [plan] = await readRows(tx, sql`SELECT p.*,c.delegateId,c.handoverStatus,b.status AS batchStatus,b.purchasePackageSubmissionId,
       i.batchId AS itemBatchId,i.status AS itemStatus,i.delegateId AS itemDelegateId,po.status AS poStatus

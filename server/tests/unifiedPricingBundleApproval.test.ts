@@ -19,6 +19,10 @@ import { pricingBundleApprovalNotificationPath } from "../../shared/delegate-pri
 import { getDelegateItemActionMode } from "../routers/purchase/actionable";
 import { assertPOVisible } from "../_core/authz/engine";
 import { PricingBundleService } from "../services/delegate-pricing-bundles/service";
+import { businessRpcAllowed, canApprovePricingBundleStage } from "../../shared/business-role-policy";
+import { deriveRoutedPurchaseOrderStage, pendingPurchaseReviewCount } from "../../shared/purchaseItemReviewWorkflow";
+import { reviewRoutedPurchaseItems } from "../services/purchase-item-review";
+import { derivePathBTicketPurchaseStatus } from "../../shared/pathBPurchaseWorkflow";
 const { DatabaseSync } = createRequire(import.meta.url)(
   "node:sqlite"
 ) as typeof import("node:sqlite");
@@ -231,6 +235,201 @@ function fixture() {
     stageGuard,
   };
 }
+describe("Senior management DPB accounting is an explicit separate stage", () => {
+  const realVisibility = (f: ReturnType<typeof fixture>) => f.guards.mockImplementation(async actor => po => assertPOVisible({ role: actor.role, userId: actor.id }, po));
+  const caller = (f: ReturnType<typeof fixture>, user: any = management) => router({ delegatePricingBundles: createPricingBundlesRouter({ database: async () => f.database, unified: f.ports } as any, () => true) })
+    .createCaller({ user, req: { headers: {} }, res: {} } as any).delegatePricingBundles;
+  it("grants only DPB accounting, keeping legacy PO/PB accounting and other roles unchanged", () => {
+    expect(canApprovePricingBundleStage(management, "accounting")).toBe(true);
+    expect(businessRpcAllowed(management, "mutation", "delegatePricingBundles.approveAccounting")).toBe(true);
+    expect(businessRpcAllowed(management, "mutation", "purchaseOrders.approveAccounting")).toBe(false);
+    expect(businessRpcAllowed(management, "mutation", "purchaseOrders.approveAccountingBatch")).toBe(false);
+    expect(businessRpcAllowed(management, "mutation", "purchasePackages.approveAccountingSubmission")).toBe(false);
+    for (const role of ["warehouse", "delegate", "observer", "executive_director", "it_manager", "general_maintenance_manager", "construction_procurement_manager"]) {
+      expect(canApprovePricingBundleStage({ ...management, role }, "accounting")).toBe(false);
+    }
+    expect(canApprovePricingBundleStage(accountant, "management")).toBe(false);
+  });
+  it("keeps the old senior queue default management and explicitly scopes its accounting queue/detail to the complete real bundle", async () => {
+    const f = fixture(); realVisibility(f); const rpc = caller(f);
+    expect((await rpc.approvalQueue()).items).toHaveLength(0);
+    expect((await rpc.approvalQueue({ stage: "accounting" })).items.map(row => row.id)).toEqual([24]);
+    const detail = await rpc.approvalDetail({ id: 24, stage: "accounting" });
+    expect(detail).toMatchObject({ status: "pending_accounting", approvalStage: "accounting", orderIds: [101, 102, 103] });
+    expect(detail.items).toHaveLength(8);
+    expect(f.guards.mock.calls.every(call => call[0]?.role === "senior_management")).toBe(true);
+    expect(f.guards.mock.calls.some(call => call[1]?.length === 3)).toBe(true);
+    // The local DPB scope never changes ordinary PO visibility.
+    expect(() => assertPOVisible({ role: management.role, userId: management.id }, f.get("purchase_orders", 101))).toThrow();
+    await expect(rpc.approvalDetail({ id: 24, stage: "management" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+  it("requires two distinct saved actions and preserves the actual senior identity and signature in both stages", async () => {
+    const f = fixture(); realVisibility(f); const rpc = caller(f, { ...management, name: "Forged session name", signatureUrl: "wrong-image" });
+    await expect(rpc.approveManagement(input())).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const accounting = await rpc.approveAccounting(input());
+    expect(accounting).toMatchObject({ status: "pending_management", revision: 1, replayed: false });
+    expect(f.get("purchase_order_items", 2).status).toBe("estimated");
+    const first = f.get("delegate_pricing_bundle_approvals");
+    expect(first.accountingApprovedById).toBe(8); expect(first.managementApprovedById).toBeNull();
+    expect(first.custodyBalance).toBe("45538.00");
+    expect(JSON.parse(first.accountingSignatureSnapshot)).toMatchObject({ actorId: 8, name: "Actual manager", signatureUrl: "management-image" });
+    expect(JSON.parse(f.get("po_pricing_batches", 12).accountingSignatureSnapshot).actorId).toBe(8);
+    expect((await rpc.approvalQueue()).items).toHaveLength(1);
+    expect((await rpc.approvalQueue({ stage: "accounting" })).items).toHaveLength(0);
+    const managementResult = await rpc.approveManagement({ ...input(2), revision: 1, custodyBalance: undefined });
+    expect(managementResult).toMatchObject({ status: "approved", revision: 2 });
+    const final = f.get("delegate_pricing_bundle_approvals");
+    expect(final.managementApprovedById).toBe(8);
+    expect(JSON.parse(final.managementSignatureSnapshot)).toMatchObject({ actorId: 8, name: "Actual manager", signatureUrl: "management-image" });
+    expect(f.get("purchase_order_items", 2).status).toBe("approved"); expect(f.get("purchase_order_items", 99).status).toBe("estimated");
+    expect(f.get("delegate_pricing_bundles").snapshotJson).toBe(JSON.stringify(f.snapshot));
+  });
+  it("keeps accounting and management rejections independent and preserves foreign items and their links", async () => {
+    const f = fixture(); realVisibility(f);
+    await f.service.approve(management, "accounting", { ...input(), rejections: [{ itemId: 1, reason: "الاحتياج مرفوض في مرحلة الحسابات" }] });
+    await f.service.approve(management, "management", { ...input(2), revision: 1, rejections: [{ itemId: 2, reason: "الصنف الثاني مرفوض إداريًا" }] });
+    expect(f.get("purchase_order_items", 1).status).toBe("rejected"); expect(f.get("purchase_order_items", 2).status).toBe("rejected");
+    expect(f.get("purchase_order_items", 3)).toMatchObject({ status: "approved", purchaseOrderId: 102, batchId: 12, delegateId: 11 });
+    expect(f.get("purchase_order_items", 99)).toMatchObject({ status: "estimated", batchId: 99 });
+  });
+  it("allows exact same-stage replay but rejects changed payloads, stale second decisions and competing accounting actors", async () => {
+    const f = fixture(); realVisibility(f);
+    const results = await Promise.allSettled([f.service.approve(management, "accounting", input()), f.service.approve(accountant, "accounting", { ...input(2) })]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(f.get("delegate_pricing_bundle_approvals").accountingApprovedById).toBe(8);
+    expect((await f.service.approve(management, "accounting", input())).replayed).toBe(true);
+    await expect(f.service.approve(management, "accounting", { ...input(), custodyBalance: "3" })).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(f.service.approve(management, "management", { ...input(3), revision: 0 })).rejects.toMatchObject({ code: "CONFLICT" });
+    const audit = f.memory.prepare("SELECT count(*) AS total FROM audit_logs").get() as any;
+    expect(audit.total).toBe(1);
+  });
+  it("can resume each own saved stage after reload without repeating funding or decisions", async () => {
+    const f = fixture(); realVisibility(f); f.finish.mockRejectedValueOnce(Error("Follow-up unavailable"));
+    expect((await f.service.approve(management, "accounting", input())).effectsDone).toBe(false);
+    const writes = f.updateItem.mock.calls.length;
+    expect((await caller(f).resumeApproval({ id: 24, stage: "accounting" })).effectsDone).toBe(true);
+    expect(f.updateItem).toHaveBeenCalledTimes(writes);
+    f.finish.mockRejectedValueOnce(Error("Follow-up unavailable"));
+    expect((await f.service.approve(management, "management", { ...input(2), revision: 1 })).effectsDone).toBe(false);
+    expect((await caller(f).resumeApproval({ id: 24, stage: "management" })).effectsDone).toBe(true);
+    f.memory.exec("INSERT INTO users VALUES(88,'senior_management',1,'Other senior',NULL)");
+    await expect(caller(f, { ...management, id: 88 }).resumeApproval({ id: 24, stage: "accounting" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller(f, { ...management, id: 88 }).resumeApproval({ id: 24, stage: "management" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+  it.each(["isActive=0", "role='accountant'"])("fresh senior accounting queue/detail/writer deny %s", async change => {
+    const f = fixture(); realVisibility(f); const rpc = caller(f); f.memory.exec(`UPDATE users SET ${change} WHERE id=8`);
+    await expect(rpc.approvalQueue({ stage: "accounting" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(rpc.approvalDetail({ id: 24, stage: "accounting" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(rpc.approveAccounting(input())).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(f.get("delegate_pricing_bundle_approvals").revision).toBe(0);
+  });
+  it("denies hidden or missing parents and changed linked batch/submission stages without a partial bundle", async () => {
+    const f = fixture(); f.memory.exec("UPDATE purchase_orders SET requestedById=666 WHERE id=103");
+    expect((await f.service.queue(management, 0, "accounting")).items).toEqual([]);
+    await expect(f.service.detail(management, 24, "accounting")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    for (const mutation of ["DELETE FROM purchase_orders WHERE id=103", "UPDATE po_pricing_batches SET status='approved' WHERE id=13", "UPDATE purchase_package_submissions SET status='approved' WHERE id=20"]) {
+      const g = fixture(); realVisibility(g); g.memory.exec(mutation);
+      expect((await g.service.queue(management, 0, "accounting")).items).toEqual([]);
+      await expect(g.service.detail(management, 24, "accounting")).rejects.toMatchObject({ code: "CONFLICT" });
+      expect(g.updateItem).not.toHaveBeenCalled();
+    }
+  });
+  it("bounds senior accounting queue reads and does not retain actor/scope decisions across requests", async () => {
+    const f = fixture(); realVisibility(f);
+    expect((await f.service.queue(management, 0, "accounting")).items).toHaveLength(1); expect(f.queries).toHaveLength(5);
+    expect((await f.service.queue(management, 0, "accounting")).items).toHaveLength(1); expect(f.queries).toHaveLength(10);
+    f.memory.exec("DELETE FROM users WHERE id=8");
+    await expect(f.service.queue(management, 0, "accounting")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(f.queries).toHaveLength(11);
+    const g = fixture(); realVisibility(g);
+    await expect(g.service.queue(accountant, 0, "management")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller(g).approvalQueue({ stage: "invented" } as any)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+});
+
+describe("Routed item review stays independent through the existing DPB lifecycle", () => {
+  function routedFixture() {
+    const f = fixture();
+    f.memory.exec(`ALTER TABLE purchase_order_items ADD COLUMN reviewRole TEXT;
+      ALTER TABLE purchase_order_items ADD COLUMN reviewedById INTEGER;
+      ALTER TABLE purchase_order_items ADD COLUMN reviewedAt TEXT;
+      ALTER TABLE purchase_order_items ADD COLUMN reviewerSignatureSnapshot TEXT;
+      ALTER TABLE purchase_order_items ADD COLUMN delegateAssignedAt TEXT;
+      ALTER TABLE purchase_orders ADD COLUMN reviewedById INTEGER;
+      ALTER TABLE purchase_orders ADD COLUMN reviewedAt TEXT;
+      ALTER TABLE purchase_orders ADD COLUMN reviewerSignatureSnapshot TEXT;
+      UPDATE purchase_order_items SET reviewRole='construction_procurement_manager',reviewedById=23,reviewedAt='2026-11-01',reviewerSignatureSnapshot='cmms/reviewer-b.png';
+      INSERT INTO users VALUES(22,'general_maintenance_manager',1,'Reviewer A','cmms/reviewer-a.png');
+      INSERT INTO purchase_order_items(id,purchaseOrderId,itemName,quantity,unit,status,reviewRole) VALUES(900,101,'Unreviewed A',2,'قطعة','pending_review','general_maintenance_manager');`);
+    const orderItems = () => f.memory.prepare("SELECT * FROM purchase_order_items WHERE purchaseOrderId=101 ORDER BY id").all() as any[];
+    const batches = () => f.memory.prepare("SELECT id,status FROM po_pricing_batches WHERE purchaseOrderId=101").all() as any[];
+    const queryRows = async (tx: any, statement: any) => (await tx.execute(statement))[0] as any[];
+    const review = (action: "approve" | "reject") => f.database.transaction(async (tx: any) => reviewRoutedPurchaseItems({ id: 22, role: "general_maintenance_manager", isActive: 1 }, {
+      poId: 101, items: [{ id: 900, action, ...(action === "approve" ? { delegateId: 11 } : { rejectionReason: "لم تعد المادة مطلوبة للتنفيذ" }) }],
+    }, {
+      lockOrder: async id => (await queryRows(tx, sql`SELECT * FROM purchase_orders WHERE id=${id} FOR UPDATE`))[0] || null,
+      readItems: id => queryRows(tx, sql`SELECT * FROM purchase_order_items WHERE purchaseOrderId=${id}`),
+      readUsers: ids => queryRows(tx, sql`SELECT * FROM users WHERE id IN (${sql.join(ids.map(id => sql`${id}`), sql`,`)})`),
+      authorize: () => {},
+      updateItem: async (item, changes) => {
+        const result = await tx.execute(sql`UPDATE purchase_order_items SET ${sql.join(Object.entries(changes).map(([key, value]) => sql`${sql.raw(key)}=${value}`), sql`,`) }
+          WHERE id=${item.id} AND purchaseOrderId=101 AND status='pending_review' AND reviewRole=${item.reviewRole} AND reviewedById IS NULL AND reviewedAt IS NULL`);
+        return Number(result[0]?.affectedRows) === 1;
+      },
+      updateOrder: async (id, changes) => { await tx.execute(sql`UPDATE purchase_orders SET ${sql.join(Object.entries(changes).map(([key, value]) => sql`${sql.raw(key)}=${value}`), sql`,`)} WHERE id=${id}`); },
+      audit: async (actor, order, decisions) => { await tx.execute(sql`INSERT INTO audit_logs(userId,action,entityType,entityId,newValues) VALUES(${actor.id},'review_po_items','purchase_order',${order.id},${JSON.stringify(decisions)})`); },
+    }));
+    return { ...f, review, orderItems, batches };
+  }
+  it("lets B finish both financial stages while A stays with its reviewer, and late A review cannot reset B", async () => {
+    const f = routedFixture();
+    await f.service.approve(accountant, "accounting", input());
+    expect(f.get("purchase_order_items", 900)).toMatchObject({ status: "pending_review", reviewedById: null, batchId: null });
+    await f.service.approve(management, "management", { ...input(2), revision: 1 });
+    const purchasedMaterial = { ...f.get("purchase_order_items", 1) };
+    expect(purchasedMaterial).toMatchObject({ status: "approved", batchId: 11, reviewedById: 23, estimatedUnitCost: "100" });
+    expect(pendingPurchaseReviewCount(f.orderItems())).toBe(1);
+    expect(getDelegateItemActionMode("pending_estimate", purchasedMaterial)).toBe("purchase");
+    expect(getDelegateItemActionMode("pending_review", purchasedMaterial)).toBe("purchase");
+    expect(getDelegateItemActionMode("approved", f.get("purchase_order_items", 900))).toBeNull();
+    await f.review("approve");
+    expect(f.get("purchase_order_items", 1)).toEqual(purchasedMaterial);
+    expect(f.get("purchase_order_items", 900)).toMatchObject({ purchaseOrderId: 101, status: "pending", delegateId: 11, reviewedById: 22, reviewerSignatureSnapshot: "cmms/reviewer-a.png" });
+    expect(getDelegateItemActionMode(f.get("purchase_orders", 101).status, f.get("purchase_order_items", 900))).toBe("estimate");
+    expect(pendingPurchaseReviewCount(f.orderItems())).toBe(0);
+    // The original source PO/ticket/item and every previously approved batch stay fixed.
+    expect(f.get("purchase_orders", 101)).toMatchObject({ ticketId: 1001, ticketItemId: 2001 });
+    expect(f.get("po_pricing_batches", 11)).toMatchObject({ status: "approved", accountingApprovedById: 7, managementApprovedById: 8 });
+  });
+  it("rejecting A after B approval never closes or changes B", async () => {
+    const f = routedFixture(); await f.service.approve(accountant, "accounting", input()); await f.service.approve(management, "management", { ...input(2), revision: 1 });
+    const before = { ...f.get("purchase_order_items", 1) }; await f.review("reject");
+    expect(f.get("purchase_order_items", 1)).toEqual(before); expect(f.get("purchase_orders", 101).status).toBe("approved");
+    expect(f.get("purchase_order_items", 900)).toMatchObject({ status: "rejected", reviewedById: 22 });
+  });
+  it("rejecting the DPB member B leaves unreviewed A at pending review, without auto-approving A or closing its PO", async () => {
+    const f = routedFixture();
+    await f.service.approve(accountant, "accounting", { ...input(), rejections: [{ itemId: 1, reason: "رفض سعر الصنف المرسل في الحزمة" }] });
+    expect(f.get("purchase_order_items", 1).status).toBe("rejected");
+    expect(f.get("purchase_order_items", 900)).toMatchObject({ status: "pending_review", reviewedById: null });
+    expect(f.get("purchase_orders", 101).status).toBe("pending_review");
+    expect(f.get("purchase_orders", 102).status).toBe("pending_management");
+  });
+  it("purchase/receipt/delivery fixtures count A until completion and never unlock repair after B alone", async () => {
+    const f = routedFixture(); await f.service.approve(accountant, "accounting", input()); await f.service.approve(management, "management", { ...input(2), revision: 1 });
+    for (const stage of ["purchased", "delivered_to_warehouse", "delivered_to_requester"]) {
+      f.memory.prepare("UPDATE purchase_order_items SET status=? WHERE id=1").run(stage);
+      const summary = deriveRoutedPurchaseOrderStage(f.get("purchase_orders", 101).status, f.orderItems(), f.batches());
+      expect(summary).toBe("partial_purchase");
+      expect(derivePathBTicketPurchaseStatus({ purchaseOrders: [{ id: 101, status: summary }], items: f.orderItems() })).not.toBe("received_warehouse");
+    }
+    await f.review("approve");
+    f.memory.exec("UPDATE purchase_order_items SET status='delivered_to_requester' WHERE id=900");
+    expect(deriveRoutedPurchaseOrderStage("partial_purchase", f.orderItems(), f.batches())).toBe("received");
+    expect(derivePathBTicketPurchaseStatus({ purchaseOrders: [{ id: 101, status: "received" }], items: f.orderItems() })).toBe("received_warehouse");
+  });
+});
+
 describe("DPB live regressions: absent units and committed approvals", () => {
   it("resumes a stored follow-up through a fresh RPC after reload without repeating any decision or funding", async () => {
     const f = fixture();
@@ -815,8 +1014,8 @@ describe("Unified DPB approval is atomic while item workflow links remain indepe
       caller(accountant).approveManagement(input())
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(
-      caller(management).approveAccounting(input())
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+      caller(management).approveManagement(input())
+    ).rejects.toMatchObject({ code: "CONFLICT" });
     f.memory.exec("UPDATE users SET isActive=0 WHERE id=7");
     await expect(
       caller(accountant).approveAccounting(input())

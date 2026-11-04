@@ -8,6 +8,7 @@ import { refreshPurchaseExecution, purchaseRefreshNotice } from "@/lib/purchaseE
 import { mediaUrl } from "@/lib/mediaUrl";
 import { goBackOrFallback } from "@/lib/backStack";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { isRoutedPurchaseItem, isPendingPurchaseItemReview, canReviewPurchaseItem, canResolvePurchaseItemReviewer } from "@shared/purchase-item-review";
 import { useRoute, useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -398,20 +399,26 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   const [delegateSelections, setDelegateSelections] = useState<Record<number, string>>({});
   const [editForm, setEditForm] = useState<{ itemName: string; description: string; quantity: number; estimatedUnitCost: string; unit: string; photoUrl: string; notes: string }>({ itemName: "", description: "", quantity: 1, estimatedUnitCost: "", unit: "", photoUrl: "", notes: "" });
   const [reviewDecisions, setReviewDecisions] = useState<Record<number, { action: "approve" | "reject"; delegateId?: number; rejectionReason?: string }>>({});
+  const [selectedReviewItemIds, setSelectedReviewItemIds] = useState<number[]>([]);
+  const hasRoutedReview = (po?.items || []).some(isRoutedPurchaseItem);
+  const routedReviewParentOpen = !!po && !["draft", "revision_needed", "closed", "rejected"].includes(po.status);
   const reviewableItems = useMemo(
-    () => (po?.items || []).filter((item: any) => !["cancelled", "rejected"].includes(item.status)),
-    [po?.items]
+    () => (po?.items || []).filter((item: any) => hasRoutedReview
+      ? routedReviewParentOpen && canReviewPurchaseItem(user, item)
+      : !["cancelled", "rejected"].includes(item.status)),
+    [po?.items, hasRoutedReview, routedReviewParentOpen, user]
   );
+  const selectedReviewItems = hasRoutedReview ? reviewableItems.filter((item: any) => selectedReviewItemIds.includes(Number(item.id))) : reviewableItems;
 
   const [bulkDelegateId, setBulkDelegateId] = useState<string | undefined>(undefined);
   const [lateRejections, setLateRejections] = useState<Record<number, boolean>>({});
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const handleBulkApprove = () => {
-    const newReviewDecisions: Record<number, { action: "approve" | "reject"; delegateId?: number; rejectionReason?: string }> = {};
-    if (reviewableItems.length > 0) {
-      reviewableItems.forEach((item: any) => {
-        newReviewDecisions[item.id] = { action: "approve" };
+    const newReviewDecisions: Record<number, { action: "approve" | "reject"; delegateId?: number; rejectionReason?: string }> = hasRoutedReview ? { ...reviewDecisions } : {};
+    if (selectedReviewItems.length > 0) {
+      selectedReviewItems.forEach((item: any) => {
+        newReviewDecisions[item.id] = { action: "approve", ...(hasRoutedReview && bulkDelegateId ? { delegateId: Number(bulkDelegateId) } : {}) };
       });
       setReviewDecisions(newReviewDecisions);
     }
@@ -419,8 +426,8 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
 
   const handleBulkAssignDelegate = (delegateId: number) => {
     const newReviewDecisions = { ...reviewDecisions };
-    if (reviewableItems.length > 0) {
-      reviewableItems.forEach((item: any) => {
+    if (selectedReviewItems.length > 0) {
+      selectedReviewItems.forEach((item: any) => {
         if (newReviewDecisions[item.id]?.action === "approve") {
           newReviewDecisions[item.id] = { ...newReviewDecisions[item.id], delegateId: delegateId };
         }
@@ -705,9 +712,10 @@ const visibleItems = useMemo(() => {
 
   const requestedBy = users?.find((u: any) => u.id === po.requestedById);
 
+  const pendingReviewCount = (po.items || []).filter(isPendingPurchaseItemReview).length;
   const steps = [
     { key: "draft", label: getPOStatusLabel("draft"), done: true },
-    { key: "pending_review", label: getPOStatusLabel("pending_review"), done: !["draft", "revision_needed"].includes(po.status) },
+    { key: "pending_review", label: getPOStatusLabel("pending_review"), done: pendingReviewCount === 0 && !["draft", "revision_needed"].includes(po.status) },
     { key: "pending_estimate", label: getPOStatusLabel("pending_estimate"), done: !["draft", "pending_review", "revision_needed"].includes(po.status) },
     { key: "pending_accounting", label: getPOStatusLabel("pending_accounting"), done: !["draft", "pending_review", "pending_estimate", "revision_needed"].includes(po.status) },
     { key: "pending_management", label: getPOStatusLabel("pending_management"), done: !["draft", "pending_review", "pending_estimate", "pending_accounting", "revision_needed"].includes(po.status) },
@@ -735,7 +743,7 @@ const visibleItems = useMemo(() => {
         </div>
         <div className="flex gap-2">
           <PricingBundleLink />
-          {isDelegate && po.status === "pending_estimate" && (
+          {isDelegate && po.status === "pending_estimate" && !hasRoutedReview && (
             <Button variant="outline" className="border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => setIsRevisionDialogOpen(true)}>
               <AlertCircle className="w-4 h-4 mr-1.5" /> {t.purchaseOrders.returnForRevision}
             </Button>
@@ -835,6 +843,7 @@ const visibleItems = useMemo(() => {
 
       <Card>
         <CardContent className="p-4">
+          {pendingReviewCount > 0 && <p className="text-xs text-amber-700 mb-3">{getPOItemStatusLabel("pending_review")}: {pendingReviewCount}</p>}
           <div className="flex items-center justify-between gap-1 overflow-x-auto pb-1">
             {steps.map((step, i) => (
               <div key={step.key} className="flex items-center gap-1 flex-1 min-w-0">
@@ -1029,6 +1038,10 @@ const visibleItems = useMemo(() => {
             const isRejected = item.status === "rejected";
             const isPurchaseCancelled = item.status === "purchase_cancelled";
             const isCancelled = isCancelledRaw || isPurchaseCancelled;
+            const routedReviewItem = isRoutedPurchaseItem(item);
+            const routedInitialReviewBlocked = routedReviewItem && item.status === "pending_review" && !routedReviewParentOpen;
+            const canManageThisDelegateChange = routedReviewItem ? canResolvePurchaseItemReviewer(user, item) : canManageDelegateChange;
+            const canReviewThisItem = routedReviewItem && routedReviewParentOpen && canReviewPurchaseItem(user, item);
             const availableDays = getAvailableCalendarDays(item.requiredDate, item.delegateAssignedAt);
             return (
               <div
@@ -1084,13 +1097,13 @@ const visibleItems = useMemo(() => {
                   )}
                   {/* cancelled سجل نهائي مرجعي لا يظهر له تعديل حتى لـ owner/admin.
                       بقية الأصناف تبقى مقيدة بسياسة المرحلة/الملكية الحالية. */}
-                  {po && !isCancelledRaw && (
+                  {po && !isCancelledRaw && !routedInitialReviewBlocked && (
                     isAdminOrOwner ||
                     (
                       (
-                        (canEditItems && ['draft', 'pending_review'].includes(po.status)) ||
+                        (routedReviewItem ? canReviewThisItem : canEditItems && ['draft', 'pending_review'].includes(po.status)) ||
                         (isRequester && po.status === 'revision_needed')
-                      ) && ['pending', 'estimated', 'approved'].includes(item.status)
+                      ) && ['pending', 'estimated', 'approved', ...(routedReviewItem ? ['pending_review'] : [])].includes(item.status)
                     )
                   ) && (
                     <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={() => {
@@ -1101,7 +1114,7 @@ const visibleItems = useMemo(() => {
                     </Button>
                   )}
                   {/* Cancel button - for authorised roles, non-cancelled items */}
-                  {canCancelItem && !isCancelled && item.status !== "delivered_to_requester" && (
+                  {!routedInitialReviewBlocked && (routedReviewItem ? isAdminOrOwner || canReviewThisItem || role === "senior_management" && po.status === "pending_management" && item.status !== "pending_review" : canCancelItem) && !isCancelled && item.status !== "delivered_to_requester" && (
                     <Button
                       variant="ghost"
                       size="icon"
@@ -1195,14 +1208,14 @@ const visibleItems = useMemo(() => {
           {t.workflow.purchase.requestDate}: {new Date(item.delegateChangeRequestedAt).toLocaleString(locale)}
         </p>
       </div>
-      {!canManageDelegateChange && (
+      {!canManageThisDelegateChange && (
         <Badge className="bg-blue-100 text-blue-800">
           {po?.reviewedByName ? t.workflow.purchase.waitingForNamedReviewer.replace("{name}", po.reviewedByName) : t.workflow.purchase.waitingMaintenanceManager}
         </Badge>
       )}
     </div>
 
-    {canManageDelegateChange && (
+    {canManageThisDelegateChange && (
       <div className="flex flex-col sm:flex-row gap-2 sm:items-end border-t border-blue-200 pt-3">
         <div className="flex-1 space-y-1">
           <Label className="text-xs text-blue-900">{t.workflow.purchase.selectDelegate}</Label>
@@ -1740,10 +1753,10 @@ const visibleItems = useMemo(() => {
         </CardContent>
       </Card>
 
-      {isManager && po.status === "pending_review" && (() => {
+      {(hasRoutedReview ? reviewableItems.length > 0 : isManager && po.status === "pending_review") && (() => {
         const delegates = users?.filter((u: any) => u.role === "delegate") || [];
-        const allDecided = reviewableItems.length > 0 && reviewableItems.every((item: any) => reviewDecisions[item.id]?.action);
-        const isValid = reviewableItems.length > 0 && reviewableItems.every((item: any) => {
+        const allDecided = selectedReviewItems.length > 0 && selectedReviewItems.every((item: any) => reviewDecisions[item.id]?.action);
+        const isValid = selectedReviewItems.length > 0 && selectedReviewItems.every((item: any) => {
           const d = reviewDecisions[item.id];
           if (!d) return false;
           if (d.action === "approve") return !!d.delegateId;
@@ -1760,10 +1773,10 @@ const visibleItems = useMemo(() => {
                 <Button
                   size="sm"
                   onClick={handleBulkApprove}
-                  disabled={reviewableItems.length === 0}
+                  disabled={selectedReviewItems.length === 0}
                   className="flex-1"
                 >
-                  {t.purchaseOrders.approveAll}
+                  {hasRoutedReview ? t.purchaseOrders.approveSelected : t.purchaseOrders.approveAll}
                 </Button>
                 <Select
                   value={bulkDelegateId}
@@ -1771,9 +1784,9 @@ const visibleItems = useMemo(() => {
                     setBulkDelegateId(v);
                     handleBulkAssignDelegate(parseInt(v));
                   }}
-                  disabled={reviewableItems.length === 0 || !Object.values(reviewDecisions).some(d => d.action === "approve")}
+                  disabled={selectedReviewItems.length === 0 || !selectedReviewItems.some((item: any) => reviewDecisions[item.id]?.action === "approve")}
                 >
-                  <SelectTrigger className="flex-1 bg-white"><SelectValue placeholder={t.purchaseOrders.assignDelegateToAll} /></SelectTrigger>
+                  <SelectTrigger className="flex-1 bg-white"><SelectValue placeholder={hasRoutedReview ? t.purchaseOrders.assignDelegateToSelected : t.purchaseOrders.assignDelegateToAll} /></SelectTrigger>
                   <SelectContent>
                     {delegates.map((d: any) => <SelectItem key={d.id} value={String(d.id)}>{d.name || d.email}</SelectItem>)}
                   </SelectContent>
@@ -1783,6 +1796,7 @@ const visibleItems = useMemo(() => {
                 const decision = reviewDecisions[item.id] || {};
                 return (
                   <div key={item.id} className="border rounded-lg p-3 space-y-3 bg-white">
+                    {hasRoutedReview && <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={selectedReviewItemIds.includes(Number(item.id))} onChange={event => setSelectedReviewItemIds(ids => event.target.checked ? Array.from(new Set([...ids, Number(item.id)])) : ids.filter(id => id !== Number(item.id)))} />{t.purchaseOrders.selectReviewItem}</label>}
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium break-words">{getField(item, "itemName")}</p>
@@ -1795,7 +1809,7 @@ const visibleItems = useMemo(() => {
                         size="sm"
                         variant={decision.action === "approve" ? "default" : "outline"}
                         className="flex-1"
-                        onClick={() => setReviewDecisions(p => ({ ...p, [item.id]: { ...p[item.id], action: "approve" } }))}
+                        onClick={() => { if (hasRoutedReview) setSelectedReviewItemIds(ids => Array.from(new Set([...ids, Number(item.id)]))); setReviewDecisions(p => ({ ...p, [item.id]: { ...p[item.id], action: "approve" } })); }}
                       >
                         {t.common.confirm}
                       </Button>
@@ -1803,7 +1817,7 @@ const visibleItems = useMemo(() => {
                         size="sm"
                         variant={decision.action === "reject" ? "destructive" : "outline"}
                         className="flex-1"
-                        onClick={() => setReviewDecisions(p => ({ ...p, [item.id]: { ...p[item.id], action: "reject" } }))}
+                        onClick={() => { if (hasRoutedReview) setSelectedReviewItemIds(ids => Array.from(new Set([...ids, Number(item.id)]))); setReviewDecisions(p => ({ ...p, [item.id]: { ...p[item.id], action: "reject" } })); }}
                       >
                         {t.tickets.reject}
                       </Button>
@@ -1840,7 +1854,7 @@ const visibleItems = useMemo(() => {
                 className="w-full gap-1.5"
                 disabled={!allDecided || !isValid || reviewItemsMut.isPending}
                 onClick={() => {
-                  const items = reviewableItems.map((item: any) => {
+                  const items = selectedReviewItems.map((item: any) => {
                     const d = reviewDecisions[item.id];
                     return {
                       id: item.id,
@@ -1853,7 +1867,7 @@ const visibleItems = useMemo(() => {
                 }}
               >
                 {reviewItemsMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                {t.common.submit}
+                {hasRoutedReview ? t.purchaseOrders.sendSelectedForReview : t.common.submit}
               </Button>
             </CardContent>
           </Card>
@@ -2040,7 +2054,7 @@ const visibleItems = useMemo(() => {
         );
       })()}
 
-      {isAccountant && po.status === "pending_accounting" && pricingBatches.length === 0 && (
+      {isAccountant && po.status === "pending_accounting" && pricingBatches.length === 0 && !hasRoutedReview && (
         <Card className="border-orange-200 bg-orange-50/50">
           <CardHeader className="pb-2"><CardTitle className="text-base text-orange-800">{t.purchaseOrders.accountingApproval}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
@@ -2072,7 +2086,7 @@ const visibleItems = useMemo(() => {
       )}
 
       {(role === "senior_management" || isAdminOrOwner) &&
-        po.status === "pending_management" && pricingBatches.length === 0 && (
+        po.status === "pending_management" && pricingBatches.length === 0 && !hasRoutedReview && (
         <Card className="border-orange-200 bg-orange-50/50">
           <CardHeader className="pb-2"><CardTitle className="text-base text-orange-800">{t.purchaseOrders.managementApproval}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
@@ -2186,7 +2200,7 @@ const visibleItems = useMemo(() => {
         </Card>
       )}
 
-      <Dialog open={isRevisionDialogOpen} onOpenChange={setIsRevisionDialogOpen}>
+      <Dialog open={isRevisionDialogOpen && !hasRoutedReview} onOpenChange={setIsRevisionDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t.purchaseOrders.revisionDialogTitle}</DialogTitle>

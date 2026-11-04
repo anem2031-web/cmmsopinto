@@ -16,7 +16,7 @@ import { observerHttpAllowed } from "../../shared/observer-policy";
 import { technicianHttpAllowed } from "../../shared/technician-policy";
 
 const spies = vi.hoisted(() => ({ audit: vi.fn(async () => [1]), write: vi.fn(async () => 1), po: vi.fn(), repair: vi.fn(), batches: vi.fn(async () => [{ id: 10 }]) }));
-vi.mock("../_core/db", () => ({ getAuditLogsEnhanced: spies.audit, getPurchaseOrderById: spies.po, addInventoryTransaction: spies.write }));
+vi.mock("../_core/db", () => ({ getAuditLogsEnhanced: spies.audit, getPurchaseOrderById: spies.po, addInventoryTransaction: spies.write, getPurchaseItemReviewScopeRows: async () => [] }));
 const ast = (file: string) => ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
 function expression(file: string, property: string, variable?: string) {
   const source = ast(file); let found = "";

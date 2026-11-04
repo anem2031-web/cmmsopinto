@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import ar from "../../client/src/i18n/ar";
 import * as timing from "../../shared/purchaseItemNeedDate";
 import { isValidPurchaseRequiredDate } from "../../client/src/lib/purchaseOrderValidation";
+import { PURCHASE_REVIEW_ROLES, purchaseReviewRoleSchema } from "../../shared/purchase-item-review";
 
 // Execute the actual form's handlers with explicit in-memory state. No API/DB imports.
 const source = readFileSync("client/src/pages/purchase/CreatePurchaseOrder.tsx", "utf8");
@@ -28,11 +29,12 @@ function evaluate(code: string, scope: any) {
 const fixture = (overrides = {}) => ({
   itemName: "صنف", sourceType: "catalog", catalogItemId: 10, description: "", notes: "", photoUrls: [],
   siteId: "1", sectionId: "11", categoryId: "7", assetId: "", unit: "قطعة", quantity: 2,
+  reviewRole: "general_maintenance_manager",
   ...timing.purchaseNeedTimingFromDays(4), ...overrides,
 });
 function harness(items = [fixture()], overrides: any = {}) {
   const scope: any = {
-    ...timing, isValidPurchaseRequiredDate, items, t: ar, itemMessage: (text: string, index: number) => text.replace("{item}", String(index + 1)),
+    ...timing, isValidPurchaseRequiredDate, PURCHASE_REVIEW_ROLES, purchaseReviewRoleSchema, items, t: ar, itemMessage: (text: string, index: number) => text.replace("{item}", String(index + 1)),
     emptyPurchaseFormErrors: () => ({ items: {} }), formErrors: { items: {} },
     setFormErrors: (value: any) => { scope.formErrors = typeof value === "function" ? value(scope.formErrors) : value; },
     setItems: (value: any) => { scope.items = typeof value === "function" ? value(scope.items) : value; },
@@ -94,6 +96,7 @@ describe("Purchase creation with context entered on items only", () => {
       item: h.items[0], idx: 0, itemErrors: h.formErrors.items[0], language: "ar", t: ar,
       Select: frame, SelectTrigger: trigger, SelectValue: () => null, SelectContent: frame, SelectItem: frame, Label: frame,
       sites: [], allSections: [], allAssets: [], purchaseCategories: [], updateItem: vi.fn(), cn: (...values: any[]) => values.filter(Boolean).join(" "),
+      PURCHASE_REVIEW_ROLES,
     }));
     for (const field of ["siteId", "sectionId", "categoryId"]) {
       expect(html).toContain(`id="purchase-item-0-${field}" aria-invalid="true" class="border-destructive focus:ring-destructive"`);
@@ -168,6 +171,31 @@ describe("Purchase creation with context entered on items only", () => {
     const h = harness([fixture({ requiredDate: "", deliveryLeadDays: null })]);
     expect(h.validatePurchaseForm(false)).toBe(true);
     expect(h.validatePurchaseForm(true)).toBe(false);
+  });
+
+  it("requires each review department when sending, saving or updating a draft", () => {
+    const h = harness([fixture(), fixture({ reviewRole: "" })]);
+    expect(h.validatePurchaseForm(false)).toBe(false);
+    h.handleSaveDraft();
+    h.handleUpdateDraft();
+    expect(h.saveDraftMut.mutate).not.toHaveBeenCalled();
+    expect(h.updateDraftMut.mutate).not.toHaveBeenCalled();
+    h.handleSubmit();
+    expect(h.createMut.mutate).not.toHaveBeenCalled();
+    expect(h.formErrors.items[1].reviewRole).toContain("2");
+    expect(h.focusValidationTarget).toHaveBeenCalledWith("purchase-item-1-reviewRole");
+    h.updateItem(1, "reviewRole", "senior_management");
+    expect(h.formErrors.items[1].reviewRole).toBeUndefined();
+    h.handleSubmit();
+    expect(h.createMut.mutate.mock.calls[0][0].items.map((i: any) => i.reviewRole)).toEqual(["general_maintenance_manager", "senior_management"]);
+  });
+
+  it("hydrates routed draft departments and keeps legacy drafts awaiting explicit department selection", () => {
+    const h = harness([], { draftPO: { id: 50, items: [fixture({ id: 1 }), fixture({ id: 2, reviewRole: null })] }, draftLoaded: false, setNotes: vi.fn(), setDraftLoaded: vi.fn(), language: "ar", getLocalizedItemField: (item: any, key: string) => item[key] });
+    evaluate(effects.find(text => text.includes("if (draftPO && !draftLoaded)"))!, h)();
+    expect(h.items.map((item: any) => item.reviewRole)).toEqual(["general_maintenance_manager", ""]);
+    expect(h.validatePurchaseForm(true)).toBe(false);
+    expect(h.formErrors.items[1].reviewRole).toBeTruthy();
   });
 
   it("prefills linked ticket context only when the user has not chosen a different hierarchy", () => {

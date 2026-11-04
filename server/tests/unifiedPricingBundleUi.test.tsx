@@ -19,6 +19,9 @@ const state = vi.hoisted(() => ({
   effects: [] as Array<() => void>,
   savedFollowup: false,
   savedById: 7,
+  search: "?approval=24",
+  queueInput: {} as any,
+  detailInput: {} as any,
 }));
 vi.mock("react", async () => ({
   ...(await vi.importActual<typeof import("react")>("react")),
@@ -57,6 +60,7 @@ vi.mock("@/lib/trpc", () => ({
       },
       approvalQueue: {
         useQuery: (_input: any, options: any) => {
+          state.queueInput = _input;
           state.queueEnabled = options.enabled;
           return {
             data: {
@@ -74,7 +78,7 @@ vi.mock("@/lib/trpc", () => ({
         },
       },
       approvalDetail: {
-        useQuery: () => ({
+        useQuery: (input: any) => { state.detailInput = input; return ({
           data: state.detailUnavailable
             ? undefined
             : {
@@ -108,7 +112,7 @@ vi.mock("@/lib/trpc", () => ({
                     : "estimated",
                 })),
               },
-        }),
+        }); },
       },
       approveAccounting: {
         useMutation: () => ({
@@ -154,16 +158,17 @@ vi.mock("@/_core/hooks/useAuth", () => ({
   useAuth: () => ({ user: { id: 7, role: state.role, isActive: 1 } }),
 }));
 vi.mock("wouter", () => ({
-  useSearch: () => "?approval=24",
+  useSearch: () => state.search,
   useLocation: () => [
     "/delegate-pricing-bundles",
     (path: string) => state.navigation.push(path),
   ],
   Link: ({ href, children }: any) => <a href={href}>{children}</a>,
 }));
-vi.mock("@/contexts/LanguageContext", () => ({
-  useTranslation: () => ({ language: "ar", dir: "rtl" }),
-}));
+vi.mock("@/contexts/LanguageContext", async () => {
+  const { default: ar } = await import("../../client/src/i18n/ar");
+  return { useTranslation: () => ({ language: "ar", dir: "rtl", t: ar }) };
+});
 vi.mock("@/components/ui/button", () => ({
   Button: (props: any) => {
     state.buttons.push(props);
@@ -222,6 +227,9 @@ beforeEach(() => {
   state.navigation = [];
   state.savedFollowup = false;
   state.savedById = 7;
+  state.search = "?approval=24";
+  state.queueInput = {};
+  state.detailInput = {};
 });
 it("renders the queue safely before a detail loads or when no detail is available", () => {
   state.detailUnavailable = true;
@@ -290,6 +298,52 @@ it("management receives only accepted items, excludes rejected totals and reason
     .onClick();
   expect(state.calls[0].stage).toBe("management");
   expect(state.calls[0].payload).not.toHaveProperty("custodyBalance");
+});
+it("senior accounting stage has the custody field, preserves per-item rejection and sends only accounting approval", async () => {
+  state.role = "senior_management";
+  state.search = "?approval=24&stage=accounting";
+  render(true);
+  expect(state.detailInput).toEqual({ id: 24, stage: "accounting" });
+  state.inputs.find(row => row["aria-label"] === "إجمالي رصيد العهد").onChange({ target: { value: "123.45" } });
+  state.values[4] = { 2: "الصنف المختار غير مناسب للموقع" };
+  render(true);
+  await state.buttons.find(row => row.children === "اعتماد وإرسال للإدارة العليا").onClick();
+  expect(state.calls).toHaveLength(1);
+  expect(state.calls[0]).toMatchObject({ stage: "accounting", payload: { custodyBalance: "123.45", rejections: [{ itemId: 2, reason: "الصنف المختار غير مناسب للموقع" }] } });
+  expect(state.navigation).toEqual(["/purchase-orders?reviewStage=accounting"]);
+  state.stage = "pending_management";
+  const html = render(true);
+  expect(html).toContain("انتقلت الحزمة إلى مرحلة أخرى");
+  expect(state.buttons.find(row => row.children === "اعتماد وإرسال للمندوب")).toBeUndefined();
+  expect(state.calls).toHaveLength(1);
+});
+it("requires a separate management stage to confirm management and rejects malformed stage URLs", async () => {
+  state.role = "senior_management";
+  state.search = "?approval=24&stage=management";
+  state.stage = "pending_management";
+  render(true);
+  expect(state.detailInput).toEqual({ id: 24, stage: "management" });
+  expect(state.inputs).toHaveLength(0);
+  await state.buttons.find(row => row.children === "اعتماد وإرسال للمندوب").onClick();
+  expect(state.calls.map(row => row.stage)).toEqual(["management"]);
+  expect(state.navigation).toEqual(["/purchase-orders?reviewStage=management"]);
+  state.search = "?approval=24&stage=all";
+  expect(render(true)).toContain("انتقلت الحزمة إلى مرحلة أخرى");
+  expect(state.buttons).toHaveLength(0);
+});
+it("senior queue tabs keep independent stage input and explicit stage links", () => {
+  state.role = "senior_management";
+  state.search = "";
+  state.detailUnavailable = true;
+  state.stage = "pending_management";
+  expect(render()).toContain("approval=24&amp;stage=management");
+  expect(state.queueInput).toMatchObject({ stage: "management", afterId: 0 });
+  state.buttons.find(row => row.children === "اعتماد الحسابات").onClick();
+  state.stage = "pending_accounting";
+  const html = render();
+  expect(state.queueInput).toMatchObject({ stage: "accounting", afterId: 0 });
+  expect(html).toContain("approval=24&amp;stage=accounting");
+  expect(html).not.toContain("approval=24&amp;stage=management");
 });
 it("does not give the delegate or other unrelated roles an approval interface, or accountant a management action", () => {
   for (const role of [

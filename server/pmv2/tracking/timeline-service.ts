@@ -11,6 +11,7 @@ import {
   pmv2Tasks,
   pmv2Visits,
   purchaseOrderItems,
+  poPricingBatches,
   purchaseOrders,
   ticketStatusHistory,
   tickets,
@@ -75,6 +76,8 @@ const ROLE_LABELS: Record<string, string> = {
   technician: "الفني / فريق الصيانة",
   warehouse: "المستودع",
   maintenance_manager: "مدير الصيانة",
+  general_maintenance_manager: "الصيانة العامة والتشغيل",
+  construction_procurement_manager: "الإنشاءات",
   purchase_manager: "إدارة المشتريات",
   purchase_requester: "منشئ طلب الشراء",
   delegate: "مندوب المشتريات",
@@ -119,6 +122,22 @@ function parseJson(value: unknown): any {
 function purchaseResponsibility(po: any, item: any): Omit<Responsibility, "taskItemId" | "taskItemTitle" | "reason" | "since" | "source" | "sourceId" | "sourceNumber"> {
   const poStatus = String(po?.status || "");
   const itemStatus = String(item?.status || "");
+  if (item?.reviewRole != null) {
+    const initialReview = itemStatus === "pending_review" && item.reviewedById == null && item.reviewedAt == null;
+    if ((initialReview || item?.delegateChangeRequestedAt) && !["draft", "revision_needed", "closed", "rejected"].includes(poStatus)) {
+      const roleKey = String(item.reviewRole);
+      return { stageKey: "purchase_review", stageLabel: initialReview ? "بانتظار مراجعة الصنف" : "بانتظار حسم تغيير المندوب", roleKey, roleLabel: roleLabel(roleKey), responsibleUserId: initialReview ? null : Number(item.reviewedById) || null, responsibleUserName: null };
+    }
+    if (["draft", "revision_needed"].includes(poStatus)) return { stageKey: "purchase_requester", stageLabel: poStatus === "draft" ? "طلب الشراء ما زال مسودة" : "بانتظار تعديل طلب الشراء", roleKey: "purchase_requester", roleLabel: roleLabel("purchase_requester"), responsibleUserId: Number(po?.requestedById) || null, responsibleUserName: null };
+    const batchStatus = String(item.pricingBatchStatus || "");
+    if (itemStatus === "estimated" && ["pending_accounting", "pending_management"].includes(batchStatus)) {
+      const accounting = batchStatus === "pending_accounting", roleKey = accounting ? "accountant" : "senior_management";
+      return { stageKey: accounting ? "purchase_accounting" : "purchase_management", stageLabel: accounting ? "بانتظار اعتماد الحسابات" : "بانتظار اعتماد الإدارة العليا", roleKey, roleLabel: roleLabel(roleKey), responsibleUserId: null, responsibleUserName: null };
+    }
+    if (itemStatus === "pending" || itemStatus === "estimated" && !item.batchId || ["approved", "funded"].includes(itemStatus)) return { stageKey: "purchase_delegate", stageLabel: ["approved", "funded"].includes(itemStatus) ? "بانتظار الشراء من المندوب" : "بانتظار التسعير من المندوب", roleKey: "delegate", roleLabel: roleLabel("delegate"), responsibleUserId: Number(item.delegateId) || null, responsibleUserName: null };
+    if (["purchased", "delivered_to_warehouse"].includes(itemStatus)) return { stageKey: "purchase_warehouse_receipt", stageLabel: "تم الشراء — بانتظار استكمال المستودع", roleKey: "warehouse", roleLabel: roleLabel("warehouse"), responsibleUserId: null, responsibleUserName: null };
+    return { stageKey: "purchase_workflow", stageLabel: "ضمن دورة المشتريات", roleKey: "purchase_manager", roleLabel: roleLabel("purchase_manager"), responsibleUserId: null, responsibleUserName: null };
+  }
   if (poStatus === "pending_accounting") {
     return { stageKey: "purchase_accounting", stageLabel: "بانتظار اعتماد الحسابات", roleKey: "accountant", roleLabel: roleLabel("accountant"), responsibleUserId: null, responsibleUserName: null };
   }
@@ -216,10 +235,10 @@ function stageForEvent(event: TimelineEvent) {
 
 function purchaseResponsibilitySince(po: any, item: any, responsibility: { stageKey: string }) {
   switch (responsibility.stageKey) {
-    case "purchase_review": return po?.submittedAt || po?.createdAt || null;
+    case "purchase_review": return item?.reviewRole != null && item?.delegateChangeRequestedAt ? item.delegateChangeRequestedAt : po?.submittedAt || po?.createdAt || null;
     case "purchase_delegate":
       if (String(item?.status || "") === "purchased") return item?.purchasedAt || item?.updatedAt || null;
-      return po?.reviewedAt || item?.updatedAt || po?.updatedAt || null;
+      return item?.reviewRole != null ? item.reviewedAt || item.updatedAt || po?.updatedAt || null : po?.reviewedAt || item?.updatedAt || po?.updatedAt || null;
     case "purchase_accounting": return item?.updatedAt || po?.updatedAt || null;
     case "purchase_management": return po?.accountingApprovedAt || po?.updatedAt || null;
     case "purchase_warehouse_receipt": return item?.purchasedAt || item?.receivedAt || item?.updatedAt || null;
@@ -279,7 +298,10 @@ export class Pmv2TaskTimelineService {
 
     const [poRows, poItemRows, ticketRows, ticketHistoryRows, purchaseAuditRows] = await Promise.all([
       poIds.length ? db.select({ id: purchaseOrders.id, poNumber: purchaseOrders.poNumber, status: purchaseOrders.status, requestedById: purchaseOrders.requestedById, reviewedById: purchaseOrders.reviewedById, reviewedAt: purchaseOrders.reviewedAt, accountingApprovedById: purchaseOrders.accountingApprovedById, accountingApprovedAt: purchaseOrders.accountingApprovedAt, managementApprovedById: purchaseOrders.managementApprovedById, managementApprovedAt: purchaseOrders.managementApprovedAt, createdAt: purchaseOrders.createdAt, submittedAt: purchaseOrders.submittedAt, updatedAt: purchaseOrders.updatedAt }).from(purchaseOrders).where(inArray(purchaseOrders.id, poIds)) : [],
-      poItemIds.length ? db.select({ id: purchaseOrderItems.id, purchaseOrderId: purchaseOrderItems.purchaseOrderId, itemName: purchaseOrderItems.itemName, status: purchaseOrderItems.status, delegateId: purchaseOrderItems.delegateId, estimatedById: purchaseOrderItems.estimatedById, purchasedById: purchaseOrderItems.purchasedById, createdAt: purchaseOrderItems.createdAt, updatedAt: purchaseOrderItems.updatedAt, purchasedAt: purchaseOrderItems.purchasedAt, receivedAt: purchaseOrderItems.receivedAt }).from(purchaseOrderItems).where(inArray(purchaseOrderItems.id, poItemIds)) : [],
+      poItemIds.length ? db.select({ id: purchaseOrderItems.id, purchaseOrderId: purchaseOrderItems.purchaseOrderId, itemName: purchaseOrderItems.itemName, status: purchaseOrderItems.status, delegateId: purchaseOrderItems.delegateId, estimatedById: purchaseOrderItems.estimatedById, purchasedById: purchaseOrderItems.purchasedById, createdAt: purchaseOrderItems.createdAt, updatedAt: purchaseOrderItems.updatedAt, purchasedAt: purchaseOrderItems.purchasedAt, receivedAt: purchaseOrderItems.receivedAt,
+        reviewRole: purchaseOrderItems.reviewRole, reviewedById: purchaseOrderItems.reviewedById, reviewedAt: purchaseOrderItems.reviewedAt, delegateChangeRequestedAt: purchaseOrderItems.delegateChangeRequestedAt,
+        batchId: purchaseOrderItems.batchId, pricingBatchStatus: poPricingBatches.status,
+      }).from(purchaseOrderItems).leftJoin(poPricingBatches, eq(poPricingBatches.id, purchaseOrderItems.batchId)).where(inArray(purchaseOrderItems.id, poItemIds)) : [],
       ticketIds.length ? db.select({ id: tickets.id, ticketNumber: tickets.ticketNumber, status: tickets.status, assignedToId: tickets.assignedToId, supervisorId: tickets.supervisorId, createdAt: tickets.createdAt, updatedAt: tickets.updatedAt, closedAt: tickets.closedAt }).from(tickets).where(inArray(tickets.id, ticketIds)) : [],
       ticketIds.length ? db.select({ id: ticketStatusHistory.id, ticketId: ticketStatusHistory.ticketId, fromStatus: ticketStatusHistory.fromStatus, toStatus: ticketStatusHistory.toStatus, changedById: ticketStatusHistory.changedById, notes: ticketStatusHistory.notes, createdAt: ticketStatusHistory.createdAt }).from(ticketStatusHistory).where(inArray(ticketStatusHistory.ticketId, ticketIds)).orderBy(asc(ticketStatusHistory.createdAt), asc(ticketStatusHistory.id)) : [],
       poIds.length || poItemIds.length ? db.select({ id: auditLogs.id, userId: auditLogs.userId, action: auditLogs.action, entityType: auditLogs.entityType, entityId: auditLogs.entityId, oldValues: auditLogs.oldValues, newValues: auditLogs.newValues, createdAt: auditLogs.createdAt }).from(auditLogs).where(or(
@@ -304,7 +326,7 @@ export class Pmv2TaskTimelineService {
     for (const action of actions) userIds.add(Number(action.performedById));
     for (const row of requestRows) userIds.add(Number(row.requestedById));
     for (const row of poRows) for (const id of [row.requestedById, row.reviewedById, row.accountingApprovedById, row.managementApprovedById]) if (id != null) userIds.add(Number(id));
-    for (const row of poItemRows) for (const id of [row.delegateId, row.estimatedById, row.purchasedById]) if (id != null) userIds.add(Number(id));
+    for (const row of poItemRows) for (const id of [row.delegateId, row.estimatedById, row.purchasedById, row.reviewedById]) if (id != null) userIds.add(Number(id));
     for (const row of ticketRows) for (const id of [row.assignedToId, row.supervisorId]) if (id != null) userIds.add(Number(id));
     for (const row of ticketHistoryRows) userIds.add(Number(row.changedById));
     for (const row of purchaseAuditRows) if (row.userId != null) userIds.add(Number(row.userId));
@@ -312,6 +334,7 @@ export class Pmv2TaskTimelineService {
       const next = parseJson(row.newValues);
       if (next?.delegateId) userIds.add(Number(next.delegateId));
       if (next?.newDelegateId) userIds.add(Number(next.newDelegateId));
+      if (Array.isArray(next?.decisions)) for (const decision of next.decisions) if (decision?.delegateId) userIds.add(Number(decision.delegateId));
     }
     const userRows = userIds.size ? await db.select({ id: users.id, name: users.name, role: users.role }).from(users).where(inArray(users.id, [...userIds])) : [];
     const userById = new Map(userRows.map((row) => [Number(row.id), row]));
@@ -363,7 +386,8 @@ export class Pmv2TaskTimelineService {
       // Atomic PM V2 purchase creation always creates the PO as pending_review.
       // Historical timeline must therefore start at maintenance review rather than
       // projecting today's later PO status backwards onto the creation timestamp.
-      events.push({ id: `purchase-link-${link.purchaseOrderItemId}`, at, kind: "waiting", label: `تم إنشاء طلب الشراء — بانتظار المراجعة`, detail: po?.poNumber ? `طلب الشراء ${po.poNumber} — ${item?.itemName || request.itemName}` : (item?.itemName || request.itemName), taskItemId: Number(request.taskItemId), taskItemTitle: titleByItem.get(Number(request.taskItemId)) || null, roleKey: "maintenance_manager", roleLabel: roleLabel("maintenance_manager"), responsibleUserId: null, responsibleUserName: null, actorUserId: null, actorUserName: null, source: "purchase" });
+      const initialRole = item?.reviewRole || "maintenance_manager";
+      events.push({ id: `purchase-link-${link.purchaseOrderItemId}`, at, kind: "waiting", label: `تم إنشاء طلب الشراء — بانتظار المراجعة`, detail: po?.poNumber ? `طلب الشراء ${po.poNumber} — ${item?.itemName || request.itemName}` : (item?.itemName || request.itemName), taskItemId: Number(request.taskItemId), taskItemTitle: titleByItem.get(Number(request.taskItemId)) || null, roleKey: initialRole, roleLabel: roleLabel(initialRole), responsibleUserId: null, responsibleUserName: null, actorUserId: null, actorUserName: null, source: "purchase" });
     }
 
     const auditToItem = new Map<number, number>();
@@ -380,6 +404,18 @@ export class Pmv2TaskTimelineService {
     for (const log of purchaseAuditRows) {
       const at = asIso(log.createdAt); if (!at) continue;
       const entityId = Number(log.entityId || 0);
+      const decisionLog = parseJson(log.newValues);
+      if (log.action === "review_po_items" && decisionLog?.routedReview === true) {
+        for (const decision of Array.isArray(decisionLog.decisions) ? decisionLog.decisions : []) {
+          const reviewedItem = poItemById.get(Number(decision.id)), taskItemId = auditToItem.get(Number(decision.id));
+          if (!reviewedItem || Number(reviewedItem.purchaseOrderId) !== entityId || !taskItemId) continue;
+          const accepted = decision.action === "approve", roleKey = accepted ? "delegate" : String(reviewedItem.reviewRole || "maintenance_manager");
+          const recipientId = accepted ? Number(decision.delegateId) || null : null;
+          events.push({ id: `purchase-audit-${log.id}-item-${decision.id}`, at, kind: accepted ? "waiting" : "transition", label: accepted ? "تمت مراجعة الصنف — بانتظار المندوب" : "تم رفض الصنف أثناء المراجعة", detail: reviewedItem.itemName, taskItemId, taskItemTitle: titleByItem.get(taskItemId) || null,
+            roleKey, roleLabel: roleLabel(roleKey), responsibleUserId: recipientId, responsibleUserName: nameOf(recipientId), actorUserId: log.userId == null ? null : Number(log.userId), actorUserName: nameOf(log.userId), source: "purchase" });
+        }
+        continue;
+      }
       const itemId = log.entityType === "purchase_order" ? auditToTaskItemByPo.get(entityId) : auditToItem.get(entityId);
       if (!itemId) continue;
       const title = titleByItem.get(itemId) || null;
@@ -396,7 +432,10 @@ export class Pmv2TaskTimelineService {
         stage = { label: "تم اعتماد الشراء — بانتظار المندوب", roleKey: "delegate", userId: null };
       } else if (log.action === "confirm_purchase") stage = { label: "أكد المندوب الشراء — بانتظار المستودع", roleKey: "warehouse" };
       else if (log.action === "deliver_to_warehouse") stage = { label: "تم تسجيل وصول الصنف للمستودع", roleKey: "warehouse" };
-      else if (log.action === "request_po_item_delegate_change") stage = { label: "طلب تغيير المندوب — بانتظار مدير الصيانة", roleKey: "maintenance_manager" };
+      else if (log.action === "request_po_item_delegate_change") {
+        const sourceItem = poItemById.get(entityId);
+        stage = sourceItem?.reviewRole != null ? { label: "طلب تغيير المندوب — بانتظار مراجع الصنف", roleKey: String(sourceItem.reviewRole), userId: sourceItem.reviewedById } : { label: "طلب تغيير المندوب — بانتظار مدير الصيانة", roleKey: "maintenance_manager" };
+      }
       else if (log.action === "resolve_po_item_delegate_change") {
         const next = parseJson(log.newValues);
         stage = { label: "تم حسم تغيير المندوب", roleKey: "delegate", userId: next?.delegateId || next?.newDelegateId || null };

@@ -24,6 +24,8 @@ const state = vi.hoisted(() => ({ database: null as any, delegates: vi.fn(), ass
 vi.mock("../_core/db/client", () => ({ getDb: async () => { if (!state.database) throw Error("Live DB forbidden"); return state.database; } }));
 vi.mock("../_core/db", () => ({
   getDb: async () => state.database,
+  // Legacy fixtures contain no routed-review assignments.
+  getPurchaseItemReviewScopeRows: async () => [],
   getPOItemsByDelegate: state.delegates, getUserIdsByRole: state.assistants,
   getPurchaseOrdersByIds: (ids: number[]) => getPurchaseOrdersByIds(ids, state.database),
   getPurchaseOrderById: async (id: number) => (await state.database.select().from(purchaseOrders).where(inArray(purchaseOrders.id, [id])))[0],

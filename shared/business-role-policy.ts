@@ -6,6 +6,14 @@
 export const BUSINESS_GUARDED_ROLES = ["accountant", "senior_management", "executive_director", "warehouse", "food_warehouse_assistant"] as const;
 export type BusinessRole = typeof BUSINESS_GUARDED_ROLES[number];
 export type BusinessIdentity = { id: number; role: string; isActive?: number };
+export type PricingBundleApprovalStage = "accounting" | "management";
+/** DPB-only stage capability. It does not grant accounting actions on a PO/PB. */
+export function canApprovePricingBundleStage(actor: BusinessIdentity | null | undefined, stage: PricingBundleApprovalStage): boolean {
+  if (!actor || !Number.isSafeInteger(actor.id) || actor.id <= 0 || actor.isActive !== 1) return false;
+  const roles = stage === "accounting" ? ["owner", "admin", "accountant", "senior_management"]
+    : stage === "management" ? ["owner", "admin", "senior_management"] : [];
+  return roles.includes(actor.role);
+}
 export const isBusinessGuardedRole = (role?: string | null): role is BusinessRole =>
   !!role && (BUSINESS_GUARDED_ROLES as readonly string[]).includes(role);
 const paths = (namespace: string, names: string) => names.trim().split(/\s+/).filter(Boolean).map(name => `${namespace}.${name}`);
@@ -141,7 +149,7 @@ export const BUSINESS_ROLE_CAPABILITIES: Record<BusinessRole, { query: readonly 
   accountant: { query: [...sharedQueries, ...costQueries, "attachments.listByType", ...paths("delegatePricingBundles", "status list listPage detail approvalQueue approvalDetail")],
     mutation: [...sharedMutations, ...paths("purchaseOrders", "approveAccounting approveAccountingBatch rejectAccountingBatchItem reject"), "purchasePackages.approveAccountingSubmission", ...paths("delegatePricingBundles","pdf approveAccounting resumeApproval")] },
   senior_management: { query: [...sharedQueries, ...documentQueries, ...settlementReviewQueries, ...warehouseOversightQueries, ...costQueries, ...managementQueries, "attachments.listByType", "technicians.list", ...paths("delegatePricingBundles", "status list listPage detail approvalQueue approvalDetail")],
-    mutation: [...sharedMutations, ...documentMutations, ...settlementReviewMutations, ...managementMutations, ...paths("purchaseOrders", "approveManagement approveManagementBatch reject"), "purchasePackages.approveManagementSubmission", ...paths("delegatePricingBundles","pdf approveManagement resumeApproval")] },
+    mutation: [...sharedMutations, ...documentMutations, ...settlementReviewMutations, ...managementMutations, ...paths("purchaseOrders", "reviewItems resolveDelegateChange approveManagement approveManagementBatch reject"), "purchasePackages.approveManagementSubmission", ...paths("delegatePricingBundles","pdf approveAccounting approveManagement resumeApproval")] },
   executive_director: { query: [...sharedQueries, ...documentQueries, ...costQueries, ...managementQueries, "technicians.list"],
     mutation: [...sharedMutations, ...documentMutations, ...managementMutations] },
   warehouse: { query: [...sharedQueries, ...documentQueries, ...settlementReviewQueries, ...costQueries, ...warehouseQueries],

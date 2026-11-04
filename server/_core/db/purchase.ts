@@ -1,3 +1,4 @@
+import { readScopeChunks } from "../authz/read-batch";
 import { pricingBundlesEnabled, assertItemOutsidePricingBundle } from "../../services/delegate-pricing-bundles/reservations";
 import { getPackageSubmissionsWithBatchesForPackages } from "./purchase-read-lists";
 // ============================================================
@@ -1239,8 +1240,10 @@ export async function resolvePOItemDelegateChangeAtomic(input: {
   newDelegateId: number;
   actorUserId?: number | null;
   actorName?: string | null;
-}): Promise<boolean> {
-  const db = await getDb();
+  reviewRole?: string | null;
+  reviewedById?: number | null;
+}, tx?: any): Promise<boolean> {
+  const db = tx || await getDb();
   if (!db) return false;
   const before = await readPOItemHistorySnapshot(db, input.itemId);
   const patch = {
@@ -1257,6 +1260,7 @@ export async function resolvePOItemDelegateChangeAtomic(input: {
     .set(patch)
     .where(and(
       eq(purchaseOrderItems.id, input.itemId),
+      ...(input.reviewRole ? [eq(purchaseOrderItems.reviewRole, input.reviewRole as any), eq(purchaseOrderItems.reviewedById, Number(input.reviewedById))] : []),
       eq(purchaseOrderItems.status, "pending"),
       isNull(purchaseOrderItems.batchId),
       isNotNull(purchaseOrderItems.delegateChangeRequestedAt),
@@ -1634,17 +1638,20 @@ export async function trackItemHistory(searchTerm: string, exactMatch: boolean =
 export async function getPOItemsForPOs(poIds: number[]) {
   const db = await getDb();
   if (!db || poIds.length === 0) return [];
-  return db
+  return readScopeChunks(poIds, ids => db
     .select({
       id: purchaseOrderItems.id,
       purchaseOrderId: purchaseOrderItems.purchaseOrderId,
       status: purchaseOrderItems.status,
       delegateId: purchaseOrderItems.delegateId,
+      reviewRole: purchaseOrderItems.reviewRole,
+      reviewedById: purchaseOrderItems.reviewedById,
+      reviewedAt: purchaseOrderItems.reviewedAt,
       batchId: purchaseOrderItems.batchId,
       delegateChangeRequestedAt: purchaseOrderItems.delegateChangeRequestedAt,
     })
     .from(purchaseOrderItems)
-    .where(inArray(purchaseOrderItems.purchaseOrderId, poIds));
+    .where(inArray(purchaseOrderItems.purchaseOrderId, ids)));
 }
 
 // ============================================================

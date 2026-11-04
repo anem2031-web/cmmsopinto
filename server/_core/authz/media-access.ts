@@ -181,8 +181,10 @@ export const mediaAccessPort: MediaAccessPort = {
     if (ref.kind === "po") {
       const po = await db.getPurchaseOrderById(ref.parentId!);
       if (!po) throw denied();
-      const { assertCanViewPurchaseOrder } = await import("./guard");
-      await assertCanViewPurchaseOrder(user, po);
+      const { createPurchaseOrderReadScope } = await import("./guard");
+      const scope = await createPurchaseOrderReadScope(user, [po]);
+      scope.assert(po);
+      if (scope.isRoutedReviewOnly(po) && !scope.filterItems(po, [{ id: ref.id, purchaseOrderId: po.id }]).length) throw denied();
       return;
     }
     if (ref.kind === "construction" || ref.kind === "construction_task") {

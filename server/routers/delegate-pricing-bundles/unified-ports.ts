@@ -10,10 +10,12 @@ import {
   approveReplacementAccounting,
   approveReplacementManagement,
 } from "../../supplier-return-followup/pricing-bridge";
-import { returnReplacementToDelegate } from "../../supplier-return-followup/repricing";
+import { returnReplacementToDelegate, returnReplacementToDelegateFromUnifiedBundle } from "../../supplier-return-followup/repricing";
 import { syncPathBTicketFromPurchaseOrder } from "../purchase/ticket-purchase-workflow";
 import { notifyItemRejection } from "../_shared/router-helpers";
 import { createBundleReplacementAdapter } from "../../services/delegate-pricing-bundles/replacement-approval-adapter";
+import { canApprovePricingBundleStage } from "../../../shared/business-role-policy";
+import { TRPCError } from "@trpc/server";
 
 export const unifiedApprovalPorts: UnifiedApprovalPorts = {
   enabled: unifiedBundleApprovalsEnabled,
@@ -24,6 +26,10 @@ export const unifiedApprovalPorts: UnifiedApprovalPorts = {
   },
   readGuard: createPurchaseOrderReadGuard,
   authorizeStage: (actor, stage, orders) => {
+    if (!canApprovePricingBundleStage(actor, stage)) throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لهذه المرحلة من حزمة التسعير" });
+    // The service already verified the locked DPB stage, every batch and all members.
+    // This exact DPB-only accounting grant never substitutes the actor's role.
+    if (actor.role === "senior_management" && stage === "accounting") return;
     // The exact locked DPB/batch stage is authoritative for these members, rather than a mixed PO header.
     for (const order of orders)
       assertCanPerformPOAction(
@@ -52,6 +58,7 @@ export const unifiedApprovalPorts: UnifiedApprovalPorts = {
   },
   replacement: createBundleReplacementAdapter({
     returnToDelegate: returnReplacementToDelegate,
+    returnToDelegateFromBundle: returnReplacementToDelegateFromUnifiedBundle,
     management: approveReplacementManagement,
     funding: replacementFundingForBatch,
     accounting: approveReplacementAccounting,

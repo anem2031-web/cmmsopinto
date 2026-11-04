@@ -47,7 +47,7 @@ export async function loadDocumentListPort(rows: any[], database?: any, options:
   const byId = (list: any[]) => new Map(list.map(row => [Number(row.id), row]));
   const batchMap = byId(uniqueBatches), submissionMap = byId(submissions), orderMap = byId(orders);
   const bySubmission = groupReadRows(uniqueBatches, row => Number(row.purchasePackageSubmissionId));
-  const check = options.actor ? options.authorize ?? await (await import("../authz/guard")).createPurchaseOrderReadGuard(options.actor) : undefined;
+  const check = options.actor ? options.authorize ?? await (await import("../authz/guard")).createPurchaseOrderReadGuard(options.actor, orders) : undefined;
   return {
     order: async id => orderMap.get(id), batch: async id => batchMap.get(id),
     submission: async id => submissionMap.get(id),

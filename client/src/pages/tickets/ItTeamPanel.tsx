@@ -13,6 +13,7 @@ import { localizeApiError } from "@/i18n/apiError";
 import { canExecuteItSubTicket, canStartItSubTicket, itExecutionOutcomeRequiresNote, type ItExecutionOutcome } from "@shared/it-execution-workflow";
 import { ExecutionPanel } from "../maintenance-teams/ExecutionPanel";
 import { TicketMaterialCatalogPicker, type TicketCatalogCandidate } from "../maintenance-teams/TicketMaterialCatalogPicker";
+import { PURCHASE_REVIEW_ROLES, purchaseReviewRoleSchema, type PurchaseReviewRole } from "@shared/purchase-item-review";
 
 const selectClass = "border rounded-md bg-background px-3 py-2 text-sm";
 const format = (template: string, values: Record<string, string | number>) =>
@@ -217,7 +218,7 @@ export function ItTeamPanel({ ticket, departments, onChanged }: { ticket: any; d
   </div>;
 }
 
-type NeedItem = { itemName: string; quantity: number; unit?: string; requiredDate?: string };
+type NeedItem = { itemName: string; quantity: number; unit?: string; requiredDate?: string; reviewRole?: PurchaseReviewRole | "" };
 function NeedReview({ need, onChanged }: { need: any; onChanged: () => void }) {
   const { user } = useAuth();
   const { t, language } = useTranslation();
@@ -240,6 +241,14 @@ function NeedReview({ need, onChanged }: { need: any; onChanged: () => void }) {
     <p className="text-sm whitespace-pre-wrap">{need.reason}</p>
     <p className="text-sm">{statusText}</p>
     {items.map((item, index) => <div key={index} className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+      <label className="sm:col-span-4 text-xs space-y-1">{t.purchaseOrders.reviewRoleLabel} *
+        <select className={`${selectClass} block w-full ${manager && need.status === "pending" && !item.reviewRole ? "border-destructive" : ""}`} aria-label={`${t.purchaseOrders.reviewRoleLabel} ${index + 1}`} required
+          value={item.reviewRole || ""} disabled={!manager || need.status !== "pending"}
+          onChange={event => setItems(values => values.map((value, i) => i === index ? { ...value, reviewRole: event.target.value as PurchaseReviewRole } : value))}>
+          <option value="">{t.purchaseOrders.reviewRolePlaceholder}</option>
+          {PURCHASE_REVIEW_ROLES.map(role => <option key={role} value={role}>{role === "general_maintenance_manager" ? t.purchaseOrders.reviewRoleGeneral : role === "construction_procurement_manager" ? t.purchaseOrders.reviewRoleConstruction : t.purchaseOrders.reviewRoleOther}</option>)}
+        </select>
+      </label>
       <Input aria-label={t.workflow.ticket.needItemAria} value={item.itemName} disabled={!manager || need.status !== "pending"} onChange={e => setItems(v => v.map((x,i) => i === index ? {...x,itemName:e.target.value} : x))} />
       <Input aria-label={t.workflow.ticket.needQuantityAria} type="number" min={1} value={item.quantity} disabled={!manager || need.status !== "pending"} onChange={e => setItems(v => v.map((x,i) => i === index ? {...x,quantity:Number(e.target.value)} : x))} />
       <Input aria-label={t.workflow.ticket.needUnitAria} value={item.unit || ""} disabled={!manager || need.status !== "pending"} onChange={e => setItems(v => v.map((x,i) => i === index ? {...x,unit:e.target.value} : x))} />
@@ -248,7 +257,7 @@ function NeedReview({ need, onChanged }: { need: any; onChanged: () => void }) {
     {manager && need.status === "pending" && <>
       <Textarea placeholder={t.workflow.ticket.managerNoteReturnReason} value={note} onChange={e => setNote(e.target.value)} />
       <div className="flex flex-wrap gap-2">
-        <Button disabled={create.isPending || items.some(i => !i.itemName.trim() || i.quantity < 1 || !i.requiredDate)} onClick={() => create.mutate({ ticketId: need.ticketId, ticketItemId: need.ticketItemId, itPurchaseNeedId: need.id, items: items.map(i => ({ ...i, requiredDate: i.requiredDate! })), notes: [need.reason,note].filter(Boolean).join("\n") })}>{t.workflow.ticket.createOfficialPo}</Button>
+        <Button disabled={create.isPending || items.some(i => !i.itemName.trim() || i.quantity < 1 || !i.requiredDate || !purchaseReviewRoleSchema.safeParse(i.reviewRole).success)} onClick={() => create.mutate({ ticketId: need.ticketId, ticketItemId: need.ticketItemId, itPurchaseNeedId: need.id, items: items.map(i => ({ ...i, reviewRole: purchaseReviewRoleSchema.parse(i.reviewRole), requiredDate: i.requiredDate! })), notes: [need.reason,note].filter(Boolean).join("\n") })}>{t.workflow.ticket.createOfficialPo}</Button>
         <Button variant="outline" disabled={note.trim().length < 3 || returnNeed.isPending} onClick={() => returnNeed.mutate({ id: need.id, reason: note })}>{t.workflow.ticket.returnForClarification}</Button>
       </div>
     </>}

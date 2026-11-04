@@ -4,9 +4,10 @@ import { DelegateCompletedItems, completedLabels } from "@/components/purchase/D
 import { SupplierReturns } from "@/components/purchase/SupplierReturns";
 import { BundleApprovalCards } from "@/components/purchase/UnifiedBundleApproval";
 import { trpc } from "@/lib/trpc";
+import { isRoutedPurchaseItem, canReviewPurchaseItem } from "@shared/purchase-item-review";
 import { independentReadOptions } from "@/lib/read-transport";
 import { readHistoryEntryState, writeHistoryEntryState } from "@/lib/backStack";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -69,6 +70,7 @@ type DelegateActionFilter = "all" | "estimate" | "purchase";
 type DelegateDateFilter = "all" | "today" | "7d" | "30d" | "custom";
 type SupplyDelayFilter = "all" | "1" | "3" | "7" | "custom";
 type SupplyOwnershipFilter = "all" | "mine";
+type SeniorActionTab = "review" | "accounting" | "management";
 
 const PURCHASE_ORDERS_HISTORY_KEY = "__cmmsPurchaseOrdersState";
 
@@ -164,10 +166,19 @@ export default function PurchaseOrders() {
   // «بانتظار إجرائي» فقط، مع إبقاء الطلبات المفردة القديمة كما هي.
   const isPackageSubmissionActionRole =
     user?.role === "accountant" || user?.role === "senior_management";
+  const isSeniorReviewRole = user?.role === "senior_management";
+  const requestedReviewStage = new URLSearchParams(useSearch()).get("reviewStage");
+  const [seniorActionTab, setSeniorActionTab] = useState<SeniorActionTab>(requestedReviewStage === "accounting" || requestedReviewStage === "management" ? requestedReviewStage : "review");
+  useEffect(() => { if (isSeniorReviewRole && (requestedReviewStage === "accounting" || requestedReviewStage === "management")) { setSeniorActionTab(requestedReviewStage); setView("actionable"); } }, [isSeniorReviewRole, requestedReviewStage]);
   const unifiedApprovalQ=trpc.delegatePricingBundles.approvalQueue.useQuery(undefined,{enabled:isPackageSubmissionActionRole,retry:false,...independentReadOptions});
-  const unifiedApprovalItems=unifiedApprovalQ.data?.items||[];
-  const unifiedSubmissionIds=new Set(unifiedApprovalItems.flatMap((row:any)=>row.submissionIds));
-  const unifiedOrderIds=new Set(unifiedApprovalItems.flatMap((row:any)=>row.coveredOrderIds));
+  const seniorAccountingQ = trpc.delegatePricingBundles.approvalQueue.useQuery({ stage: "accounting" }, { enabled: isSeniorReviewRole, retry: false, ...independentReadOptions });
+  const seniorAccountingItems = (seniorAccountingQ.data?.items || []).filter((row: any) => row.status === "pending_accounting");
+  const seniorManagementItems = (unifiedApprovalQ.data?.items || []).filter((row: any) => row.status === "pending_management");
+  const currentUnifiedApprovalQ = isSeniorReviewRole && seniorActionTab === "accounting" ? seniorAccountingQ : unifiedApprovalQ;
+  const unifiedApprovalItems = isSeniorReviewRole ? seniorActionTab === "accounting" ? seniorAccountingItems : seniorActionTab === "management" ? seniorManagementItems : [] : unifiedApprovalQ.data?.items || [];
+  const allUnifiedApprovalItems = isSeniorReviewRole ? [...seniorAccountingItems, ...seniorManagementItems] : unifiedApprovalItems;
+  const unifiedSubmissionIds=new Set(allUnifiedApprovalItems.flatMap((row:any)=>row.submissionIds));
+  const unifiedOrderIds=new Set(allUnifiedApprovalItems.flatMap((row:any)=>row.coveredOrderIds));
   const { data: actionableSubmissions, isLoading: actionableSubmissionsLoading } =
     trpc.purchasePackages.actionableSubmissionsForMe.useQuery(undefined, {
       enabled: isPackageSubmissionActionRole,
@@ -296,7 +307,7 @@ export default function PurchaseOrders() {
   // [PB-REVIEWER-ACTIONABLE 2026-08-31] بعد أن يجمع المراجع طلبات pending_review
   // داخل حزمة، تصبح الحزمة هي وحدة العرض في «بانتظار إجرائي». لا نغيّر
   // actionableForMe ولا صلاحية reviewItems؛ كل PR يبقى مستقلاً عند فتحه.
-  const isReviewerGroupingActionRole = !!user && [
+  const isLegacyReviewerGroupingActionRole = !!user && [
     "owner",
     "admin",
     "maintenance_manager",
@@ -305,6 +316,7 @@ export default function PurchaseOrders() {
     "purchase_manager",
     "food_warehouse_manager",
   ].includes(user.role);
+  const isReviewerGroupingActionRole = isLegacyReviewerGroupingActionRole || user?.role === "senior_management";
   const needsActionablePackageCards = isReviewerGroupingActionRole;
   const { data: actionablePackageCards = [], isLoading: actionablePackageCardsLoading } =
     trpc.purchasePackages.cards.useQuery(undefined, {
@@ -359,7 +371,6 @@ export default function PurchaseOrders() {
   const reviewerActionableOrderIds = useMemo(() =>
     new Set(
       actionableItems
-        .filter((it: any) => it.status === "pending_review")
         .map((it: any) => Number(it.id))
     ),
   [actionableItems]);
@@ -369,12 +380,18 @@ export default function PurchaseOrders() {
 
     return (actionablePackageCards as any[]).flatMap((card: any) => {
       if (card.cardType !== "package") return [];
-      const actionableOrders = (card.orders ?? []).filter((po: any) =>
-        reviewerActionableOrderIds.has(Number(po.id)) && po.status === "pending_review"
-      );
+      const actionableOrders = (card.orders ?? []).flatMap((po: any) => {
+        if (!reviewerActionableOrderIds.has(Number(po.id))) return [];
+        const hasRoutedItems = (po.items ?? []).some(isRoutedPurchaseItem);
+        if (hasRoutedItems) {
+          const items = (po.items ?? []).filter((item: any) => canReviewPurchaseItem(user, item));
+          return items.length ? [{ ...po, items, itemCount: items.length }] : [];
+        }
+        return isLegacyReviewerGroupingActionRole && po.status === "pending_review" ? [po] : [];
+      });
       return actionableOrders.length > 0 ? [{ ...card, actionableOrders }] : [];
     });
-  }, [actionablePackageCards, isReviewerGroupingActionRole, reviewerActionableOrderIds]);
+  }, [actionablePackageCards, isReviewerGroupingActionRole, isLegacyReviewerGroupingActionRole, reviewerActionableOrderIds, user]);
 
   const reviewerPackagedOrderIds = useMemo(() => {
     const ids = new Set<number>();
@@ -392,10 +409,10 @@ export default function PurchaseOrders() {
   const standaloneActionableItems = useMemo(() =>
     actionableItems.filter((it: any) => {
       const id = Number(it.id);
-      if(isPackageSubmissionActionRole&&unifiedOrderIds.has(id))return false;
-      if (isPackageSubmissionActionRole && actionableSubmissionOrderIds.has(id)) return false;
+      if(isPackageSubmissionActionRole&&unifiedOrderIds.has(id)&&!(isSeniorReviewRole && it.reviewAction))return false;
+      if (isPackageSubmissionActionRole && actionableSubmissionOrderIds.has(id) && !(isSeniorReviewRole && it.reviewAction)) return false;
       if (isDelegatePricingActionRole && it.actionMode === "estimate" && delegatePricingPackagedOrderIds.has(id)) return false;
-      if (isReviewerGroupingActionRole && it.status === "pending_review" && reviewerPackagedOrderIds.has(id)) return false;
+      if (isReviewerGroupingActionRole && reviewerPackagedOrderIds.has(id)) return false;
       return true;
     }),
   [
@@ -407,15 +424,29 @@ export default function PurchaseOrders() {
     isDelegatePricingActionRole,
     isReviewerGroupingActionRole,
     unifiedApprovalQ.data,
+    seniorAccountingQ.data,
+    isSeniorReviewRole,
   ]);
 
-  const actionableDisplayCount =
+  const seniorReviewActionItems = standaloneActionableItems.filter((row: any) => row.reviewAction || row.status !== "pending_management");
+  const seniorManagementActionItems = standaloneActionableItems.filter((row: any) => !row.reviewAction && row.status === "pending_management");
+  const seniorActionCounts = {
+    review: seniorReviewActionItems.length + reviewerActionablePackages.length,
+    accounting: seniorAccountingItems.length,
+    management: seniorManagementItems.length + actionableSubmissionItems.length + seniorManagementActionItems.length,
+  };
+  const displayedStandaloneActionableItems = isSeniorReviewRole ? seniorActionTab === "review" ? seniorReviewActionItems : seniorActionTab === "management" ? seniorManagementActionItems : [] : standaloneActionableItems;
+  const showReviewActionCards = !isSeniorReviewRole || seniorActionTab === "review";
+  const showFinancialActionCards = !isSeniorReviewRole || seniorActionTab !== "review";
+  const showLegacySubmissionCards = !isSeniorReviewRole || seniorActionTab === "management";
+  const actionableDisplayCount = isSeniorReviewRole ? seniorActionCounts.review + seniorActionCounts.accounting + seniorActionCounts.management :
     standaloneActionableItems.length +
     unifiedApprovalItems.length +
     (isPackageSubmissionActionRole ? actionableSubmissionItems.length : 0) +
     (isDelegatePricingActionRole ? delegatePricingPackages.length : 0) +
     (isReviewerGroupingActionRole ? reviewerActionablePackages.length : 0);
-  const actionableViewLoading =
+  const currentActionableDisplayCount = isSeniorReviewRole ? seniorActionCounts[seniorActionTab] : actionableDisplayCount;
+  const actionableViewLoading = isSeniorReviewRole ? seniorActionTab === "review" ? actionableLoading || actionablePackageCardsLoading : seniorActionTab === "accounting" ? seniorAccountingQ.isLoading : unifiedApprovalQ.isLoading || actionableSubmissionsLoading || actionableLoading :
     actionableLoading ||
     (isPackageSubmissionActionRole&&unifiedApprovalQ.isLoading)||
     (isPackageSubmissionActionRole && actionableSubmissionsLoading) ||
@@ -646,7 +677,9 @@ export default function PurchaseOrders() {
   const canGroup = user && ["owner", "admin", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "purchase_manager", "food_warehouse_manager"].includes(user.role);
   const [selectedForPackage, setSelectedForPackage] = useState<number[]>([]);
 
-  const isGroupable = (po: any) => po.status === "pending_review" && !po.packageId;
+  const isGroupable = (po: any) => po.status === "pending_review" && !po.packageId && (
+    !(po.items ?? []).some(isRoutedPurchaseItem) || (po.items ?? []).some((item: any) => canReviewPurchaseItem(user, item))
+  );
 
   const toggleSelect = (poId: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -788,13 +821,16 @@ export default function PurchaseOrders() {
       {/* ── قائمة "بانتظار إجرائي" ────────────────────────────────── */}
       {view === "actionable" && (
         <div className="space-y-2">
-          {isPackageSubmissionActionRole&&unifiedApprovalQ.error&&<p role="alert">{unifiedApprovalQ.error.message}</p>}
+          {isSeniorReviewRole && <div className="flex flex-wrap gap-2" aria-label={t.purchaseOrders.reviewStages}>
+            {(["review", "accounting", "management"] as const).map(stage => <Button key={stage} size="sm" data-review-stage={stage} aria-pressed={seniorActionTab === stage} variant={seniorActionTab === stage ? "default" : "outline"} onClick={() => setSeniorActionTab(stage)}>{stage === "review" ? t.purchaseOrders.routedReviewTab : stage === "accounting" ? t.purchaseOrders.accountingApprovalTab : t.purchaseOrders.managementApprovalTab} ({seniorActionCounts[stage]})</Button>)}
+          </div>}
+          {isPackageSubmissionActionRole&&showFinancialActionCards&&currentUnifiedApprovalQ.error&&<p role="alert">{currentUnifiedApprovalQ.error.message}</p>}
           {actionableViewLoading ? (
             <>
               <Skeleton className="h-20 w-full" />
               <Skeleton className="h-20 w-full" />
             </>
-          ) : actionableDisplayCount === 0 ? (
+          ) : currentActionableDisplayCount === 0 ? (
             <Card>
               <CardContent className="py-10 text-center text-muted-foreground">
                 <Package className="w-10 h-10 mx-auto mb-3 opacity-40" />
@@ -803,9 +839,9 @@ export default function PurchaseOrders() {
             </Card>
           ) : (
             <>
-              {isPackageSubmissionActionRole&&<><BundleApprovalCards items={unifiedApprovalItems}/>
-                {unifiedApprovalQ.data?.nextId&&<Link href="/delegate-pricing-bundles" className="text-primary underline">عرض بقية حزم التسعير للاعتماد</Link>}</>}
-              {isReviewerGroupingActionRole && reviewerActionablePackages.map((pkg: any) => (
+              {isPackageSubmissionActionRole&&showFinancialActionCards&&<><BundleApprovalCards items={unifiedApprovalItems} stage={isSeniorReviewRole ? seniorActionTab === "accounting" ? "accounting" : "management" : undefined}/>
+                {currentUnifiedApprovalQ.data?.nextId&&<Link href={isSeniorReviewRole ? `/delegate-pricing-bundles?stage=${seniorActionTab === "accounting" ? "accounting" : "management"}` : "/delegate-pricing-bundles"} className="text-primary underline">عرض بقية حزم التسعير للاعتماد</Link>}</>}
+              {isReviewerGroupingActionRole && showReviewActionCards && reviewerActionablePackages.map((pkg: any) => (
                 <PurchaseBatchCard
                   key={`review-package:${pkg.id}`}
                   packageNumber={pkg.packageNumber}
@@ -861,7 +897,7 @@ export default function PurchaseOrders() {
                 );
               })}
 
-              {isPackageSubmissionActionRole && actionableSubmissionItems.map((sub: any) => (
+              {isPackageSubmissionActionRole && showLegacySubmissionCards && actionableSubmissionItems.map((sub: any) => (
                 <Card key={`submission:${sub.submissionId}`} className="hover:shadow-sm transition-shadow border-primary/20">
                   <CardContent className="py-4 flex items-center justify-between gap-4 flex-wrap">
                     <div className="min-w-0 flex-1">
@@ -894,7 +930,7 @@ export default function PurchaseOrders() {
                 </Card>
               ))}
 
-              {standaloneActionableItems.map((it: any) => (
+              {displayedStandaloneActionableItems.map((it: any) => (
                 <Card key={`po:${it.id}`} className="hover:shadow-sm transition-shadow">
                   <CardContent className="py-4 flex items-center justify-between gap-4 flex-wrap">
                     <div className="min-w-0">

@@ -15,14 +15,17 @@ const parentTables = {
   NOTIFICATION: ["notifications", "userId", "user"],
 } as const;
 type ScopeKind = "po" | "ticket" | "external" | "package" | "user";
+type TranslationParent = { id: number; parentId: number; purchaseOrderItemId?: number | null };
 export interface BusinessTranslationPort {
-  parents(type: keyof typeof parentTables, ids: number[]): Promise<Array<{ id: number; parentId: number }>>;
+  parents(type: keyof typeof parentTables, ids: number[]): Promise<TranslationParent[]>;
   authorize(user: BusinessIdentity, kind: ScopeKind, id: number): Promise<void>;
   authorizeMany?(user: BusinessIdentity, kind: ScopeKind, ids: number[]): Promise<void>;
+  authorizeRows?(user: BusinessIdentity, type: keyof typeof parentTables, rows: TranslationParent[]): Promise<void>;
 }
 const denied = () => new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لبيانات الترجمة المطلوبة" });
 const port: BusinessTranslationPort = {
   authorizeMany: authorizeBusinessTranslationParents,
+  authorizeRows: authorizeBusinessPurchaseTranslationRows,
   async parents(type, ids) {
     const db = await import("../db");
     const schema = await import("../../../drizzle/schema");
@@ -31,6 +34,10 @@ const port: BusinessTranslationPort = {
     const table = (schema as any)[tableName];
     const connection = await db.getDb();
     if (!connection) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "قاعدة البيانات غير متاحة" });
+    if (type === "PO_COMMENT" || type === "PO_ITEM_HISTORY") {
+      return connection.select({ id: table.id, parentId: table[parentColumn], purchaseOrderItemId: table.purchaseOrderItemId })
+        .from(table).where(inArray(table.id, ids));
+    }
     return connection.select({ id: table.id, parentId: table[parentColumn] }).from(table).where(inArray(table.id, ids));
   },
   async authorize(user, kind, id) {
@@ -74,20 +81,47 @@ export async function authorizeBusinessTranslationParents(user: BusinessIdentity
   }
   const db = await import("../db");
   const { createPurchaseOrderReadGuard, assertCanPerformPOAction } = await import("./guard");
-  const check = await createPurchaseOrderReadGuard(user);
   if (kind === "po") {
     const orders = new Map<number, any>((await db.getPurchaseOrdersByIds(ids)).map(row => [Number(row.id), row]));
+    const check = await createPurchaseOrderReadGuard(user, Array.from(orders.values()));
     for (const id of ids) { const order = orders.get(id); if (!order) throw denied(); check(order); }
     return;
   }
   assertCanPerformPOAction("viewPurchasePackage", user);
   const orders = await db.getPurchaseOrdersForPackages(ids);
+  const check = await createPurchaseOrderReadGuard(user, orders);
   const visiblePackages = new Set<number>();
   for (const order of orders) {
     try { check(order); visiblePackages.add(Number(order.packageId)); }
     catch (error) { if (!(error instanceof TRPCError) || error.code !== "FORBIDDEN") throw error; }
   }
   if (ids.some(id => !visiblePackages.has(id))) throw denied();
+}
+
+/** New early reviewer access cannot authorize translations of a foreign line. */
+export async function authorizeBusinessPurchaseTranslationRows(user: BusinessIdentity, type: keyof typeof parentTables, rows: TranslationParent[]) {
+  const ids = Array.from(new Set(rows.map(row => Number(row.parentId))));
+  const db = await import("../db");
+  const { createPurchaseOrderReadScope } = await import("./guard");
+  const orders = await db.getPurchaseOrdersByIds(ids);
+  const byId = new Map<number, any>(orders.map(row => [Number(row.id), row]));
+  const scope = await createPurchaseOrderReadScope(user, orders);
+  for (const id of ids) { const order = byId.get(id); if (!order) throw denied(); scope.assert(order); }
+  const earlyBatchParents = type === "PO_BATCH" ? orders.filter(order => scope.isRoutedReviewOnly(order)).map(order => Number(order.id)) : [];
+  const batchItems = earlyBatchParents.length ? await db.getFullPOItemsForPOs(earlyBatchParents) : [];
+  for (const row of rows) {
+    const order = byId.get(Number(row.parentId));
+    if (!scope.isRoutedReviewOnly(order)) continue;
+    if (type === "PO_BATCH") {
+      const members = batchItems.filter(item => Number(item.purchaseOrderId) === Number(order.id) && Number(item.batchId) === Number(row.id));
+      if (!members.length || scope.filterItems(order, members).length !== members.length) throw denied();
+      continue;
+    }
+    const itemId = type === "PO_ITEM" ? row.id : row.purchaseOrderItemId;
+    // Shared header comments retain their existing visibility; history always has a line.
+    if (itemId == null && type === "PO_COMMENT") continue;
+    if (itemId == null || !scope.filterItems(order, [{ id: Number(itemId), purchaseOrderId: Number(order.id) }]).length) throw denied();
+  }
 }
 
 async function authorizeParents(source: BusinessTranslationPort, user: BusinessIdentity, kind: ScopeKind, ids: number[]) {
@@ -114,5 +148,8 @@ export async function assertBusinessTranslationAccess(user: BusinessIdentity, ra
   const tableType = type as keyof typeof parentTables;
   const rows = ids.length ? await source.parents(tableType, ids) : [];
   if (rows.length !== ids.length || ids.some(id => !rows.some(row => row.id === id))) throw denied();
+  if (user.role === "senior_management" && parentTables[tableType][2] === "po" && source.authorizeRows) {
+    return source.authorizeRows(user, tableType, rows);
+  }
   await authorizeParents(source, user, parentTables[tableType][2], Array.from(new Set(rows.map(row => row.parentId))));
 }

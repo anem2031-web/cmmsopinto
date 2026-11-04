@@ -228,6 +228,26 @@ describe("Document-center DPB approved PDF, without changing delegate files or w
     expect(table.match(/<th /g)).toHaveLength(7);
     expect(JSON.stringify(approved)).toBe(original);
   });
+  it("renders multiple frozen item reviewers and a senior actor's separate accounting approval without changing the finance form", async () => {
+    const f = completedFixture(true);
+    const captured = captureDocumentSignature({ id: 8, name: "Senior actor at accounting stage", signatureUrl: "captured-senior-accounting" });
+    const capturedManagement = captureDocumentSignature({ id: 8, name: "Senior actor at management stage", signatureUrl: "captured-senior-management" });
+    f.memory.prepare("UPDATE delegate_pricing_bundle_approvals SET accountingApprovedById=8,managementApprovedById=8,accountingSignatureSnapshot=?,managementSignatureSnapshot=?").run(captured, capturedManagement);
+    f.snapshot.reviewSignatureVersion = 2;
+    f.snapshot.rows.forEach((row: any, index: number) => Object.assign(row, { reviewRole: index % 2 ? "senior_management" : "construction_procurement_manager", reviewedById: index % 2 ? 202 : 201, reviewedAt: "2026-11-03T08:00:00Z" }));
+    f.snapshot.signatures = f.snapshot.rows.map((row: any) => ({ purchaseOrderId: row.purchaseOrderId, poNumber: row.poNumber, requesterId: 1, requesterName: "Frozen requester", requesterSignature: "", reviewerId: row.reviewedById, reviewerName: row.reviewedById === 201 ? "Frozen construction reviewer" : "Frozen senior reviewer", reviewerSignature: `data:image/svg+xml;base64,${Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="120" height="30"><text x="8" y="23" font-size="21" font-style="italic" fill="#134578">reviewer ${row.reviewedById}</text></svg>`).toString("base64")}`, reviewerSource: `captured-${row.reviewedById}`, purchaseOrderItemIds: [row.id], reviewedAt: row.reviewedAt }));
+    const original = JSON.stringify(f.snapshot), approved = await approvedBundleSnapshot(f.database, { id: 24 }, f.snapshot, f.signature);
+    expect(approved.financialApprovals).toHaveLength(1);
+    expect(approved.financialApprovals?.every(row => row.accountingName === "Senior actor at accounting stage" && row.managementName === "Senior actor at management stage")).toBe(true);
+    const h = renderHarness(); await h.render(0, 11, undefined, undefined, approved);
+    const html = h.html();
+    expect(html).toContain("Frozen construction reviewer"); expect(html).toContain("Frozen senior reviewer"); expect(html).toContain("Senior actor at accounting stage");
+    expect(html).not.toContain("Actual manager"); expect(html.match(/>مراجع الطلب<\/td>/g)).toHaveLength(2);
+    expect(html).not.toContain("Senior actor at management stage");
+    expect(html).toContain("الشؤون المالية والإجراءات المحاسبية"); expect(html).toContain("المهندس/ زكري بن عبدالله الزكري");
+    expect(JSON.stringify(f.snapshot)).toBe(original);
+    fs.mkdirSync("tmp/purchase-item-review/docs", { recursive: true }); fs.writeFileSync("tmp/purchase-item-review/docs/multiple-reviewers-approved.html", html);
+  });
   it("prints only the accounting signature and a fixed bold CEO name with an empty signature cell without changing approval evidence",async()=>{
     const f=fixture();const legacy=await approvedBundleSnapshot(f.database,{id:24},f.snapshot,f.signature);
     const approved={...legacy,financialApprovals:[{...legacy.financialApprovals![0],accountingSignature:"data:image/png;base64,accounting-only",accountingAt:"ACCOUNTING-TIMESTAMP",managementName:"Stored actual approver",managementSignature:"data:image/png;base64,stored-ceo-signature",managementAt:"MANAGEMENT-TIMESTAMP"}]};

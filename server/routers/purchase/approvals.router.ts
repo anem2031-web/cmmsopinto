@@ -3,7 +3,11 @@ import { z } from "zod";
 import { router, protectedProcedure, managerProcedure, accountantProcedure, managementProcedure } from "../_shared/procedures";
 import * as db from "../../_core/db";
 import { notifyItemRejection } from "../_shared/router-helpers";
-import { assertCanPerformPOAction } from "../../_core/authz/guard";
+import { assertCanPerformPOAction, assertCanReviewPurchaseOrderItems } from "../../_core/authz/guard";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import { auditLogs, purchaseOrderItems, purchaseOrders, users } from "../../../drizzle/schema";
+import { isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
+import { reviewRoutedPurchaseItems } from "../../services/purchase-item-review";
 import { getActivePricingBatchItems, rejectPricingBatchIfEmpty } from "./pricing-batch-state";
 import { syncPathBTicketFromPurchaseOrder } from "./ticket-purchase-workflow";
 import { generatePurchaseRequestPDF } from "../../services/export/exportService";
@@ -112,6 +116,7 @@ export const approvalsRouter = router({
     assertCanPerformPOAction("approveAccounting", ctx.user, po);
     await db.withTransaction(tx => assertNoReplacementOrder(tx, po.id));
     const items = await db.getPOItems(input.id);
+    if (items.some((item: any) => item.reviewRole != null)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "الطلب يحتوي مراجعات مستقلة للأصناف؛ اعتمد دفعة التسعير أو حزمة التسعير المحددة فقط" });
     
     // Process item rejections if any
     if (input.rejectedItemIds && input.rejectedItemIds.length > 0) {
@@ -634,6 +639,7 @@ export const approvalsRouter = router({
     assertCanPerformPOAction("approveManagement", ctx.user, po);
     await db.withTransaction(tx => assertNoReplacementOrder(tx, po.id));
     const items = await db.getPOItems(input.id);
+    if (items.some((item: any) => item.reviewRole != null)) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "الطلب يحتوي مراجعات مستقلة للأصناف؛ اعتمد دفعة التسعير أو حزمة التسعير المحددة فقط" });
 
     // Process item rejections if any
     if (input.rejectedItemIds && input.rejectedItemIds.length > 0) {
@@ -788,6 +794,9 @@ export const approvalsRouter = router({
     // سابقًا. القاعدة (accountant فقط بـpending_accounting، senior_management
     // فقط بـpending_management، admin/owner دائمًا) معرَّفة الآن بـpolicy.ts فقط.
     assertCanPerformPOAction("reject", ctx.user, poReject);
+    if ((await db.getPOItems(input.id)).some((item: any) => item.reviewRole != null)) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "هذا الطلب يحوي أصنافًا بمراجعات مستقلة؛ ارفض الأصناف من دفعة أو حزمة التسعير الخاصة بها" });
+    }
     await assertLegacyApprovalOutsideUnifiedBundle(await db.getDb(),{poId:input.id,pendingOnly:true});
     await db.withTransaction(tx => assertNoReplacementOrder(tx, poReject.id));
 
@@ -829,8 +838,9 @@ export const approvalsRouter = router({
     const po = await db.getPurchaseOrderById(input.poId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
 
-    // ✅ الحارس المركزي: يتحقق من الدور + مرحلة الطلب (pending_review)
-    assertCanPerformPOAction("reviewItems", ctx.user, po);
+    const routedOrder = (await db.getPOItems(input.poId)).some(isRoutedPurchaseItem);
+    // Historical orders keep their original all-items review and role grants.
+    if (!routedOrder) assertCanPerformPOAction("reviewItems", ctx.user, po);
 
     // مدير المستودع الغذائي: مقيّد إضافيًا بطلبات مساعد المستودع الغذائي أو
     // طلباته هو شخصياً فقط — هذا قيد ملكية خاص بالدور، غير معرَّف بـpolicy.ts
@@ -847,7 +857,35 @@ export const approvalsRouter = router({
     // جميع قرارات المراجعة وتغيير حالة الطلب تُنفذ داخل معاملة واحدة. كما أن
     // كل تحديث صنف مشروط ببقائه غير cancelled/rejected لحظة الكتابة، حتى لا
     // يعيد سباق تزامن مع الإلغاء تنشيط الصنف بعد إلغائه.
-    const result = await db.withTransaction(async (tx: any) => {
+    const result = routedOrder ? await db.withTransaction(async (tx: any) => reviewRoutedPurchaseItems(ctx.user, input, {
+      lockOrder: async id => (await tx.select().from(purchaseOrders).where(eq(purchaseOrders.id, id)).limit(1).for("update"))[0] || null,
+      readItems: id => db.getPOItems(id, tx),
+      readUsers: ids => tx.select().from(users).where(inArray(users.id, ids)).for("update"),
+      authorize: (actor, currentOrder, items) => assertCanReviewPurchaseOrderItems(actor, currentOrder, items),
+      updateItem: async (item, changes, actor) => {
+        const updated: any = await tx.update(purchaseOrderItems).set(changes).where(and(
+          eq(purchaseOrderItems.id, item.id), eq(purchaseOrderItems.purchaseOrderId, input.poId),
+          eq(purchaseOrderItems.reviewRole, item.reviewRole as any), eq(purchaseOrderItems.status, "pending_review"),
+          isNull(purchaseOrderItems.reviewedById), isNull(purchaseOrderItems.reviewedAt),
+        ));
+        if (Number(updated?.[0]?.affectedRows ?? 0) !== 1) return false;
+        await db.createPOItemHistoryEvent({
+          purchaseOrderItemId: item.id, purchaseOrderId: input.poId, eventType: "review_decision",
+          previousStatus: item.status, newStatus: changes.status,
+          previousDelegateId: item.delegateId, newDelegateId: changes.delegateId ?? item.delegateId,
+          actorUserId: actor.id, actorName: actor.name,
+          note: changes.status === "pending" ? "موافقة المراجع وإرسال الصنف للمندوب" : changes.managementRejectionReason,
+          metadata: { reviewRole: item.reviewRole, reviewedById: actor.id },
+        }, tx);
+        return true;
+      },
+      updateOrder: (id, changes) => db.updatePurchaseOrder(id, changes, tx),
+      audit: async (actor, currentOrder, decisions) => {
+        await tx.insert(auditLogs).values({ userId: actor.id, action: "review_po_items", entityType: "purchase_order", entityId: currentOrder.id,
+          newValues: { itemIds: decisions.map(item => item.id), decisions, routedReview: true },
+        });
+      },
+    })) : await db.withTransaction(async (tx: any) => {
       const dbItems = await db.getPOItems(input.poId, tx);
       const reviewableItems = dbItems.filter(
         (item: any) => !["cancelled", "rejected"].includes(item.status)
@@ -960,7 +998,7 @@ export const approvalsRouter = router({
         });
       }
     } else if (result.hasApproved) {
-      const delegateIds = Array.from(new Set(result.approvedItems.map((item: any) => item.delegateId as number)));
+      const delegateIds = Array.from(new Set<number>(result.approvedItems.map((item: any) => item.delegateId as number)));
       for (const delegateId of delegateIds) {
         const delegateItems = result.approvedItems.filter((item: any) => item.delegateId === delegateId);
         const itemNames = delegateItems.map((item: any) => item.itemName).join("، ");

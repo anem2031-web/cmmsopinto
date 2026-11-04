@@ -2142,6 +2142,11 @@ export const purchaseOrderItems = mysqlTable("purchase_order_items", {
 	photoUrl: text(),
 	notes: text(),
 	delegateId: int(),
+	// NULL preserves the historical order-level review workflow.
+	reviewRole: mysqlEnum(["general_maintenance_manager", "construction_procurement_manager", "senior_management"]),
+	reviewedById: int(),
+	reviewedAt: timestamp({ mode: 'string' }),
+	reviewerSignatureSnapshot: text(),
 	requiredDate: date({ mode: 'string' }),
 	deliveryLeadDays: int(),
 	delegateAssignedAt: timestamp({ mode: 'string' }),
@@ -2212,6 +2217,8 @@ export const purchaseOrderItems = mysqlTable("purchase_order_items", {
 	index("idx_poi_sectionId").on(table.sectionId),
 	index("idx_poi_assetId").on(table.assetId),
 	index("idx_poi_categoryId").on(table.categoryId),
+	index("idx_poi_review_queue").on(table.reviewRole, table.status, table.purchaseOrderId, table.id),
+	index("idx_poi_review_actor").on(table.reviewRole, table.reviewedById, table.purchaseOrderId, table.id),
 ]);
 
 export const purchaseOrders = mysqlTable("purchase_orders", {

@@ -7,13 +7,16 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
+import { useTranslation } from "@/contexts/LanguageContext";
 
 export function BundleApprovalCards({
   items,
   onSelect,
+  stage,
 }: {
   items: any[];
   onSelect?: (id: number) => void;
+  stage?: "accounting" | "management";
 }) {
   return (
     <>
@@ -32,7 +35,7 @@ export function BundleApprovalCards({
             {onSelect ? (
               <Button onClick={() => onSelect(row.id)}>مراجعة الحزمة</Button>
             ) : (
-              <Link href={`/delegate-pricing-bundles?approval=${row.id}`}>
+              <Link href={`/delegate-pricing-bundles?approval=${row.id}${stage ? `&stage=${stage}` : ""}`}>
                 <Button>مراجعة الحزمة</Button>
               </Link>
             )}
@@ -48,22 +51,21 @@ export function UnifiedBundleApproval({
   selectedOnly?: boolean;
 }) {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const [, setLocation] = useLocation();
   const allowed =
     !!user &&
     ["owner", "admin", "accountant", "senior_management"].includes(user.role);
-  const requestedId = Number(
-    new URLSearchParams(useSearch()).get("approval") || 0
-  );
+  const params = new URLSearchParams(useSearch());
+  const requestedId = Number(params.get("approval") || 0);
+  const rawStage = params.get("stage");
+  const requestedStage = rawStage === "accounting" || rawStage === "management" ? rawStage : undefined;
+  const invalidStage = rawStage !== null && !requestedStage;
   const [selected, setSelected] = useState(requestedId);
   const [afterId, setAfterId] = useState(0);
-  const queue = trpc.delegatePricingBundles.approvalQueue.useQuery(
-    { afterId },
-    { enabled: allowed && !selectedOnly, retry: false }
-  );
   const detail = trpc.delegatePricingBundles.approvalDetail.useQuery(
-    { id: selected },
-    { enabled: allowed && selected > 0, retry: false }
+    { id: selected, ...(requestedStage ? { stage: requestedStage } : {}) },
+    { enabled: allowed && !invalidStage && selected > 0, retry: false }
   );
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
@@ -82,9 +84,19 @@ export function UnifiedBundleApproval({
       setPendingFollowup(false);
       operation.current = null;
     }
-  }, [requestedId]);
+  }, [requestedId, requestedStage]);
   const utils = trpc.useUtils();
   const data = detail.data;
+  const [queueStage, setQueueStage] = useState<"accounting" | "management">(requestedStage ?? "management");
+  const isSeniorReviewRole = user?.role === "senior_management";
+  const effectiveQueueStage = requestedStage ?? (isSeniorReviewRole ? queueStage : undefined);
+  const queue = trpc.delegatePricingBundles.approvalQueue.useQuery(
+    { afterId, ...(effectiveQueueStage ? { stage: effectiveQueueStage } : {}) },
+    { enabled: allowed && !invalidStage && !selectedOnly, retry: false }
+  );
+  const returnTo = requestedStage ? `/purchase-orders?reviewStage=${requestedStage}` : "/purchase-orders";
+  const actualStage = data?.status === "pending_accounting" ? "accounting" : data?.status === "pending_management" ? "management" : null;
+  const stageMatches = !requestedStage || requestedStage === actualStage;
   useEffect(() => {
     setAmount(data?.custodyBalance || "");
     setNotes("");
@@ -132,7 +144,7 @@ export function UnifiedBundleApproval({
           void refresh().catch(() =>
             toast.warning("تم حفظ القرار؛ حدّث القائمة لإظهار الحالة الجديدة")
           );
-          if (selectedOnly) setLocation("/purchase-orders");
+          if (selectedOnly) setLocation(returnTo);
           return;
         }
       }
@@ -170,6 +182,7 @@ export function UnifiedBundleApproval({
           ? "management"
           : null;
     if (!stage) return;
+    if (requestedStage && requestedStage !== stage) return;
     operation.current = {
       fingerprint: `resume:${data.id}:${stage}`,
       stage,
@@ -185,13 +198,14 @@ export function UnifiedBundleApproval({
     data?.managementEffectsDone,
     selected,
     user?.id,
+    requestedStage,
   ]);
   const submit = () => {
     if (busy) return;
     if (pendingFollowup && operation.current) {
       return runOperation(operation.current);
     }
-    if (!data) return;
+    if (!data || !stageMatches) return;
     const stage =
       data.status === "pending_accounting" ? "accounting" : "management";
     const rejections = Object.entries(reasons).map(([itemId, reason]) => ({
@@ -219,14 +233,16 @@ export function UnifiedBundleApproval({
     return runOperation(operation.current);
   };
   if (!allowed) return null;
+  if (invalidStage) return <p role="alert">{t.purchaseOrders.approvalStageChanged}</p>;
   const canApprove =
     data &&
+    stageMatches &&
     ((data.status === "pending_accounting" &&
-      ["owner", "admin", "accountant"].includes(user!.role)) ||
+      ["owner", "admin", "accountant", "senior_management"].includes(user!.role)) ||
       (data.status === "pending_management" &&
         ["owner", "admin", "senior_management"].includes(user!.role)));
   const managementView =
-    data?.status === "pending_management" || user?.role === "senior_management";
+    data?.status === "pending_management";
   const displayedItems = (data?.items || []).filter(
     (item: any) =>
       !managementView || !["rejected", "cancelled"].includes(item.currentStatus)
@@ -255,7 +271,7 @@ export function UnifiedBundleApproval({
         <Button
           variant="outline"
           disabled={busy}
-          onClick={() => setLocation("/purchase-orders")}
+          onClick={() => setLocation(returnTo)}
         >
           رجوع إلى بانتظار إجرائي
         </Button>
@@ -263,8 +279,11 @@ export function UnifiedBundleApproval({
       {!selectedOnly && (
         <>
           <h2 className="font-bold text-lg">حزم التسعير بانتظار الاعتماد</h2>
+          {isSeniorReviewRole && !requestedStage && <div className="flex flex-wrap gap-2" aria-label={t.purchaseOrders.reviewStages}>
+            {(["accounting", "management"] as const).map(stage => <Button key={stage} variant={queueStage === stage ? "default" : "outline"} aria-pressed={queueStage === stage} onClick={() => { setQueueStage(stage); setAfterId(0); }}>{stage === "accounting" ? t.purchaseOrders.accountingApprovalTab : t.purchaseOrders.managementApprovalTab}</Button>)}
+          </div>}
           {queue.error && <p role="alert">{queue.error.message}</p>}
-          <BundleApprovalCards items={queue.data?.items || []} />
+          <BundleApprovalCards items={(queue.data?.items || []).filter((row: any) => !effectiveQueueStage || row.status === `pending_${effectiveQueueStage}`)} stage={effectiveQueueStage} />
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -287,6 +306,7 @@ export function UnifiedBundleApproval({
         <p role="status">جارٍ تحميل تفاصيل الحزمة…</p>
       )}
       {detail.error && <p role="alert">{detail.error.message}</p>}
+      {data && requestedStage && !stageMatches && !pendingFollowup && <p role="status">{t.purchaseOrders.approvalStageChanged}</p>}
       {data && (
         <Card>
           <CardHeader>

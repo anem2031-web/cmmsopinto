@@ -1,11 +1,18 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure, accountantProcedure, managementProcedure } from "../_shared/procedures";
+import { router, protectedProcedure, managementProcedure } from "../_shared/procedures";
+import { canApprovePricingBundleStage } from "../../../shared/business-role-policy";
 import { canReadPricingBundles } from "../../../shared/delegate-pricing-bundles";
 import { PricingBundleService, type PricingBundlePorts } from "../../services/delegate-pricing-bundles/service";
 import { documentListPageInput } from "@shared/document-list";
 import { UnifiedBundleApprovalService } from "../../services/delegate-pricing-bundles/unified-approval";
 const id = z.number().int().positive();
+const approvalStage = z.enum(["accounting", "management"]);
+// Local DPB capability; the global accountantProcedure and legacy PO/PB grants stay unchanged.
+const dpbAccountingProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!canApprovePricingBundleStage(ctx.user, "accounting")) throw new TRPCError({ code: "FORBIDDEN" });
+  return next({ ctx });
+});
 export function createPricingBundlesRouter(ports: PricingBundlePorts, enabled: () => boolean) {
   const service = new PricingBundleService(ports);
   const unified = ports.unified ? new UnifiedBundleApprovalService(ports.unified) : null;
@@ -15,12 +22,12 @@ export function createPricingBundlesRouter(ports: PricingBundlePorts, enabled: (
   const available = () => { if (!enabled()) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "حزم التسعير غير مفعلة حاليًا" }); };
   return router({
     status: protectedProcedure.query(({ ctx }) => { if (!canReadPricingBundles(ctx.user)) throw new TRPCError({ code: "FORBIDDEN" }); return { enabled: enabled(),...(enabled()&&ports.unified?.enabled()?{approvalEnabled:true}:{}) }; }),
-    approvalQueue: protectedProcedure.input(z.object({afterId:z.number().int().nonnegative().optional()}).optional()).query(({ctx,input})=>{
+    approvalQueue: protectedProcedure.input(z.object({afterId:z.number().int().nonnegative().optional(),stage:approvalStage.optional()}).optional()).query(({ctx,input})=>{
       if(!['owner','admin','accountant','senior_management'].includes(ctx.user.role)||Number(ctx.user.isActive)!==1)throw new TRPCError({code:'FORBIDDEN'});
-      if(!enabled()||!ports.unified?.enabled())return {items:[],nextId:null};return approvalAvailable().queue(ctx.user,input?.afterId);
+      if(!enabled()||!ports.unified?.enabled())return {items:[],nextId:null};return approvalAvailable().queue(ctx.user,input?.afterId,input?.stage);
     }),
-    approvalDetail: protectedProcedure.input(z.object({id})).query(({ctx,input})=>approvalAvailable().detail(ctx.user,input.id)),
-    approveAccounting: accountantProcedure.input(approvalInput).mutation(({ctx,input})=>approvalAvailable().approve(ctx.user,'accounting',input)),
+    approvalDetail: protectedProcedure.input(z.object({id,stage:approvalStage.optional()})).query(({ctx,input})=>approvalAvailable().detail(ctx.user,input.id,input.stage)),
+    approveAccounting: dpbAccountingProcedure.input(approvalInput).mutation(({ctx,input})=>approvalAvailable().approve(ctx.user,'accounting',input)),
     approveManagement: managementProcedure.input(approvalInput.omit({custodyBalance:true})).mutation(({ctx,input})=>approvalAvailable().approve(ctx.user,'management',input)),
     resumeApproval: protectedProcedure.input(z.object({id,stage:z.enum(['accounting','management'])})).mutation(({ctx,input})=>approvalAvailable().resumeApproval(ctx.user,input.id,input.stage)),
     list: protectedProcedure.query(({ ctx }) => { if (!canReadPricingBundles(ctx.user)) throw new TRPCError({ code: "FORBIDDEN" }); return enabled() ? service.list(ctx.user) : []; }),

@@ -13,6 +13,8 @@
  */
 
 import * as db from "../db";
+import { TRPCError } from "@trpc/server";
+import { canReviewPurchaseItem, canResolvePurchaseItemReviewer, isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
 import {
   assertCanPerformAction,
   assertCanPerformItemAction,
@@ -32,7 +34,7 @@ import {
   type POVisibilitySubject,
   type VisibilityContext,
 } from "./engine";
-import type { ActionName } from "./policy";
+import { ROUTED_REVIEW_BLOCKED_PO_STATUSES, type ActionName } from "./policy";
 
 export type { ActionName } from "./policy";
 export { PO_STATUS } from "./policy";
@@ -40,6 +42,7 @@ export { PO_STATUS } from "./policy";
 interface MinimalCtxUser {
   id: number;
   role: string;
+  isActive?: number | boolean | null;
 }
 
 /**
@@ -66,22 +69,31 @@ async function buildVisibilityContext(user: MinimalCtxUser): Promise<VisibilityC
  * FORBIDDEN تلقائيًا إن لم تكن مسموحة.
  */
 export async function assertCanViewPurchaseOrder(user: MinimalCtxUser, po: POVisibilitySubject): Promise<void> {
-  const visCtx = await buildVisibilityContext(user);
-  assertPOVisible(visCtx, po);
+  (await createPurchaseOrderReadScope(user, [po])).assert(po);
 }
 
 /** One read-list operation, one visibility context. Never retain across requests
  * or use a previously constructed reader to authorize a write/download. */
-export async function createPurchaseOrderReadGuard(user: MinimalCtxUser) {
-  return (await createPurchaseOrderReadScope(user)).assert;
+export async function createPurchaseOrderReadGuard(user: MinimalCtxUser, orders?: readonly POVisibilitySubject[]) {
+  return (await createPurchaseOrderReadScope(user, orders)).assert;
 }
 
 /** Share one context between list filtering and per-document checks in the RPC. */
-export async function createPurchaseOrderReadScope(user: MinimalCtxUser) {
+export async function createPurchaseOrderReadScope(user: MinimalCtxUser, orders?: readonly POVisibilitySubject[]) {
   const visCtx = await buildVisibilityContext(user);
+  const reviewRows = user.role === "senior_management" && (user.isActive === 1 || user.isActive === true)
+    ? await db.getPurchaseItemReviewScopeRows(user, orders?.map(order => Number(order.id))) : [];
+  const permittedReviewRows = reviewRows.filter((item: any) => canReviewPurchaseItem(user, item) || canResolvePurchaseItemReviewer(user, item));
+  const scopedIds = new Set(permittedReviewRows.map((item: any) => Number(item.id)));
+  const routedReviewPoIds = Array.from(new Set(permittedReviewRows.map((item: any) => Number(item.purchaseOrderId))));
+  const extended = { ...visCtx, routedReviewPoIds };
+  const isRoutedReviewOnly = (po: POVisibilitySubject) => !isPOVisible(visCtx, po) && isPOVisible(extended, po);
   return {
-    assert: (po: POVisibilitySubject): void => assertPOVisible(visCtx, po),
-    filter: <T extends POVisibilitySubject>(orders: T[]): T[] => filterVisiblePOs(visCtx, orders),
+    assert: (po: POVisibilitySubject): void => assertPOVisible(extended, po),
+    filter: <T extends POVisibilitySubject>(orders: T[]): T[] => filterVisiblePOs(extended, orders),
+    isRoutedReviewOnly,
+    filterItems: <T extends { id: number; purchaseOrderId?: number }>(po: POVisibilitySubject, items: T[]): T[] =>
+      isRoutedReviewOnly(po) ? items.filter(item => scopedIds.has(Number(item.id)) && Number(item.purchaseOrderId ?? po.id) === Number(po.id)) : items,
   };
 }
 
@@ -94,8 +106,7 @@ export async function filterVisiblePurchaseOrders<T extends POVisibilitySubject>
   user: MinimalCtxUser,
   pos: T[]
 ): Promise<T[]> {
-  const visCtx = await buildVisibilityContext(user);
-  return filterVisiblePOs(visCtx, pos);
+  return (await createPurchaseOrderReadScope(user, pos)).filter(pos);
 }
 
 /**
@@ -111,7 +122,7 @@ export function assertCanPerformPOAction(
   po?: POActionSubject,
   opts?: { isCreator?: boolean }
 ): void {
-  const actionCtx: ActionContext = { role: user.role, userId: user.id, isCreator: opts?.isCreator };
+  const actionCtx: ActionContext = { role: user.role, userId: user.id, isCreator: opts?.isCreator, isActive: user.isActive };
   assertCanPerformAction(action, actionCtx, po);
 }
 
@@ -139,7 +150,7 @@ export function assertCanPerformItemPOAction(
   user: MinimalCtxUser,
   subject: ItemActionSubject & { isCreator: boolean }
 ): void {
-  const actionCtx: ActionContext = { role: user.role, userId: user.id, isCreator: subject.isCreator };
+  const actionCtx: ActionContext = { role: user.role, userId: user.id, isCreator: subject.isCreator, isActive: user.isActive };
   assertCanPerformItemAction(actionName, actionCtx, subject);
 }
 
@@ -172,7 +183,53 @@ export function assertCanResolveDelegateChange(
   user: MinimalCtxUser,
   subject: DelegateChangeSubject
 ): void {
-  assertCanResolvePOItemDelegateChange({ role: user.role, userId: user.id }, subject);
+  assertCanResolvePOItemDelegateChange({ role: user.role, userId: user.id, isActive: user.isActive }, subject);
+}
+
+/** Selected rows are freshly loaded by the writer inside its transaction. */
+export function assertCanReviewPurchaseOrderItems(
+  user: MinimalCtxUser, po: POActionSubject & { id?: number },
+  items: Array<{ id?: number; purchaseOrderId?: number; reviewRole?: string | null; reviewedById?: number | null; reviewedAt?: string | Date | null; status?: string }>,
+): void {
+  if (!items.length || (ROUTED_REVIEW_BLOCKED_PO_STATUSES as readonly string[]).includes(po.status)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "هذه الأصناف غير متاحة للمراجعة في المرحلة الحالية" });
+  }
+  for (const item of items) {
+    if (po.id != null && item.purchaseOrderId != null && Number(item.purchaseOrderId) !== Number(po.id)) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "الصنف لا ينتمي إلى طلب الشراء المحدد" });
+    }
+    if (item.reviewRole != null) {
+      if (!isRoutedPurchaseItem(item) || !canReviewPurchaseItem(user, item)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "لا تملك صلاحية مراجعة هذا الصنف أو سبق حسمه" });
+      }
+    } else assertCanPerformPOAction("reviewItems", user, po);
+  }
+}
+
+/** No routed edit/delete/cancel is authorized by the PO header alone. */
+export function assertCanPerformPurchaseItemReviewAction(
+  action: "editItem" | "deleteItem" | "cancelItem", user: MinimalCtxUser,
+  po: POActionSubject & { id?: number; requestedById?: number | null },
+  item: { id?: number; purchaseOrderId?: number; reviewRole?: string | null; reviewedById?: number | null; reviewedAt?: string | Date | null; status: string },
+): void {
+  if (item.reviewRole != null && user.isActive !== 1 && user.isActive !== true) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
+  }
+  if (po.id != null && item.purchaseOrderId != null && Number(item.purchaseOrderId) !== Number(po.id)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "الصنف لا ينتمي إلى طلب الشراء المحدد" });
+  }
+  if (action !== "cancelItem") return assertCanPerformItemPOAction(action, user, {
+    itemStatus: item.status, poStatus: po.status, reviewRole: item.reviewRole, reviewedById: item.reviewedById, reviewedAt: item.reviewedAt,
+    isCreator: Number(po.requestedById) === user.id,
+  });
+  if (item.reviewRole != null && item.status === "pending_review") {
+    return assertCanReviewPurchaseOrderItems(user, po, [item]);
+  }
+  if (item.reviewRole != null && ["draft", "pending_review"].includes(po.status) && !["owner", "admin"].includes(user.role)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "تم حسم مراجعة هذا الصنف وإرساله إلى مرحلته التالية" });
+  }
+  // Financial-stage cancellation remains governed by its existing policy.
+  assertCanPerformPOAction("cancelItem", user, po);
 }
 
 /**

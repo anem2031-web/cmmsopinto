@@ -21,8 +21,10 @@
  * فما يظهر هنا هو بالضبط ما يستطيع المستخدم تنفيذه فعليًا — لا أكثر ولا أقل.
  */
 
-import { canPerformAction, canPerformItemAction } from "../../_core/authz/engine";
-import { PO_STATUS, type ActionName } from "../../_core/authz/policy";
+import { canPerformAction, canPerformItemAction, canResolvePOItemDelegateChange } from "../../_core/authz/engine";
+import { PO_STATUS, ROUTED_REVIEW_BLOCKED_PO_STATUSES, type ActionName } from "../../_core/authz/policy";
+import { canReviewPurchaseItem, isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
+import { hasCommittedPurchaseItemReview } from "../../../shared/purchaseItemReviewWorkflow";
 
 /** حالات الأصناف التي تتطلب قرارًا من منشئ الطلب */
 const ITEM_STATUSES_NEEDING_CREATOR = ["needs_item_revision", "purchase_cancelled"];
@@ -39,11 +41,14 @@ export interface ActionablePO {
   itemsSummary?: string;
   /** وضع الإجراء للمندوب — يُستخدم للتوجيه الصحيح من شاشة «بانتظار إجرائي». */
   actionMode?: "estimate" | "purchase" | "mixed";
+  /** Keep per-item review navigation separate from a later header finance stage. */
+  reviewAction?: "review" | "delegate_change";
 }
 
 interface UserCtx {
   id: number;
   role: string;
+  isActive?: number | boolean | null;
 }
 
 interface POInput {
@@ -56,11 +61,15 @@ interface POInput {
 }
 
 interface ItemInput {
+  id?: number;
   purchaseOrderId: number;
   status: string;
   delegateId?: number | null;
   batchId?: number | null;
   delegateChangeRequestedAt?: string | Date | null;
+  reviewRole?: string | null;
+  reviewedById?: number | null;
+  reviewedAt?: string | Date | null;
 }
 
 export type DelegateItemActionMode = "estimate" | "purchase";
@@ -72,9 +81,15 @@ export type DelegateItemActionMode = "estimate" | "purchase";
  */
 export function getDelegateItemActionMode(
   poStatus: string,
-  item: Pick<ItemInput, "status" | "batchId" | "delegateChangeRequestedAt">
+  item: Pick<ItemInput, "status" | "batchId" | "delegateChangeRequestedAt" | "reviewRole" | "reviewedById" | "reviewedAt">
 ): DelegateItemActionMode | null {
   if (item.delegateChangeRequestedAt) return null;
+  if (isRoutedPurchaseItem(item)) {
+    if (!hasCommittedPurchaseItemReview(item) || [PO_STATUS.DRAFT, PO_STATUS.REVISION_NEEDED, PO_STATUS.CLOSED, PO_STATUS.REJECTED].includes(poStatus as any)) return null;
+    if (!item.batchId && ["pending", "estimated"].includes(item.status)) return "estimate";
+    if (["approved", "funded"].includes(item.status)) return "purchase";
+    return null;
+  }
 
   const blocked = [
     PO_STATUS.DRAFT,
@@ -181,21 +196,38 @@ export function computeActionablePOs(
     const isCreator = po.requestedById === ctx.id;
     const itemsSummary = buildItemsSummary(poItems);
 
+    const myReviewItems = !(ROUTED_REVIEW_BLOCKED_PO_STATUSES as readonly string[]).includes(po.status)
+      ? poItems.filter(item => canReviewPurchaseItem(ctx, item)) : [];
+    if (myReviewItems.length) {
+      result.push({
+        id: po.id, poNumber: po.poNumber, status: po.status,
+        reason: `أصناف موجّهة لمراجعتك — ${myReviewItems.length} صنف`, actionLabel: "راجع الأصناف",
+        reviewAction: "review",
+        itemsSummary: buildItemsSummary(myReviewItems),
+      });
+      continue;
+    }
+
     // ── طلب تغيير مندوب صنف — بانتظار قرار نفس من راجع واختار المندوب أصلًا ──
     // ⚠️ 2026-08-13: سابقًا كان يظهر لأي مستخدم يحمل أحد الأدوار الثلاثة، لا
     // لمن راجع هذا الطلب تحديدًا — نفس الثغرة المصلَحة في الحارس المركزي
     // canResolvePOItemDelegateChange. الشرط هنا يطابقه حرفيًا حتى لا تُري
     // القائمة طلبًا لا يملك المستخدم صلاحية فعلية للتصرف به.
-    const delegateChangeItems = poItems.filter((i) => Boolean(i.delegateChangeRequestedAt));
     const isEligibleDelegateChangeResolver =
       ["owner", "admin"].includes(ctx.role) ||
       (["maintenance_manager", "general_maintenance_manager", "construction_procurement_manager"].includes(ctx.role) &&
         (po.reviewedById === null || po.reviewedById === undefined || po.reviewedById === ctx.id));
-    if (delegateChangeItems.length > 0 && isEligibleDelegateChangeResolver) {
+    const delegateChangeItems = poItems.filter((i) => i.reviewRole != null
+      ? canResolvePOItemDelegateChange({ role: ctx.role, userId: ctx.id, isActive: ctx.isActive }, {
+        ...i, delegateId: i.delegateId, itemStatus: i.status, batchId: i.batchId,
+        delegateChangeRequestedAt: i.delegateChangeRequestedAt,
+      }) : isEligibleDelegateChangeResolver && Boolean(i.delegateChangeRequestedAt));
+    if (delegateChangeItems.length > 0) {
       result.push({
         id: po.id, poNumber: po.poNumber, status: po.status,
         reason: `طلب تغيير مندوب — ${delegateChangeItems.length} من ${poItems.length} أصناف`,
         actionLabel: "اختيار مندوب",
+        reviewAction: "delegate_change",
         itemsSummary,
       });
       continue;
@@ -306,6 +338,8 @@ export function computeActionablePOs(
     }
 
     // ── الفئة 1: طلب بمرحلة يستطيع دور المستخدم التصرف فيها ───────────
+    // Routed rows never fall through to an unrelated manager's header-only review.
+    if (po.status === PO_STATUS.PENDING_REVIEW && poItems.length > 0 && poItems.every(item => item.reviewRole != null)) continue;
     const stage = describeStageAction(ctx, po);
     if (stage) {
       result.push({

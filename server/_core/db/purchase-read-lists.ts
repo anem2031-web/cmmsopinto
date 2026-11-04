@@ -1,4 +1,4 @@
-import { asc, inArray } from "drizzle-orm";
+import { asc, inArray, sql } from "drizzle-orm";
 import { purchaseOrders, purchaseOrderItems, purchasePackageSubmissions, poPricingBatches } from "../../../drizzle/schema";
 import { readScopeChunks, groupReadRows } from "../authz/read-batch";
 import { getDb } from "./client";
@@ -28,6 +28,22 @@ export async function getFullPOItemsForPOs(ids: number[], database?: any): Promi
   const db = await connection(database);
   return readScopeChunks(ids, selected => db.select().from(purchaseOrderItems)
     .where(inArray(purchaseOrderItems.purchaseOrderId, selected)).orderBy(asc(purchaseOrderItems.id)));
+}
+
+/** Slim assignment metadata for one authenticated RPC; never a permission cache. */
+export async function getPurchaseItemReviewScopeRows(
+  actor: { id: number; role: string }, orderIds?: number[], database?: any,
+): Promise<any[]> {
+  if (actor.role !== "senior_management" || orderIds?.length === 0) return [];
+  const db = await connection(database);
+  const read = async (ids?: number[]) => {
+    const result = await db.execute(sql`SELECT id,purchaseOrderId,reviewRole,reviewedById,reviewedAt,status
+      FROM purchase_order_items WHERE reviewRole=${actor.role}
+      AND (status='pending_review' OR reviewedById=${actor.id})
+      ${ids ? sql`AND purchaseOrderId IN (${sql.join(ids.map(id => sql`${id}`), sql`,`)})` : sql``}`);
+    return (result?.[0] ?? []) as any[];
+  };
+  return orderIds ? readScopeChunks(orderIds, read) : read();
 }
 
 /** Both levels are batched. Every submission includes ALL its batches. */

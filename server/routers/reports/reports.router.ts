@@ -200,6 +200,8 @@ export const reportsRouter = router({
         reviewedBy,
         accountingApprovedBy,
         managementApprovedBy,
+        itemReviews: items.map(item => ({ itemName: item.itemName, status: item.status, reviewRole: item.reviewRole, reviewedById: item.reviewedById, reviewedAt: item.reviewedAt,
+          reviewerName: item.reviewedById ? allUsers.find(user => user.id === item.reviewedById)?.name || null : null })),
       });
 
       const t1 = po.accountingApprovedAt ? new Date(po.accountingApprovedAt).getTime() : null;

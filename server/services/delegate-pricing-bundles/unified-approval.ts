@@ -7,6 +7,9 @@ import type {
   PricingBundleSnapshot,
 } from "../../../shared/delegate-pricing-bundles";
 import { readScopeChunks } from "../../_core/authz/read-batch";
+import { canApprovePricingBundleStage } from "../../../shared/business-role-policy";
+import { isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
+import { deriveRoutedPurchaseOrderStage } from "../../../shared/purchaseItemReviewWorkflow";
 
 type Stage = "accounting" | "management";
 type Actor = PricingBundleActor & { signatureUrl?: string | null };
@@ -21,7 +24,7 @@ export type UnifiedApprovalInput = {
 export interface UnifiedApprovalPorts {
   enabled(): boolean;
   database(): Promise<any>;
-  readGuard(actor: Actor): Promise<(po: any) => void>;
+  readGuard(actor: Actor, orders?: readonly any[]): Promise<(po: any) => void>;
   authorizeStage(actor: Actor, stage: Stage, orders: any[]): void;
   updateItem(
     tx: any,
@@ -70,18 +73,13 @@ const quoteUnit = (value: unknown) =>
 export class UnifiedBundleApprovalService {
   constructor(private ports: UnifiedApprovalPorts) {}
   private role(actor: Actor, stage?: Stage) {
-    const roles =
-      stage === "accounting"
-        ? ["owner", "admin", "accountant"]
-        : stage === "management"
-          ? ["owner", "admin", "senior_management"]
-          : ["owner", "admin", "accountant", "senior_management"];
-    if (Number(actor.isActive) !== 1 || !roles.includes(actor.role))
+    if (!(stage ? canApprovePricingBundleStage(actor, stage)
+      : canApprovePricingBundleStage(actor, "accounting") || canApprovePricingBundleStage(actor, "management")))
       no("ليس لديك صلاحية لاعتماد حزمة التسعير", "FORBIDDEN");
     if (!this.ports.enabled())
       no("اعتماد حزمة التسعير الموحد غير مفعّل", "BAD_REQUEST");
   }
-  private async context(tx: any, id: number, actor: Actor, lock = false) {
+  private async context(tx: any, id: number, actor: Actor, lock = false, requestedStage?: Stage) {
     const [root] = await rows(
       tx,
       sql`SELECT a.*,b.bundleNumber,b.delegateId,b.snapshotJson FROM delegate_pricing_bundle_approvals a
@@ -120,13 +118,13 @@ export class UnifiedBundleApprovalService {
       sql`SELECT p.*,pk.packageNumber FROM purchase_orders p LEFT JOIN purchase_packages pk ON pk.id=p.packageId WHERE p.id IN (${ids(poIds)}) ORDER BY p.id ${lock ? sql`FOR UPDATE` : sql``}`
     );
     if (orders.length !== poIds.length) no("أحد طلبات الحزمة غير موجود");
-    const guard = await this.ports.readGuard(actor);
+    const guard = await this.ports.readGuard(actor, orders);
     // The accountant's ordinary PO visibility ends at pending_accounting.
     // A committed decision may only be read/replayed by its exact approver in
     // this DPB scope. Keep every other parent/identity check and the central
     // guard; this projection must never escape to PO lists or new decisions.
     const ownCommittedAccounting =
-      actor.role === "accountant" &&
+      (actor.role === "accountant" || actor.role === "senior_management" && requestedStage === "accounting") &&
       Number(root.accountingApprovedById) === actor.id &&
       !!root.accountingApprovedAt &&
       !!root.accountingOperationKey &&
@@ -134,6 +132,7 @@ export class UnifiedBundleApprovalService {
       root.status !== "pending_accounting";
     const managementScope =
       actor.role === "senior_management" &&
+      requestedStage !== "accounting" &&
       ((root.status === "pending_management" &&
         Number(root.accountingApprovedById) > 0 &&
         !!root.accountingApprovedAt) ||
@@ -141,10 +140,12 @@ export class UnifiedBundleApprovalService {
           !!root.managementApprovedAt &&
           !!root.managementOperationKey &&
           !!root.managementRequestHash));
+    const earlySeniorAccounting = actor.role === "senior_management" && requestedStage !== "management" && root.status === "pending_accounting";
     const scopedPhase = ownCommittedAccounting
-      ? "pending_accounting"
+      ? actor.role === "senior_management" ? "pending_management" : "pending_accounting"
       : managementScope
         ? "pending_management"
+        : earlySeniorAccounting ? "pending_management"
         : null;
     if (scopedPhase) {
       const [currentActor] = await rows(
@@ -158,8 +159,6 @@ export class UnifiedBundleApprovalService {
       )
         no("الحساب غير نشط أو تغير دوره", "FORBIDDEN");
     }
-    for (const order of orders)
-      guard(scopedPhase ? { ...order, status: scopedPhase } : order);
     const batchIds = links
       .map(row => Number(row.pricingBatchId))
       .sort((a, b) => a - b);
@@ -310,6 +309,17 @@ export class UnifiedBundleApprovalService {
     );
     if (batchItems.some(row => !itemIds.includes(Number(row.id))))
       no("إحدى الدفعات تضم صنفًا خارج حزمة التسعير");
+    if (earlySeniorAccounting) {
+      if (root.accountingApprovedAt || root.accountingApprovedById || root.managementApprovedAt || root.managementApprovedById
+        || orders.some(order => ["draft", "closed", "rejected", "revision_needed"].includes(order.status))
+        || batches.some(batch => !["pending_accounting", "rejected"].includes(batch.status))
+        || submissions.some(submission => !["pending_accounting", "rejected"].includes(submission.status))) {
+        no("تغيرت مرحلة حزمة الحسابات أو إحدى معاملاتها المرتبطة");
+      }
+    }
+    // Only after validating the entire actual bundle may its local visibility
+    // projection reach the existing PO guard. The actor identity is unchanged.
+    for (const order of orders) guard(scopedPhase ? { ...order, status: scopedPhase } : order);
     return {
       root,
       snapshot,
@@ -321,10 +331,10 @@ export class UnifiedBundleApprovalService {
       priorRejected,
     };
   }
-  async detail(actor: Actor, id: number) {
-    this.role(actor);
-    const c = await this.context(await this.ports.database(), id, actor);
-    return this.dto(c);
+  async detail(actor: Actor, id: number, stage?: Stage) {
+    this.role(actor, stage);
+    const c = await this.context(await this.ports.database(), id, actor, false, stage);
+    return { ...this.dto(c), approvalStage: stage ?? (c.root.status === "pending_accounting" ? "accounting" : "management") };
   }
   private dto(c: any) {
     return {
@@ -360,20 +370,27 @@ export class UnifiedBundleApprovalService {
       batchIds: c.batches.map((row: any) => Number(row.id)),
     };
   }
-  async queue(actor: Actor, afterId = 0) {
-    this.role(actor);
+  async queue(actor: Actor, afterId = 0, requestedStage?: Stage) {
+    this.role(actor, requestedStage);
     const database = await this.ports.database();
     const stage =
-      actor.role === "senior_management"
+      requestedStage ? `pending_${requestedStage}` : actor.role === "senior_management"
         ? "pending_management"
         : actor.role === "accountant"
           ? "pending_accounting"
           : null;
+    const earlySeniorAccounting = actor.role === "senior_management" && requestedStage === "accounting";
+    if (actor.role === "senior_management") {
+      const [currentActor] = await rows(database, sql`SELECT id,role,isActive FROM users WHERE id=${actor.id}`);
+      if (!currentActor || currentActor.role !== actor.role || Number(currentActor.isActive) !== 1) no("الحساب غير نشط أو تغير دوره", "FORBIDDEN");
+    }
     const parents = await rows(
       database,
       sql`SELECT a.bundleId AS id,a.status,a.revision,a.custodyBalance,b.bundleNumber,b.delegateId
       FROM delegate_pricing_bundle_approvals a JOIN delegate_pricing_bundles b ON b.id=a.bundleId
       WHERE a.bundleId>${afterId} AND ${stage ? sql`a.status=${stage}` : sql`a.status IN ('pending_accounting','pending_management')`}
+      AND ${earlySeniorAccounting ? sql`a.accountingApprovedById IS NULL AND a.accountingApprovedAt IS NULL AND a.managementApprovedById IS NULL AND a.managementApprovedAt IS NULL` : sql`1=1`}
+      AND ${actor.role === "senior_management" && !earlySeniorAccounting ? sql`a.accountingApprovedById IS NOT NULL AND a.accountingApprovedAt IS NOT NULL` : sql`1=1`}
       AND EXISTS (SELECT 1 FROM delegate_pricing_bundle_batches l WHERE l.bundleId=a.bundleId)
       AND EXISTS (SELECT 1 FROM delegate_pricing_bundle_items m WHERE m.bundleId=a.bundleId AND m.removedAt IS NULL)
       AND NOT EXISTS (SELECT 1 FROM delegate_pricing_bundle_batches l LEFT JOIN po_pricing_batches pb ON pb.id=l.pricingBatchId
@@ -381,7 +398,8 @@ export class UnifiedBundleApprovalService {
         WHERE l.bundleId=a.bundleId AND (pb.id IS NULL OR p.id IS NULL OR pb.purchaseOrderId<>p.id
           OR pb.status IS NULL OR pb.status NOT IN (a.status,'rejected')
           OR (l.purchasePackageSubmissionId IS NULL AND pb.purchasePackageSubmissionId IS NOT NULL)
-          OR (l.purchasePackageSubmissionId IS NOT NULL AND (s.id IS NULL OR pk.id IS NULL OR pb.purchasePackageSubmissionId IS NULL OR pb.purchasePackageSubmissionId<>s.id OR p.packageId IS NULL OR p.packageId<>s.purchasePackageId))))
+          OR (l.purchasePackageSubmissionId IS NOT NULL AND (s.id IS NULL OR pk.id IS NULL OR pb.purchasePackageSubmissionId IS NULL OR pb.purchasePackageSubmissionId<>s.id OR p.packageId IS NULL OR p.packageId<>s.purchasePackageId
+            OR ${earlySeniorAccounting ? sql`s.status IS NULL OR s.status NOT IN (a.status,'rejected')` : sql`1=0`}))))
       AND NOT EXISTS (SELECT 1 FROM delegate_pricing_bundle_items m LEFT JOIN purchase_order_items i ON i.id=m.purchaseOrderItemId
         LEFT JOIN delegate_pricing_bundle_batches l ON l.bundleId=m.bundleId AND l.purchaseOrderId=i.purchaseOrderId
         WHERE m.bundleId=a.bundleId AND m.removedAt IS NULL AND (i.id IS NULL OR l.pricingBatchId IS NULL))
@@ -401,7 +419,7 @@ export class UnifiedBundleApprovalService {
           sql`SELECT * FROM purchase_orders WHERE id IN (${ids(chunk)})`
         )
     );
-    const guard = await this.ports.readGuard(actor);
+    const guard = await this.ports.readGuard(actor, orders);
     const byId = new Map(orders.map(row => [Number(row.id), row]));
     const visible = page.filter(parent => {
       const members = links.filter(
@@ -412,7 +430,8 @@ export class UnifiedBundleApprovalService {
         for (const member of members) {
           const order = byId.get(Number(member.purchaseOrderId));
           if (!order) return false;
-          guard(order);
+          if (earlySeniorAccounting && ["draft", "closed", "rejected", "revision_needed"].includes(order.status)) return false;
+          guard(actor.role === "senior_management" ? { ...order, status: "pending_management" } : order);
         }
         return true;
       } catch (error) {
@@ -484,7 +503,7 @@ export class UnifiedBundleApprovalService {
         Number(currentActor.isActive) !== 1
       )
         no("الحساب غير نشط أو تغير دوره", "FORBIDDEN");
-      const c = await this.context(tx, input.id, actor, true);
+      const c = await this.context(tx, input.id, actor, true, stage);
       const r = c.root;
       const priorKey =
         stage === "accounting"
@@ -598,7 +617,7 @@ export class UnifiedBundleApprovalService {
           tx,
           actor,
           stage,
-          batch,
+          { ...batch, unifiedBundleId: Number(r.bundleId) },
           rejectedItem
             ? {
                 itemId: Number(rejectedItem.id),
@@ -678,16 +697,18 @@ export class UnifiedBundleApprovalService {
       for (const order of c.orders) {
         const allItems = await rows(
           tx,
-          sql`SELECT status,batchId FROM purchase_order_items WHERE purchaseOrderId=${Number(order.id)}`
+          sql`SELECT * FROM purchase_order_items WHERE purchaseOrderId=${Number(order.id)}`
         );
         const pending = await rows(
           tx,
-          sql`SELECT status FROM po_pricing_batches WHERE purchaseOrderId=${Number(order.id)} AND status IN ('pending_accounting','pending_management')`
+          sql`SELECT id,status FROM po_pricing_batches WHERE purchaseOrderId=${Number(order.id)} AND status IN ('pending_accounting','pending_management')`
         );
         const activeAll = allItems.filter(
           item => !["rejected", "cancelled"].includes(item.status)
         );
-        let status = order.status;
+        const routedOrder = allItems.some(isRoutedPurchaseItem);
+        let status = routedOrder ? deriveRoutedPurchaseOrderStage(order.status, allItems, pending) : order.status;
+        if (!routedOrder) {
         if (!activeAll.length) status = "rejected";
         else if (pending.some(row => row.status === "pending_accounting"))
           status = "pending_accounting";
@@ -717,6 +738,7 @@ export class UnifiedBundleApprovalService {
           )
             status = "pending_estimate";
           else status = "approved";
+        }
         }
         if (status !== order.status)
           await tx.execute(
@@ -777,7 +799,7 @@ export class UnifiedBundleApprovalService {
         tx,
         sql`SELECT bundleId FROM delegate_pricing_bundle_approvals WHERE bundleId=${id} FOR UPDATE`
       );
-      const c = await this.context(tx, id, actor);
+      const c = await this.context(tx, id, actor, false, stage === "send" ? undefined : stage);
       const decidedBy =
         stage === "accounting"
           ? c.root.accountingApprovedById

@@ -147,11 +147,12 @@ async function assertCanManageOrderThroughPackage(user: any, po: any) {
  */
 async function getVisiblePackageOrdersWithItems(user: any, packageId: number) {
   const packageOrders = await db.getPurchaseOrdersByPackage(packageId);
-  const visibleOrders = await filterVisiblePurchaseOrders(user, packageOrders as any[]);
+  const scope = await createPurchaseOrderReadScope(user, packageOrders as any[]);
+  const visibleOrders = scope.filter(packageOrders as any[]);
   const items = groupReadRows(await db.getFullPOItemsForPOs(visibleOrders.map(po => Number(po.id))), row => Number(row.purchaseOrderId));
   return visibleOrders.map((po: any) => ({
     ...po,
-    items: items.get(Number(po.id)) ?? [],
+    items: scope.filterItems(po, items.get(Number(po.id)) ?? []),
   }));
 }
 
@@ -302,15 +303,16 @@ export const purchasePackagesRouter = router({
     const allCardOrders = cards.flatMap((card: any) =>
       card.cardType === "package" ? card.orders : [card.order]
     );
-    const visibleOrders = await filterVisiblePurchaseOrders(ctx.user, allCardOrders);
+    const scope = await createPurchaseOrderReadScope(ctx.user, allCardOrders);
+    const visibleOrders = scope.filter(allCardOrders);
     const visibleOrderIds = new Set(visibleOrders.map((po: any) => po.id));
 
     return cards.flatMap((card: any) => {
       if (card.cardType === "order") {
-        return visibleOrderIds.has(card.order.id) ? [card] : [];
+        return visibleOrderIds.has(card.order.id) ? [{ ...card, order: { ...card.order, items: scope.filterItems(card.order, card.order.items ?? []) } }] : [];
       }
 
-      const orders = card.orders.filter((po: any) => visibleOrderIds.has(po.id));
+      const orders = card.orders.filter((po: any) => visibleOrderIds.has(po.id)).map((po: any) => ({ ...po, items: scope.filterItems(po, po.items ?? []) }));
       return orders.length > 0 ? [{ ...card, orders }] : [];
     });
   }),
@@ -1002,7 +1004,7 @@ export const purchasePackagesRouter = router({
       }
 
       const packageOrders = await db.getPurchaseOrdersByPackage(input.packageId);
-      const readScope = await createPurchaseOrderReadScope(ctx.user);
+      const readScope = await createPurchaseOrderReadScope(ctx.user, packageOrders);
       const visibleOrders = readScope.filter(packageOrders as any[]);
       const visiblePoIds = new Set(visibleOrders.map((po: any) => po.id));
 
@@ -1018,7 +1020,10 @@ export const purchasePackagesRouter = router({
         entityType: "purchase_package_submission_financial", entityId: Number(sub.id),
       })), undefined, { actor: ctx.user, orders: packageOrders, authorize: readScope.assert });
       const orderById = new Map(packageOrders.map((po: any) => [Number(po.id), po]));
-      const itemsByBatch = groupReadRows(await db.getFullPOItemsForPOs(Array.from(visiblePoIds).map(Number)), row => Number(row.batchId));
+      const itemsByBatch = groupReadRows((await db.getFullPOItemsForPOs(Array.from(visiblePoIds).map(Number))).filter((item: any) => {
+        const parent = orderById.get(Number(item.purchaseOrderId));
+        return parent && readScope.filterItems(parent, [item]).length > 0;
+      }), row => Number(row.batchId));
 
       // إثراء كل دفعة تسعير برقم طلبها وأصنافها — لعرض "رقم الطلب أمام كل صنف"
       // لا نضيف قيدًا خاصًا بالمندوب على الإرسال نفسه؛ نطاق الرؤية هنا

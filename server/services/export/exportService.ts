@@ -7,6 +7,10 @@ import { readAccountingSignature } from "../pdf/accountingSignature";
 import { replacementDocumentForBatch } from "../../supplier-return-followup/pricing-bridge";
 import type { InventoryBookExportFilters } from "../../../shared/inventory-export";
 import { appendInventoryBookSheet } from "./inventoryBookExcel";
+import { isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
+import { readScopeChunks } from "../../_core/authz/read-batch";
+import { inArray } from "drizzle-orm";
+import { users } from "../../../drizzle/schema";
 
 // ============================================================
 // EXCEL EXPORT HELPERS
@@ -765,8 +769,25 @@ export async function generatePurchaseRequestPDF(
     : await db.getUserById(delegateId); // احتياطي: طلب بأصناف من عدة مندوبين بلا دفعة محددة
   const delegateName = delegate?.name || "-";
 
+  const reviewerItems = !bundleSnapshot ? (allItems as any[]).filter(item => !["rejected", "cancelled", "purchase_cancelled"].includes(item.status) && !!(item.estimatedUnitCost || item.actualUnitCost)) : [];
+  const routedReviewerItems = reviewerItems.filter(item => item.reviewRole != null);
   const requester = po.requestedById ? await db.getUserById(po.requestedById) : null;
-  const reviewer = po.reviewedById ? await db.getUserById(po.reviewedById) : null;
+  const reviewer = (!routedReviewerItems.length || reviewerItems.some(item => !isRoutedPurchaseItem(item))) && po.reviewedById ? await db.getUserById(po.reviewedById) : null;
+  const routedReviewers: Array<{ id: number; name: string; source: string | null }> = [];
+  if (routedReviewerItems.length) {
+    if (routedReviewerItems.some(item => !isRoutedPurchaseItem(item) || !Number.isSafeInteger(Number(item.reviewedById)) || Number(item.reviewedById) <= 0 || !item.reviewedAt)) throw new Error("لم يكتمل توثيق مراجع أصناف المستند");
+    const database = await db.getDb();
+    if (!database) throw new Error("تعذر قراءة مراجعي أصناف المستند");
+    const actorRows = await readScopeChunks<any>(routedReviewerItems.map(item => Number(item.reviewedById)), ids => database.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, ids)));
+    const byId = new Map(actorRows.map(actor => [Number(actor.id), actor]));
+    const unique = new Set<string>();
+    for (const item of routedReviewerItems) {
+      const actor = byId.get(Number(item.reviewedById));
+      if (!actor) throw new Error("مراجع أحد أصناف المستند غير موجود");
+      const source = item.reviewerSignatureSnapshot || null, key = `${actor.id}|${source || ""}`;
+      if (!unique.has(key)) { unique.add(key); routedReviewers.push({ id: Number(actor.id), name: actor.name || "—", source }); }
+    }
+  }
   // اسم موظف الحسابات اللي اعتمد فعلياً — من الدفعة لو محددة، وإلا من الطلب كامل
   const accountingApproval = packageSubmission ?? batch ?? po;
   const accountingApproverId = accountingApproval.accountingApprovedById;
@@ -793,7 +814,7 @@ export async function generatePurchaseRequestPDF(
     }
   }
 
-  let reviewerSigSource = (po as any).reviewerSignatureSnapshot || null;
+  let reviewerSigSource = routedReviewerItems.length && !reviewer ? null : (po as any).reviewerSignatureSnapshot || null;
   if (!reviewerSigSource && reviewer) {
     reviewerSigSource = (reviewer as any)?.signatureUrl || null;
     if (reviewerSigSource) {
@@ -825,6 +846,11 @@ export async function generatePurchaseRequestPDF(
   ]);
   const sigImg = (dataUrl: string) =>
     dataUrl ? `<img src="${dataUrl}" alt="التوقيع" class="sig-img" />` : "";
+  const routedReviewerSignatures = await Promise.all(routedReviewers.map(async actor => ({ name: actor.name, signature: await getSignatureDataUrl(actor.source) })));
+  const routedReviewerRowsHtml = routedReviewerItems.length ? [
+    ...routedReviewerSignatures,
+    ...(reviewerItems.some(item => !isRoutedPurchaseItem(item)) ? [{ name: reviewerName, signature: reviewerSig }] : []),
+  ].map(actor => `<tr><td style="font-weight: bold; background-color: #f7fafc;">مراجع الطلب</td><td>${escapeHtml(actor.name)}</td><td>${sigImg(actor.signature)}</td></tr>`).join("") : null;
 
   const groupedBundleSignatures = bundleSnapshot ? (() => {
     type SignatureGroup = {
@@ -1161,11 +1187,11 @@ export async function generatePurchaseRequestPDF(
                 <td>${escapeHtml(requesterName)}</td>
                 <td>${sigImg(requesterSig)}</td>
             </tr>
-            <tr>
+            ${routedReviewerRowsHtml ?? `<tr>
                 <td style="font-weight: bold; background-color: #f7fafc;">مراجع الطلب</td>
                 <td>${escapeHtml(reviewerName)}</td>
                 <td>${sigImg(reviewerSig)}</td>
-            </tr>
+            </tr>`}
             `}
             <tr>
                 <td style="font-weight: bold; background-color: #f7fafc;">اسم مستلم العهدة</td>

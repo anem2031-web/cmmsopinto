@@ -89,6 +89,8 @@ export const BYPASS_ALL_ROLES: Role[] = [ROLE.OWNER, ROLE.ADMIN];
 
 /** طلب تغيير مندوب الصنف يقدمه المندوب الحالي، ويُحسم بواسطة مدير الصيانة أو الإدارة. */
 export const DELEGATE_CHANGE_REQUEST_ROLES: Role[] = [ROLE.DELEGATE];
+/** Routed review is decided from the current item, never a header-role grant. */
+export const ROUTED_REVIEW_BLOCKED_PO_STATUSES = ["draft", "revision_needed", "closed", "rejected"] as const;
 export const DELEGATE_CHANGE_RESOLVER_ROLES: Role[] = [
   ROLE.MAINTENANCE_MANAGER,
   ROLE.GENERAL_MAINTENANCE_MANAGER,

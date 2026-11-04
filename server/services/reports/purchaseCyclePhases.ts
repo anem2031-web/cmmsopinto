@@ -71,16 +71,23 @@ export function computePurchaseOrderPhases(
     reviewedBy?: string | null;
     accountingApprovedBy?: string | null;
     managementApprovedBy?: string | null;
+    itemReviews?: Array<{ itemName: string; status: string; reviewRole?: string | null; reviewedById?: number | null; reviewedAt?: string | Date | null; reviewerName?: string | null }>;
   }
 ): PurchaseOrderPhase[] {
   const NOT_ASSIGNED = "لم يتم التعيين";
   const now = Date.now();
   const t0 = new Date(po.createdAt).getTime();
-  const tReview = po.reviewedAt ? new Date(po.reviewedAt).getTime() : null;
+  const routedReviews = (names.itemReviews || []).filter(item => item.reviewRole != null && item.status !== "cancelled");
+  const reviewTimes = routedReviews.filter(item => item.reviewedById != null && item.reviewedAt).map(item => new Date(item.reviewedAt!).getTime()).filter(Number.isFinite);
+  const allItemReviewsComplete = routedReviews.length > 0 && reviewTimes.length === routedReviews.length;
+  const tReview = routedReviews.length ? allItemReviewsComplete ? Math.max(...reviewTimes) : null : po.reviewedAt ? new Date(po.reviewedAt).getTime() : null;
+  const accountingReviewStart = routedReviews.length ? reviewTimes.length ? Math.min(...reviewTimes) : null : tReview;
   const t1 = po.accountingApprovedAt ? new Date(po.accountingApprovedAt).getTime() : null;
   const t2 = po.managementApprovedAt ? new Date(po.managementApprovedAt).getTime() : null;
 
-  const reviewStatus = computeStageStatus(po.reviewedAt, po.status === "pending_review", po.status === "draft");
+  const reviewStatus = routedReviews.length ? computeStageStatus(tReview, !["draft", "closed", "rejected"].includes(po.status), po.status === "draft") : computeStageStatus(po.reviewedAt, po.status === "pending_review", po.status === "draft");
+  const reviewRoles: Record<string, string> = { general_maintenance_manager: "الصيانة العامة والتشغيل", construction_procurement_manager: "الإنشاءات", senior_management: "الإدارة العليا" };
+  const reviewActors = routedReviews.length ? routedReviews.map(item => ({ itemName: item.itemName, name: item.reviewerName || reviewRoles[item.reviewRole || ""] || NOT_ASSIGNED })) : [{ itemName: "", name: names.reviewedBy || NOT_ASSIGNED }];
   const accountingStatus = computeStageStatus(po.accountingApprovedAt, po.status === "pending_accounting", po.status === "pending_estimate");
   const managementStatus = computeStageStatus(po.managementApprovedAt, po.status === "pending_management", po.status === "pending_accounting");
 
@@ -101,17 +108,17 @@ export function computePurchaseOrderPhases(
       durationHours: tReview
         ? msToHours(tReview - t0)
         : (reviewStatus === "قيد التنفيذ" ? msToHours(now - t0) : null),
-      actor: names.reviewedBy || NOT_ASSIGNED,
-      actors: [{ itemName: "", name: names.reviewedBy || NOT_ASSIGNED }],
+      actor: Array.from(new Set(reviewActors.map(actor => actor.name))).join("، "),
+      actors: reviewActors,
       status: reviewStatus,
     },
     {
       phase: "موافقة الحسابات",
-      startAt: tReview ? new Date(tReview) : null,
+      startAt: accountingReviewStart ? new Date(accountingReviewStart) : null,
       endAt: t1 ? new Date(t1) : null,
-      durationHours: (tReview && t1)
-        ? msToHours(t1 - tReview)
-        : (accountingStatus === "قيد التنفيذ" && tReview ? msToHours(now - tReview) : null),
+      durationHours: (accountingReviewStart && t1)
+        ? msToHours(Math.max(0, t1 - accountingReviewStart))
+        : (accountingStatus === "قيد التنفيذ" && accountingReviewStart ? msToHours(now - accountingReviewStart) : null),
       actor: names.accountingApprovedBy || NOT_ASSIGNED,
       actors: [{ itemName: "", name: names.accountingApprovedBy || NOT_ASSIGNED }],
       status: accountingStatus,
