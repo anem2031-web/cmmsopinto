@@ -4,7 +4,7 @@ import ts from "typescript";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { router, catalogProcedure, catalogItemManagerProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure } from "../routers/_shared/procedures";
+import { router, catalogProcedure, catalogItemManagerProcedure, catalogItemUpdateProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure } from "../routers/_shared/procedures";
 import { APP_ROLE } from "../../shared/roles";
 import { catalogItems, attachments, auditLogs, catalogAuditLogs } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -50,7 +50,7 @@ function actualItemProcedure(name: string) {
   property(itemScope!);
   if (!code) throw Error(`Missing catalog items ${name}`);
   return vm.runInNewContext(ts.transpileModule(`(${code})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText,
-    { z, TRPCError, catalogProcedure, catalogItemManagerProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure, APP_ROLE, eq, catalogItems, catalogAuditLogs,
+    { z, TRPCError, catalogProcedure, catalogItemManagerProcedure, catalogItemUpdateProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure, APP_ROLE, eq, catalogItems, catalogAuditLogs,
       catalogItemImageSchema, assertCatalogImageUpload, saveRequiredCatalogImage, getDb: async () => db,
       assertActiveCatalogMasterUnit: async (_db: any, unit: string) => unit,
       assertActiveCatalogNodePath: async () => {},
@@ -88,6 +88,42 @@ describe("manual catalog item save with required image", () => {
     await expect(caller("it_manager").reactivate(1)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(caller("it_manager").update({ id: 1, isActive: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(rows[0].isActive).toBe(0);
+  });
+  it("senior management edits an existing item and deactivates it without gaining manual creation or reactivation", async () => {
+    await caller().create(input);
+    await caller("senior_management").update({ id: 1, nameAr: "مراجعة الإدارة" });
+    expect(rows[0].nameAr).toBe("مراجعة الإدارة");
+    await caller("senior_management").delete(1);
+    expect(rows).toHaveLength(1); expect(rows[0].isActive).toBe(0); expect(files).toHaveLength(1);
+    expect(audits.at(-1)).toMatchObject({ entityType: "item", action: "delete", entityId: 1 });
+    await expect(caller("senior_management").create(input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller("senior_management").reactivate(1)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller("senior_management").update({ id: 1, isActive: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(rows[0].isActive).toBe(0); expect(files).toHaveLength(1);
+  });
+  it("adds construction deactivation while preserving its existing edit/create and archived item history", async () => {
+    const manager = caller("construction_procurement_manager");
+    await manager.create(input);
+    await manager.update({ id: 1, nameAr: "تعديل الإنشاءات" });
+    await manager.delete(1);
+    expect(rows).toHaveLength(1); expect(rows[0].isActive).toBe(0); expect(files).toHaveLength(1);
+    expect(audits.at(-1)).toMatchObject({ entityType: "item", action: "delete", entityId: 1 });
+    await manager.update({ id: 1, isActive: false });
+    await expect(manager.update({ id: 1, isActive: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(manager.reactivate(1)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(Number(rows[0].isActive)).toBe(0);
+  });
+  it.each(["senior_management", "construction_procurement_manager"])("rechecks %s on each actual update/deactivation and preserves missing-item denials", async role => {
+    await caller().create(input);
+    const before = structuredClone({ rows, files, audits });
+    // Existing construction edits were not changed; its new deactivate grant
+    // and every new senior grant require an active actor at the write boundary.
+    if (role === "senior_management") await expect(caller(role, 9, 0).update({ id: 1, nameAr: "ممنوع" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller(role, 9, 0).delete(1)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect({ rows, files, audits }).toEqual(before);
+    rows = [];
+    await expect(caller(role).update({ id: 999, nameAr: "مفقود" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(caller(role).delete(999)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
   it("rechecks current IT identity/activity and missing item at each write", async () => {
     await caller("it_manager").create(input);
@@ -133,9 +169,9 @@ describe("manual catalog item save with required image", () => {
       await expect(caller().create({ ...input, image: { ...image, ...bad } })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(rows).toHaveLength(0);
   });
-  it("preserves missing item denial and construction lifecycle restriction", async () => {
+  it("preserves missing item denial and construction reactivation restriction", async () => {
     await expect(caller().update({ id: 999, image })).rejects.toMatchObject({ code: "NOT_FOUND" });
-    await expect(caller("construction_procurement_manager").update({ id: 1, image, isActive: false }))
+    await expect(caller("construction_procurement_manager").update({ id: 1, image, isActive: true }))
       .rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

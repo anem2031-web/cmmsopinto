@@ -13,7 +13,7 @@ import { catalogAuditJson, catalogAuditRequestMeta, pickAuditValues } from "../.
 import { canShowCatalogBook, loadCatalogBookTotals } from "../../services/inventory-book-summary";
 import { findCatalogUnitByName, getActiveCatalogUnitCanonicalName } from "../../_core/catalog-unit-governance";
 import { executeCatalogTaxonomyMove, previewCatalogTaxonomyMove } from "../../services/catalog/catalogTaxonomyMove.service";
-import { router, catalogAdminProcedure, catalogProcedure, catalogItemManagerProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure, catalogReadProcedure, catalogReferenceReadProcedure } from "../_shared/procedures";
+import { router, catalogAdminProcedure, catalogProcedure, catalogViewProcedure, catalogItemManagerProcedure, catalogItemReadProcedure, catalogItemUpdateProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure, catalogReadProcedure, catalogReferenceReadProcedure } from "../_shared/procedures";
 import { z } from "zod";
 import { getTableColumns, eq, and, or, like, ne, count, desc, asc, inArray, sql, gte, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -465,7 +465,7 @@ export const catalogRouter = router({
     /**
      * Get a single node by ID
      */
-    getById: catalogProcedure
+    getById: catalogViewProcedure
       .input(z.number())
       .query(async ({ input }) => {
         const db = await getDb();
@@ -482,7 +482,7 @@ export const catalogRouter = router({
     /**
      * Get all children of a node (one level deep)
      */
-    getChildren: catalogProcedure
+    getChildren: catalogViewProcedure
       .input(z.number())
       .query(async ({ input }) => {
         const db = await getDb();
@@ -759,7 +759,7 @@ export const catalogRouter = router({
 
 items: router({
 
-  count: catalogItemManagerProcedure
+  count: catalogItemReadProcedure
     .query(async () => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
@@ -801,7 +801,7 @@ const conditions = [];
 const role = (ctx as any)?.user?.role;
 const canIncludeInactive = role === APP_ROLE.OWNER || role === APP_ROLE.ADMIN
   || role === APP_ROLE.MAINTENANCE_MANAGER || role === APP_ROLE.WAREHOUSE
-  || (role === APP_ROLE.IT_MANAGER && ctx.user.isActive === 1);
+  || ([APP_ROLE.IT_MANAGER, APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER, APP_ROLE.SENIOR_MANAGEMENT].includes(role) && ctx.user.isActive === 1);
 const includeInactive = input?.includeInactive === true && canIncludeInactive;
 if (!includeInactive) {
   const activeFilter = input?.isActive !== undefined ? input.isActive : true;
@@ -903,7 +903,7 @@ return itemsWithImages;
     /**
      * Get a single item with all its details
      */
-    getById: catalogItemManagerProcedure
+    getById: catalogItemReadProcedure
       .input(z.number())
       .query(async ({ input }) => {
         const db = await getDb();
@@ -1049,7 +1049,7 @@ create: catalogItemManagerProcedure
     /**
      * Update a catalog item
      */
-    update: catalogItemManagerProcedure
+    update: catalogItemUpdateProcedure
       .input(
         z.object({
           id: z.number(),
@@ -1068,16 +1068,15 @@ create: catalogItemManagerProcedure
         })
       )
       .mutation(async ({ input, ctx }) => {
-        if (ctx.user.role === APP_ROLE.IT_MANAGER && input.isActive === true) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "صلاحية مدير IT تشمل تعديل الأصناف وتعطيلها فقط" });
+        if ([APP_ROLE.IT_MANAGER, APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER, APP_ROLE.SENIOR_MANAGEMENT].includes(ctx.user.role as any) && input.isActive === true) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "صلاحية هذا الدور تشمل تعديل الأصناف وتعطيلها دون إعادة تفعيلها" });
+        }
+        if (ctx.user.role === APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER && input.isActive === false && ctx.user.isActive !== 1) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
         }
 
         const db = await getDb();
         if (!db) throw new Error("Database unavailable");
-
-        if (ctx.user.role === APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER && input.isActive !== undefined) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "مدير الإنشاءات لا يملك صلاحية تعطيل الأصناف" });
-        }
 
         const { id, image, ...updateData } = input;
         if (image) assertCatalogImageUpload(image, ctx.user.id);
@@ -1151,7 +1150,7 @@ create: catalogItemManagerProcedure
 
     /**
      * Delete (deactivate) a catalog item (soft delete).
-     * Owner/Admin/Maintenance Manager/Warehouse/IT Manager; no physical deletion.
+     * Explicit item-deactivation roles only; no physical deletion.
      */
     delete: catalogItemDeactivateProcedure
       .input(z.number())
@@ -1970,7 +1969,7 @@ create: catalogItemManagerProcedure
       }),
 
     // قائمة جميع الموردين
-    list: catalogProcedure
+    list: catalogViewProcedure
       .input(z.object({
         activeOnly:     z.boolean().optional().default(true),
         isManufacturer: z.boolean().optional(),
@@ -1995,7 +1994,7 @@ create: catalogItemManagerProcedure
       }),
 
     // تفاصيل مورد واحد
-    getById: catalogProcedure
+    getById: catalogViewProcedure
       .input(z.number())
       .query(async ({ input }) => {
         const db = await getDb();
@@ -2565,7 +2564,7 @@ create: catalogItemManagerProcedure
         return results;
       }),
 
-    listByItem: catalogProcedure
+    listByItem: catalogViewProcedure
       .input(z.number())
       .query(async ({ input: itemId }) => {
         const db = await getDb();

@@ -180,7 +180,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "master-data",
     labelKey: "nav.sections.masterData",
     icon: Building2,
-    roles: ["supervisor","warehouse","maintenance_manager","general_maintenance_manager","construction_procurement_manager","owner","admin"],
+    roles: ["supervisor","warehouse","maintenance_manager","general_maintenance_manager","construction_procurement_manager","senior_management","owner","admin"],
     items: [
       { icon: MapPin,    labelKey: "nav.sites",        path: "/sites",
         roles: ["owner","admin","maintenance_manager","general_maintenance_manager","construction_procurement_manager"] },
@@ -197,7 +197,7 @@ const NAV_SECTIONS: NavSection[] = [
       { icon: Tag,       labelKey: "nav.assetCategories", path: "/asset-categories",
         roles: ["owner","admin","maintenance_manager","general_maintenance_manager","construction_procurement_manager"] },
       { icon: BookOpen, labelKey: "nav.catalog", path: "/catalog",
-        roles: ["owner", "admin", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "warehouse", "it_manager"] },
+        roles: ["owner", "admin", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "warehouse", "it_manager", "senior_management"] },
     ],
   },
   // 7. التقارير والتحليل

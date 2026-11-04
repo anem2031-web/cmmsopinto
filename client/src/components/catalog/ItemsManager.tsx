@@ -5,7 +5,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { isCatalogAdminRole, canManageCatalogItemLifecycle, canDeactivateCatalogItem } from "@shared/roles";
+import { isCatalogAdminRole, canManageCatalogItemLifecycle, canDeactivateCatalogItem, canCreateCatalogItem, canUpdateCatalogItem, canImportExportCatalog } from "@shared/roles";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -166,6 +166,8 @@ function NodeSelector({
 export default function ItemsManager() {
   const { user } = useAuth();
   const isCatalogAdmin = isCatalogAdminRole(user?.role);
+  const canCreateItem = canCreateCatalogItem(user?.role);
+  const canTransferCatalog = canImportExportCatalog(user?.role);
   // تعطيل/إعادة تفعيل الأصناف: Owner/Admin + مدير الصيانة + المستودع الآن.
   const canManageLifecycle = canManageCatalogItemLifecycle(user?.role);
   const { t, language } = useTranslation();
@@ -203,7 +205,7 @@ export default function ItemsManager() {
 
   const codePreviewQuery = trpc.catalog.items.previewNextCode.useQuery(
     { nodeId: selectedNode?.id || 0 },
-    { enabled: !!selectedNode }
+    { enabled: !!selectedNode && canCreateItem }
   );
 
   useEffect(() => {
@@ -531,22 +533,22 @@ export default function ItemsManager() {
         <h3 className="text-lg font-semibold shrink-0">{t.catalog.items.title}</h3>
 
         <div className="flex items-center gap-2 shrink-0">
-          {isCatalogAdmin && (
+          {canTransferCatalog && (
             <CatalogExportButton
               search={searchQuery}
               nodeIds={catalogFilterNodeId !== null ? catalogFilterNodeIds : undefined}
               includeInactive={true}
             />
           )}
-          {isCatalogAdmin && <CatalogImportButton />}
-          <Button
+          {canTransferCatalog && <CatalogImportButton />}
+          {canCreateItem && <Button
             size="sm"
             className="gap-2"
             onClick={() => setIsDialogOpen(true)}
           >
             <Plus className="w-4 h-4" />
             {t.catalog.items.addNew}
-          </Button>
+          </Button>}
         </div>
       </div>
 
@@ -775,7 +777,7 @@ export default function ItemsManager() {
               {viewItem?.id && (
                 <div className="border-t pt-3">
                   <p className="text-sm text-muted-foreground mb-2">الموردون</p>
-                  <SupplierPickerSection itemId={viewItem.id} />
+                  <SupplierPickerSection itemId={viewItem.id} readOnly={user?.role === "senior_management"} />
                 </div>
               )}
 
@@ -974,7 +976,7 @@ export default function ItemsManager() {
 
             {editingItem && (
               <div className="border-t pt-4 mt-2">
-                <SupplierPickerSection itemId={editingItem.id} />
+                <SupplierPickerSection itemId={editingItem.id} readOnly={user?.role === "senior_management"} />
               </div>
             )}
 
@@ -1090,14 +1092,14 @@ function ItemCard({
             <Eye className="w-3.5 h-3.5" />
             استعراض
           </Button>
-          <Button variant="default" size="sm" className="gap-1.5" onClick={() => onEdit(item)}>
+          {canUpdateCatalogItem(user?.role) && <Button variant="default" size="sm" className="gap-1.5" onClick={() => onEdit(item)}>
             <Pencil className="w-3.5 h-3.5" />
             تعديل
-          </Button>
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onDuplicate(item)}>
+          </Button>}
+          {canCreateCatalogItem(user?.role) && <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onDuplicate(item)}>
             <Copy className="w-3.5 h-3.5" />
             {t.catalog.items.addFrom}
-          </Button>
+          </Button>}
           {canDelete && Number(item.isActive) === 1 && (
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onDelete(item.id)}>
               <Trash2 className="w-3.5 h-3.5" />

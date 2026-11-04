@@ -212,6 +212,20 @@ export const catalogProcedure = roleMiddleware([
   APP_ROLE.WAREHOUSE,
 ]);
 
+/** Reference details needed to view/edit items; no Catalog management mutations. */
+export const catalogViewProcedure = roleMiddleware([
+  APP_ROLE.MAINTENANCE_MANAGER,
+  APP_ROLE.GENERAL_MAINTENANCE_MANAGER,
+  APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,
+  APP_ROLE.WAREHOUSE,
+  APP_ROLE.SENIOR_MANAGEMENT,
+]).use(({ ctx, next }) => {
+  if (ctx.user.role === APP_ROLE.SENIOR_MANAGEMENT && ctx.user.isActive !== 1) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
+  }
+  return next({ ctx });
+});
+
 /** Existing item CRUD plus the explicitly approved IT Manager item-only grant. */
 export const catalogItemManagerProcedure = roleMiddleware([
   APP_ROLE.MAINTENANCE_MANAGER,
@@ -225,6 +239,23 @@ export const catalogItemManagerProcedure = roleMiddleware([
   }
   return next({ ctx });
 });
+
+/** Senior management can read and edit existing items without manual creation. */
+export const catalogItemReadProcedure = roleMiddleware([
+  APP_ROLE.MAINTENANCE_MANAGER,
+  APP_ROLE.GENERAL_MAINTENANCE_MANAGER,
+  APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,
+  APP_ROLE.WAREHOUSE,
+  APP_ROLE.IT_MANAGER,
+  APP_ROLE.SENIOR_MANAGEMENT,
+]).use(({ ctx, next }) => {
+  if ([APP_ROLE.IT_MANAGER, APP_ROLE.SENIOR_MANAGEMENT].includes(ctx.user.role as any) && ctx.user.isActive !== 1) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
+  }
+  return next({ ctx });
+});
+
+export const catalogItemUpdateProcedure = catalogItemReadProcedure;
 
 /**
  * تعطيل/إعادة تفعيل أصناف الكتالوج تحديداً (isActive toggle فقط).
@@ -242,14 +273,26 @@ export const catalogItemDeactivateProcedure = roleMiddleware([
   APP_ROLE.MAINTENANCE_MANAGER,
   APP_ROLE.WAREHOUSE,
   APP_ROLE.IT_MANAGER,
+  APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,
+  APP_ROLE.SENIOR_MANAGEMENT,
 ]).use(({ ctx, next }) => {
-  if (ctx.user.role === APP_ROLE.IT_MANAGER && ctx.user.isActive !== 1) {
+  if ([APP_ROLE.IT_MANAGER, APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER, APP_ROLE.SENIOR_MANAGEMENT].includes(ctx.user.role as any) && ctx.user.isActive !== 1) {
     throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
   }
   return next({ ctx });
 });
 
-/** Owner/admin-only Catalog actions: delete/deactivate, settings, import/export. */
+/** Existing import/export pipeline; it does not grant other Catalog administration. */
+export const catalogImportExportProcedure = roleMiddleware([
+  APP_ROLE.SENIOR_MANAGEMENT,
+]).use(({ ctx, next }) => {
+  if (ctx.user.role === APP_ROLE.SENIOR_MANAGEMENT && ctx.user.isActive !== 1) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
+  }
+  return next({ ctx });
+});
+
+/** Owner/admin-only Catalog actions: settings, audit and taxonomy/unit lifecycle. */
 export const catalogAdminProcedure = roleMiddleware([]);
 
 /** Standalone Construction module is restricted to owner/admin. */

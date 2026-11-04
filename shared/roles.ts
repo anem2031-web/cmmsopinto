@@ -98,6 +98,7 @@ export const CATALOG_MODULE_ROLES = [
   APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,
   APP_ROLE.WAREHOUSE,
   APP_ROLE.IT_MANAGER,
+  APP_ROLE.SENIOR_MANAGEMENT,
 ] as const;
 
 export function canRoleAccessCatalogModule(role?: string | null): boolean {
@@ -106,6 +107,28 @@ export function canRoleAccessCatalogModule(role?: string | null): boolean {
 
 export function isCatalogAdminRole(role?: string | null): boolean {
   return role === APP_ROLE.OWNER || role === APP_ROLE.ADMIN;
+}
+
+/** The existing manual item creation grant remains separate from item editing. */
+export function canCreateCatalogItem(role?: string | null): boolean {
+  return !!role && ([
+    APP_ROLE.OWNER,
+    APP_ROLE.ADMIN,
+    APP_ROLE.MAINTENANCE_MANAGER,
+    APP_ROLE.GENERAL_MAINTENANCE_MANAGER,
+    APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,
+    APP_ROLE.WAREHOUSE,
+    APP_ROLE.IT_MANAGER,
+  ] as readonly string[]).includes(role);
+}
+
+export function canUpdateCatalogItem(role?: string | null): boolean {
+  return role === APP_ROLE.SENIOR_MANAGEMENT || canCreateCatalogItem(role);
+}
+
+/** Catalog transfer files do not grant settings, reactivation or other master writers. */
+export function canImportExportCatalog(role?: string | null): boolean {
+  return role === APP_ROLE.SENIOR_MANAGEMENT || isCatalogAdminRole(role);
 }
 
 /**
@@ -124,9 +147,12 @@ export function canManageCatalogItemLifecycle(role?: string | null): boolean {
   return !!role && (CATALOG_ITEM_LIFECYCLE_ROLES as readonly string[]).includes(role);
 }
 
-/** IT Manager manages items only; other Catalog administration remains excluded. */
+/** Item deactivation is separate from reactivation and other Catalog administration. */
 export function canDeactivateCatalogItem(role?: string | null): boolean {
-  return role === APP_ROLE.IT_MANAGER || canManageCatalogItemLifecycle(role);
+  return role === APP_ROLE.IT_MANAGER
+    || role === APP_ROLE.SENIOR_MANAGEMENT
+    || role === APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER
+    || canManageCatalogItemLifecycle(role);
 }
 
 /**

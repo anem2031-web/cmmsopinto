@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, catalogAdminProcedure } from "../_shared/procedures";
+import { router, catalogImportExportProcedure } from "../_shared/procedures";
 import { getDb } from "../../_core/db";
 
 import {
@@ -13,7 +13,7 @@ import { catalogAuditRequestMeta } from "../../_core/catalog-audit";
 
 export const catalogImportExportRouter = router({
 
-  exportExcel: catalogAdminProcedure
+  exportExcel: catalogImportExportProcedure
     .mutation(async () => {
 
       const db     = await getDb();   // ← await
@@ -26,7 +26,7 @@ export const catalogImportExportRouter = router({
     }),
 
 
-  exportItemsExcel: catalogAdminProcedure
+  exportItemsExcel: catalogImportExportProcedure
     .input(z.object({
       search: z.string().optional(),
       nodeIds: z.array(z.number()).optional(),
@@ -42,7 +42,7 @@ export const catalogImportExportRouter = router({
       };
     }),
 
-  exportTaxonomyTreeExcel: catalogAdminProcedure
+  exportTaxonomyTreeExcel: catalogImportExportProcedure
     .input(z.object({ includeInactive: z.boolean().optional() }).optional())
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -54,7 +54,7 @@ export const catalogImportExportRouter = router({
       };
     }),
 
-  importPreview: catalogAdminProcedure
+  importPreview: catalogImportExportProcedure
     .input(z.object({ fileBase64: z.string() }))
     .mutation(async ({ input }) => {
 
@@ -65,7 +65,7 @@ export const catalogImportExportRouter = router({
       return { parsed, validation };
     }),
 
-  importCommit: catalogAdminProcedure
+  importCommit: catalogImportExportProcedure
     .input(z.object({ parsed: z.any() }))
     .mutation(async ({ input, ctx }) => {
 

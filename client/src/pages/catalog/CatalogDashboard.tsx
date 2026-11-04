@@ -30,7 +30,7 @@ export default function CatalogDashboard() {
   const { t } = useTranslation();
   const { user, loading } = useAuth();
   const isCatalogAdmin = isCatalogAdminRole(user?.role);
-  const itemsOnly = user?.role === "it_manager";
+  const itemsOnly = user?.role === "it_manager" || user?.role === "senior_management";
   const [activeTab, setActiveTab] = useState(itemsOnly ? "items" : "overview");
   const [searchQuery, setSearchQuery] = useState("");
 

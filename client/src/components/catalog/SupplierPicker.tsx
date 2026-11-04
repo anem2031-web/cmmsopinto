@@ -48,10 +48,11 @@ interface ItemSupplierLink {
 
 interface SupplierPickerProps {
   itemId: number;
+  readOnly?: boolean;
 }
 
 // ── Main Component ─────────────────────────────────────────────────────────
-export function SupplierPickerSection({ itemId }: SupplierPickerProps) {
+export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPickerProps) {
   const [showSearch, setShowSearch] = useState(false);
   const [showAssignDialog, setShowAssignDialog] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
@@ -136,7 +137,7 @@ export function SupplierPickerSection({ itemId }: SupplierPickerProps) {
           <Truck className="w-3.5 h-3.5 text-muted-foreground" />
           الموردون المرتبطون
         </label>
-        <Button
+        {!readOnly && <Button
           type="button"
           variant="outline"
           size="sm"
@@ -145,7 +146,7 @@ export function SupplierPickerSection({ itemId }: SupplierPickerProps) {
         >
           <Plus className="w-3 h-3" />
           إضافة مورد
-        </Button>
+        </Button>}
       </div>
 
       {/* Linked Suppliers List */}
@@ -159,6 +160,7 @@ export function SupplierPickerSection({ itemId }: SupplierPickerProps) {
             <LinkedSupplierRow
               key={link.supplierId}
               link={link}
+              readOnly={readOnly}
               onRemove={handleRemove}
               onSetPreferred={() =>
                 setPreferredMut.mutate({ itemId, supplierId: link.supplierId })
@@ -174,12 +176,12 @@ export function SupplierPickerSection({ itemId }: SupplierPickerProps) {
       )}
 
       {/* Search Dialog */}
-      <SupplierSearchDialog
+      {!readOnly && <SupplierSearchDialog
         open={showSearch}
         onClose={() => setShowSearch(false)}
         onSelect={handleSelectSupplier}
         alreadyLinked={linkedSuppliers?.map((l: ItemSupplierLink) => l.supplierId) ?? []}
-      />
+      />}
 
       {/* Assign Dialog */}
       <Dialog open={showAssignDialog} onOpenChange={(open) => { if (!open) { setShowAssignDialog(false); setSelectedSupplier(null); } }}>
@@ -303,10 +305,12 @@ export function SupplierPickerSection({ itemId }: SupplierPickerProps) {
 // ── Linked Supplier Row ────────────────────────────────────────────────────
 function LinkedSupplierRow({
   link,
+  readOnly,
   onRemove,
   onSetPreferred,
 }: {
   link: ItemSupplierLink;
+  readOnly: boolean;
   onRemove: (l: ItemSupplierLink) => void;
   onSetPreferred: () => void;
 }) {
@@ -320,6 +324,7 @@ function LinkedSupplierRow({
       {/* Preferred Star */}
       <button
         type="button"
+        disabled={readOnly}
         onClick={onSetPreferred}
         title={link.isPreferred ? "مورد أساسي" : "تعيين كمورد أساسي"}
         className="shrink-0"
@@ -352,14 +357,14 @@ function LinkedSupplierRow({
       </div>
 
       {/* Remove */}
-      <button
+      {!readOnly && <button
         type="button"
         onClick={() => onRemove(link)}
         className="shrink-0 p-1 rounded hover:bg-red-100 hover:text-red-600 transition-colors text-muted-foreground"
         title="إزالة المورد"
       >
         <X className="w-3.5 h-3.5" />
-      </button>
+      </button>}
     </div>
   );
 }

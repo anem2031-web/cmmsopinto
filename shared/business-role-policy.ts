@@ -57,6 +57,17 @@ const managementQueries = [
   "kpi.getTicketTimelines", "kpi.getPOTimelines",
 ];
 const managementMutations = ["tickets.create", "tickets.createTicket", "tickets.update", "tickets.submitForTriage", "tickets.confirmCompletion", "improvementIdeas.decide", "ai.analyze"];
+/** Senior Catalog grant is independent of warehouse and Catalog-admin authority. */
+const seniorCatalogQueries = [
+  ...paths("catalog.nodes", "getById getChildren"),
+  ...paths("catalog.items", "count getById"),
+  ...paths("catalog.suppliers", "list getById"),
+  "catalog.itemSuppliers.listByItem",
+];
+const seniorCatalogMutations = [
+  ...paths("catalog.items", "update delete"),
+  ...paths("catalog.importExport", "exportExcel exportItemsExcel exportTaxonomyTreeExcel importPreview importCommit"),
+];
 const warehouseQueries = [
   ...paths("supplierReturns", "status list delegates valuePreview"),
   ...paths("inventory", "list books bookPages taxonomy lotSummaries listLots getTransactions issueCostAllocations scanBarcode getItemSummary getPurchaseHistory getLedger"),
@@ -148,8 +159,8 @@ const constructionMutations = [
 export const BUSINESS_ROLE_CAPABILITIES: Record<BusinessRole, { query: readonly string[]; mutation: readonly string[] }> = {
   accountant: { query: [...sharedQueries, ...costQueries, "attachments.listByType", ...paths("delegatePricingBundles", "status list listPage detail approvalQueue approvalDetail")],
     mutation: [...sharedMutations, ...paths("purchaseOrders", "approveAccounting approveAccountingBatch rejectAccountingBatchItem reject"), "purchasePackages.approveAccountingSubmission", ...paths("delegatePricingBundles","pdf approveAccounting resumeApproval")] },
-  senior_management: { query: [...sharedQueries, ...documentQueries, ...settlementReviewQueries, ...warehouseOversightQueries, ...costQueries, ...managementQueries, "attachments.listByType", "technicians.list", ...paths("delegatePricingBundles", "status list listPage detail approvalQueue approvalDetail")],
-    mutation: [...sharedMutations, ...documentMutations, ...settlementReviewMutations, ...managementMutations, ...paths("purchaseOrders", "reviewItems resolveDelegateChange approveManagement approveManagementBatch reject"), "purchasePackages.approveManagementSubmission", ...paths("delegatePricingBundles","pdf approveAccounting approveManagement resumeApproval")] },
+  senior_management: { query: [...sharedQueries, ...documentQueries, ...settlementReviewQueries, ...warehouseOversightQueries, ...costQueries, ...managementQueries, ...seniorCatalogQueries, "attachments.listByType", "technicians.list", ...paths("delegatePricingBundles", "status list listPage detail approvalQueue approvalDetail")],
+    mutation: [...sharedMutations, ...documentMutations, ...settlementReviewMutations, ...managementMutations, ...seniorCatalogMutations, ...paths("purchaseOrders", "reviewItems resolveDelegateChange approveManagement approveManagementBatch reject"), "purchasePackages.approveManagementSubmission", ...paths("delegatePricingBundles","pdf approveAccounting approveManagement resumeApproval")] },
   executive_director: { query: [...sharedQueries, ...documentQueries, ...costQueries, ...managementQueries, "technicians.list"],
     mutation: [...sharedMutations, ...documentMutations, ...managementMutations] },
   warehouse: { query: [...sharedQueries, ...documentQueries, ...settlementReviewQueries, ...costQueries, ...warehouseQueries],
@@ -172,6 +183,7 @@ const warehouseOversightPages = new Set(["/inventory", "/inventory-operations", 
 const managementPages = new Set(["/tickets", "/tickets/inbox", "/tickets/new", "/reports", "/reports/technicians", "/reports/purchase-cycle", "/reports/maintenance-cycle", "/reports/section-report", "/reports/preventive", "/inspection-dashboard", "/ai-assistant"]);
 export function businessPageAllowed(role: BusinessRole, rawPath: string): boolean {
   const path = rawPath.split(/[?#]/, 1)[0] || "/";
+  if (path === "/catalog") return role === "warehouse" || role === "senior_management";
   if (path === "/inventory-settlement-review") return role === "warehouse" || role === "senior_management";
   // The page shell is reachable; its data and actions require project membership.
   if (/^\/construction(?:\/(?:tickets|reports|projects(?:\/(?:new|[1-9]\d*(?:\/edit)?))?))?$/.test(path)) return false;
