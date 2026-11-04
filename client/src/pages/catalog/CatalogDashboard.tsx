@@ -30,11 +30,11 @@ export default function CatalogDashboard() {
   const { t } = useTranslation();
   const { user, loading } = useAuth();
   const isCatalogAdmin = isCatalogAdminRole(user?.role);
-  const itemsOnly = user?.role === "it_manager" || user?.role === "senior_management";
+  const itemsOnly = user?.role === "it_manager";
   const [activeTab, setActiveTab] = useState(itemsOnly ? "items" : "overview");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Overview is intentionally limited to System Admin / Owner.
+  // Overview follows the explicit full Catalog administration grant.
   // Once auth is resolved, other Catalog roles land on Items instead of
   // remaining on a hidden overview tab.
   useEffect(() => {
@@ -127,7 +127,7 @@ export default function CatalogDashboard() {
           )}
         </TabsList>
 
-        {/* Overview Tab — System Admin / Owner only */}
+        {/* Overview Tab — full Catalog administration */}
         {isCatalogAdmin && (
           <TabsContent value="overview" className="space-y-6">
             <Card>
@@ -180,7 +180,7 @@ export default function CatalogDashboard() {
           <CatalogItemCandidatesManager />
         </TabsContent>}
 
-        {/* Settings Tab — owner/admin only */}
+        {/* Settings Tab — full Catalog administration */}
         {isCatalogAdmin && (
           <TabsContent value="settings">
             <CatalogSettings />

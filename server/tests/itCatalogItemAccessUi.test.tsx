@@ -28,17 +28,17 @@ vi.mock("../../client/src/components/ui/tabs", () => ({
 import CatalogDashboard from "../../client/src/pages/catalog/CatalogDashboard";
 
 describe("IT manager item-only Catalog presentation", () => {
-  it("shows senior management the granted item workspace without mounting other catalog management tabs", () => {
+  it("shows senior management every Catalog tab under its full Catalog grant", () => {
     fixture.role = "senior_management"; fixture.queries = [];
     const html = renderToStaticMarkup(<CatalogDashboard />);
     expect(html).toContain('data-tab="items"'); expect(html).toContain("ITEMS");
     for (const tab of ["overview", "taxonomy", "units", "suppliers", "new-items", "settings"]) {
-      expect(html).not.toContain(`data-tab="${tab}"`); expect(html).not.toContain(`data-content="${tab}"`);
+      expect(html).toContain(`data-tab="${tab}"`); expect(html).toContain(`data-content="${tab}"`);
     }
-    expect(fixture.queries.find(row => row.path === "catalog.suppliers.stats").options.enabled).toBe(false);
+    expect(fixture.queries.find(row => row.path === "catalog.suppliers.stats").options.enabled).toBe(true);
     expect(canRoleAccessPath("senior_management", "/catalog")).toBe(true);
-    expect(isCatalogAdminRole("senior_management")).toBe(false);
-    expect(canManageCatalogItemLifecycle("senior_management")).toBe(false);
+    expect(isCatalogAdminRole("senior_management")).toBe(true);
+    expect(canManageCatalogItemLifecycle("senior_management")).toBe(true);
   });
   it("shows items and does not mount other catalog modules or their supplier stats request", () => {
     fixture.role = "it_manager"; fixture.queries = [];

@@ -51,18 +51,19 @@ import { SupplierPickerSection } from "../../client/src/components/catalog/Suppl
 beforeEach(() => { fixture.role = "senior_management"; fixture.itemActive = 1; fixture.queries = []; });
 
 describe("Granted Catalog item controls", () => {
-  it("shows senior management view/edit/deactivate/import/export without manual create or duplicate", () => {
+  it("shows senior management full item controls including manual create and duplicate", () => {
     const html = renderToStaticMarkup(<ItemsManager />);
     for (const label of ["استعراض", "تعديل", "تعطيل", "CATALOG_EXPORT", "CATALOG_IMPORT"]) expect(html).toContain(label);
-    for (const label of [ar.catalog.items.addNew, ar.catalog.items.addFrom, "إعادة تفعيل"]) expect(html).not.toContain(label);
+    for (const label of [ar.catalog.items.addNew, ar.catalog.items.addFrom]) expect(html).toContain(label);
+    expect(html).not.toContain("إعادة تفعيل");
     expect(fixture.queries.find(query => query.path === "catalog.items.list")?.input.includeInactive).toBe(true);
     expect(fixture.queries.find(query => query.path === "catalog.items.previewNextCode")?.options.enabled).toBe(false);
   });
-  it("does not show reactivation for a disabled item to senior management", () => {
+  it("shows reactivation for a disabled item to senior management", () => {
     fixture.itemActive = 0;
     const html = renderToStaticMarkup(<ItemsManager />);
     expect(html).toContain("معطّل");
-    expect(html).not.toContain("إعادة تفعيل");
+    expect(html).toContain("إعادة تفعيل");
   });
   it("adds deactivation to construction while retaining its create/edit and excluding import/export", () => {
     fixture.role = "construction_procurement_manager";
@@ -85,7 +86,7 @@ describe("Granted Catalog item controls", () => {
   });
 });
 
-describe("Senior item supplier references", () => {
+describe("Item supplier references and controls", () => {
   it("displays supplier data with no link/remove controls or supplier-search query", () => {
     const html = renderToStaticMarkup(<SupplierPickerSection itemId={44} readOnly />);
     expect(html).toContain("المورد التجريبي");
@@ -93,7 +94,7 @@ describe("Senior item supplier references", () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*title="تعيين كمورد أساسي"/);
     expect(fixture.queries.map(query => query.path)).toEqual(["catalog.itemSuppliers.listByItem"]);
   });
-  it("preserves existing editable supplier controls when readOnly is not supplied", () => {
+  it("shows senior management editable supplier controls when readOnly is not supplied", () => {
     expect(renderToStaticMarkup(<SupplierPickerSection itemId={44} />)).toContain("إضافة مورد");
     expect(renderToStaticMarkup(<SupplierPickerSection itemId={44} />)).toContain('title="إزالة المورد"');
   });

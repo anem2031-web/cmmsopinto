@@ -375,7 +375,7 @@ export const catalogRouter = router({
   importExport: catalogImportExportRouter,
 
   // ────────────────────────────────────────────────────────
-  // 2B-10-2A — CATALOG AUDIT VIEW (OWNER / ADMIN ONLY)
+  // 2B-10-2A — CATALOG AUDIT VIEW (explicit Catalog administration roles)
   // ────────────────────────────────────────────────────────
   audit: router({
     list: catalogAdminProcedure
@@ -434,10 +434,11 @@ export const catalogRouter = router({
 
         const conditions = [];
 
-        // افتراضي: أظهر النشطين فقط. ضمن إدارة الكتالوج يمكن لـOwner/Admin
+        // افتراضي: أظهر النشطين فقط. ضمن إدارة الكتالوج يمكن للأدمن والمالك والإدارة العليا
         // طلب النشط + المعطّل لأغراض governance، بينما القراءات التشغيلية تبقى Active-only.
         const role = (ctx as any)?.user?.role;
-        const canIncludeInactive = role === APP_ROLE.OWNER || role === APP_ROLE.ADMIN;
+        const canIncludeInactive = role === APP_ROLE.OWNER || role === APP_ROLE.ADMIN
+          || (role === APP_ROLE.SENIOR_MANAGEMENT && ctx.user.isActive === 1);
         const includeInactive = input?.includeInactive === true && canIncludeInactive;
         if (!includeInactive) {
           const activeFilter = input?.isActive !== undefined ? input.isActive : true;
@@ -1068,7 +1069,7 @@ create: catalogItemManagerProcedure
         })
       )
       .mutation(async ({ input, ctx }) => {
-        if ([APP_ROLE.IT_MANAGER, APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER, APP_ROLE.SENIOR_MANAGEMENT].includes(ctx.user.role as any) && input.isActive === true) {
+        if ([APP_ROLE.IT_MANAGER, APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER].includes(ctx.user.role as any) && input.isActive === true) {
           throw new TRPCError({ code: "FORBIDDEN", message: "صلاحية هذا الدور تشمل تعديل الأصناف وتعطيلها دون إعادة تفعيلها" });
         }
         if (ctx.user.role === APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER && input.isActive === false && ctx.user.isActive !== 1) {
@@ -1811,7 +1812,8 @@ create: catalogItemManagerProcedure
         const db = await getDb();
         if (!db) throw new Error("Database unavailable");
         const role = (ctx as any)?.user?.role;
-        const canIncludeInactive = role === APP_ROLE.OWNER || role === APP_ROLE.ADMIN;
+        const canIncludeInactive = role === APP_ROLE.OWNER || role === APP_ROLE.ADMIN
+          || (role === APP_ROLE.SENIOR_MANAGEMENT && ctx.user.isActive === 1);
         if (input?.includeInactive === true && canIncludeInactive) {
           return db.select().from(catalogUnits).orderBy(asc(catalogUnits.nameAr));
         }

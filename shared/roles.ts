@@ -106,10 +106,10 @@ export function canRoleAccessCatalogModule(role?: string | null): boolean {
 }
 
 export function isCatalogAdminRole(role?: string | null): boolean {
-  return role === APP_ROLE.OWNER || role === APP_ROLE.ADMIN;
+  return role === APP_ROLE.OWNER || role === APP_ROLE.ADMIN || role === APP_ROLE.SENIOR_MANAGEMENT;
 }
 
-/** The existing manual item creation grant remains separate from item editing. */
+/** Catalog item creation, including the explicitly granted senior Catalog role. */
 export function canCreateCatalogItem(role?: string | null): boolean {
   return !!role && ([
     APP_ROLE.OWNER,
@@ -119,6 +119,7 @@ export function canCreateCatalogItem(role?: string | null): boolean {
     APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,
     APP_ROLE.WAREHOUSE,
     APP_ROLE.IT_MANAGER,
+    APP_ROLE.SENIOR_MANAGEMENT,
   ] as readonly string[]).includes(role);
 }
 
@@ -126,21 +127,18 @@ export function canUpdateCatalogItem(role?: string | null): boolean {
   return role === APP_ROLE.SENIOR_MANAGEMENT || canCreateCatalogItem(role);
 }
 
-/** Catalog transfer files do not grant settings, reactivation or other master writers. */
+/** Import/export follows the Catalog administration grant, not a global admin role. */
 export function canImportExportCatalog(role?: string | null): boolean {
   return role === APP_ROLE.SENIOR_MANAGEMENT || isCatalogAdminRole(role);
 }
 
-/**
- * تعطيل/إعادة تفعيل أصناف الكتالوج (isActive toggle): كان مقصوراً على
- * Owner/Admin فقط. وُسِّع ليشمل مدير الصيانة والمستودع أيضاً، دون منحهما
- * بقية صلاحيات catalogAdmin (settings, import/export, حذف تصنيفات/وحدات).
- */
+/** Item lifecycle grants. Senior Catalog administration does not widen the other roles. */
 export const CATALOG_ITEM_LIFECYCLE_ROLES = [
   APP_ROLE.OWNER,
   APP_ROLE.ADMIN,
   APP_ROLE.MAINTENANCE_MANAGER,
   APP_ROLE.WAREHOUSE,
+  APP_ROLE.SENIOR_MANAGEMENT,
 ] as const;
 
 export function canManageCatalogItemLifecycle(role?: string | null): boolean {

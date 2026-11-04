@@ -777,7 +777,7 @@ export default function ItemsManager() {
               {viewItem?.id && (
                 <div className="border-t pt-3">
                   <p className="text-sm text-muted-foreground mb-2">الموردون</p>
-                  <SupplierPickerSection itemId={viewItem.id} readOnly={user?.role === "senior_management"} />
+                  <SupplierPickerSection itemId={viewItem.id} />
                 </div>
               )}
 
@@ -976,7 +976,7 @@ export default function ItemsManager() {
 
             {editingItem && (
               <div className="border-t pt-4 mt-2">
-                <SupplierPickerSection itemId={editingItem.id} readOnly={user?.role === "senior_management"} />
+                <SupplierPickerSection itemId={editingItem.id} />
               </div>
             )}
 

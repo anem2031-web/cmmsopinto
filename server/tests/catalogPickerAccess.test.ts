@@ -136,7 +136,7 @@ describe("Picker access does not widen catalog management or invoice matching", 
     expect(writes).not.toHaveBeenCalled();
   });
 
-  it.each(["owner", "admin", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "warehouse"])(
+  it.each(["owner", "admin", "senior_management", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "warehouse"])(
     "retains %s's existing catalog item mutation permission", async role => {
       await expect(caller(role).items.create()).resolves.toEqual({ id: 8 });
       expect(writes).toHaveBeenCalledOnce();

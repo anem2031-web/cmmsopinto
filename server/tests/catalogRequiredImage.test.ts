@@ -74,7 +74,7 @@ describe("manual catalog item save with required image", () => {
     await expect(caller().create(without as any)).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(rows).toEqual([]);
   });
-  it.each(["admin", "owner", "construction_procurement_manager", "maintenance_manager", "general_maintenance_manager", "warehouse", "it_manager"])("keeps approved create/edit grant for %s", async role => {
+  it.each(["admin", "owner", "senior_management", "construction_procurement_manager", "maintenance_manager", "general_maintenance_manager", "warehouse", "it_manager"])("keeps approved create/edit grant for %s", async role => {
     await caller(role).create(input); expect(rows).toHaveLength(1); expect(files).toHaveLength(1);
     expect(files[0]).toMatchObject({ entityId: 1, entityType: "catalog_item", uploadedById: 9 });
     await caller(role).update({ id: 1, nameAr: "تعديل" });
@@ -89,17 +89,20 @@ describe("manual catalog item save with required image", () => {
     await expect(caller("it_manager").update({ id: 1, isActive: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(rows[0].isActive).toBe(0);
   });
-  it("senior management edits an existing item and deactivates it without gaining manual creation or reactivation", async () => {
-    await caller().create(input);
+  it("senior management creates, edits, deactivates and reactivates an item with images and audit preserved", async () => {
+    await caller("senior_management").create(input);
     await caller("senior_management").update({ id: 1, nameAr: "مراجعة الإدارة" });
     expect(rows[0].nameAr).toBe("مراجعة الإدارة");
     await caller("senior_management").delete(1);
     expect(rows).toHaveLength(1); expect(rows[0].isActive).toBe(0); expect(files).toHaveLength(1);
     expect(audits.at(-1)).toMatchObject({ entityType: "item", action: "delete", entityId: 1 });
-    await expect(caller("senior_management").create(input)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(caller("senior_management").reactivate(1)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(caller("senior_management").update({ id: 1, isActive: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(rows[0].isActive).toBe(0); expect(files).toHaveLength(1);
+    await caller("senior_management").reactivate(1);
+    expect(Number(rows[0].isActive)).toBe(1);
+    expect(audits.at(-1)).toMatchObject({ entityType: "item", action: "update", entityId: 1, oldValues: { isActive: false }, newValues: { isActive: true } });
+    await caller("senior_management").delete(1);
+    await caller("senior_management").update({ id: 1, isActive: true });
+    expect(Number(rows[0].isActive)).toBe(1); expect(files).toHaveLength(1);
+    expect(audits.at(-1)).toMatchObject({ entityType: "item", action: "update", entityId: 1 });
   });
   it("adds construction deactivation while preserving its existing edit/create and archived item history", async () => {
     const manager = caller("construction_procurement_manager");
@@ -138,7 +141,7 @@ describe("manual catalog item save with required image", () => {
     await expect(caller("it_manager").update({ id: 99, nameAr: "مفقود" })).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(caller("it_manager").delete(99)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
-  it.each(["delegate", "accountant", "senior_management", "technician", "observer", "gate_security"])("retains denial for %s", async role => {
+  it.each(["delegate", "accountant", "technician", "observer", "gate_security"])("retains denial for %s", async role => {
     await expect(caller(role).create(input)).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(rows).toEqual([]);
   });

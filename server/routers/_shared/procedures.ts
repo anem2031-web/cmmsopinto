@@ -179,11 +179,17 @@ const CATALOG_READ_ROLES = [
   APP_ROLE.WAREHOUSE,
   APP_ROLE.FOOD_WAREHOUSE_MANAGER,
   APP_ROLE.FOOD_WAREHOUSE_ASSISTANT,
+  APP_ROLE.SENIOR_MANAGEMENT,
   APP_ROLE.OWNER,
   APP_ROLE.ADMIN,
 ];
 
-export const catalogReadProcedure = roleMiddleware(CATALOG_READ_ROLES);
+export const catalogReadProcedure = roleMiddleware(CATALOG_READ_ROLES).use(({ ctx, next }) => {
+  if (ctx.user.role === APP_ROLE.SENIOR_MANAGEMENT && ctx.user.isActive !== 1) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
+  }
+  return next({ ctx });
+});
 
 /** Purchase forms consume reference lists without granting supplier matching or Catalog management. */
 export const catalogReferenceReadProcedure = roleMiddleware([
@@ -197,9 +203,10 @@ export const catalogReferenceReadProcedure = roleMiddleware([
 /**
  * Standalone Catalog management policy (2B-10):
  * - owner/admin: always allowed by roleMiddleware
+ * - senior management: full Catalog functionality by explicit module grant
  * - maintenance manager / general maintenance manager / construction-procurement manager:
  *   day-to-day Catalog management
- * - all other roles: no Catalog management mutations
+ * - remaining roles: no Catalog management mutations
  *
  * Broad catalogReadProcedure remains intentionally unchanged because purchase,
  * receipt, warehouse and inventory workflows consume Catalog as shared reference
@@ -210,7 +217,13 @@ export const catalogProcedure = roleMiddleware([
   APP_ROLE.GENERAL_MAINTENANCE_MANAGER,
   APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,
   APP_ROLE.WAREHOUSE,
-]);
+  APP_ROLE.SENIOR_MANAGEMENT,
+]).use(({ ctx, next }) => {
+  if (ctx.user.role === APP_ROLE.SENIOR_MANAGEMENT && ctx.user.isActive !== 1) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
+  }
+  return next({ ctx });
+});
 
 /** Reference details needed to view/edit items; no Catalog management mutations. */
 export const catalogViewProcedure = roleMiddleware([
@@ -226,21 +239,22 @@ export const catalogViewProcedure = roleMiddleware([
   return next({ ctx });
 });
 
-/** Existing item CRUD plus the explicitly approved IT Manager item-only grant. */
+/** Item CRUD grants, including IT item-only access and full senior Catalog access. */
 export const catalogItemManagerProcedure = roleMiddleware([
   APP_ROLE.MAINTENANCE_MANAGER,
   APP_ROLE.GENERAL_MAINTENANCE_MANAGER,
   APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,
   APP_ROLE.WAREHOUSE,
   APP_ROLE.IT_MANAGER,
+  APP_ROLE.SENIOR_MANAGEMENT,
 ]).use(({ ctx, next }) => {
-  if (ctx.user.role === APP_ROLE.IT_MANAGER && ctx.user.isActive !== 1) {
+  if ([APP_ROLE.IT_MANAGER, APP_ROLE.SENIOR_MANAGEMENT].includes(ctx.user.role as any) && ctx.user.isActive !== 1) {
     throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
   }
   return next({ ctx });
 });
 
-/** Senior management can read and edit existing items without manual creation. */
+/** Existing item readers and the explicitly granted senior Catalog role. */
 export const catalogItemReadProcedure = roleMiddleware([
   APP_ROLE.MAINTENANCE_MANAGER,
   APP_ROLE.GENERAL_MAINTENANCE_MANAGER,
@@ -260,13 +274,18 @@ export const catalogItemUpdateProcedure = catalogItemReadProcedure;
 /**
  * تعطيل/إعادة تفعيل أصناف الكتالوج تحديداً (isActive toggle فقط).
  * أوسع من catalogProcedure بإضافة مدير الصيانة والمستودع لهذه الميزة تحديداً،
- * لكن أضيق من catalogAdminProcedure (لا صلاحية على settings/import-export/
- * حذف تصنيفات أو وحدات — تلك تبقى Owner/Admin فقط).
+ * بقية صلاحيات الكتالوج مستقلة؛ منحة الإدارة العليا الكاملة لا توسع دور المستودع أو مدير الصيانة.
  */
 export const catalogItemLifecycleProcedure = roleMiddleware([
   APP_ROLE.MAINTENANCE_MANAGER,
   APP_ROLE.WAREHOUSE,
-]);
+  APP_ROLE.SENIOR_MANAGEMENT,
+]).use(({ ctx, next }) => {
+  if (ctx.user.role === APP_ROLE.SENIOR_MANAGEMENT && ctx.user.isActive !== 1) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
+  }
+  return next({ ctx });
+});
 
 /** Item deactivation only; reactivation retains the existing lifecycle grant. */
 export const catalogItemDeactivateProcedure = roleMiddleware([
@@ -292,8 +311,15 @@ export const catalogImportExportProcedure = roleMiddleware([
   return next({ ctx });
 });
 
-/** Owner/admin-only Catalog actions: settings, audit and taxonomy/unit lifecycle. */
-export const catalogAdminProcedure = roleMiddleware([]);
+/** Full Catalog administration only; no global owner/admin capability is inherited. */
+export const catalogAdminProcedure = roleMiddleware([
+  APP_ROLE.SENIOR_MANAGEMENT,
+]).use(({ ctx, next }) => {
+  if (ctx.user.role === APP_ROLE.SENIOR_MANAGEMENT && ctx.user.isActive !== 1) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "الحساب غير نشط" });
+  }
+  return next({ ctx });
+});
 
 /** Standalone Construction module is restricted to owner/admin. */
 export const constructionProcedure = roleMiddleware([]);
