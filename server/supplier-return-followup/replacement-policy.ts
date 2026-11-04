@@ -1,5 +1,6 @@
 import { compensationAmounts, decimal4 } from "./amounts";
 import { ReturnFollowupError } from "./policy";
+import { isDelegateRole } from "../../shared/roles";
 export type ReplacementStage = "draft" | "pricing" | "pending_accounting" | "pending_management" | "ready_to_purchase" | "purchased" | "partially_received" | "received" | "cancelled";
 export interface ReplacementPlan {
   stage: ReplacementStage;
@@ -25,7 +26,7 @@ function check(actor: Actor, plan: ReplacementPlan, revision: number) {
  */
 export function quoteReplacement(actor: Actor, plan: ReplacementPlan, revision: number, total: string, credit: { available: string; currency: string; valuationBasis: ReplacementPlan["valuationBasis"]; confirmed: boolean }): ReplacementPlan {
   check(actor, plan, revision);
-  if (actor.role !== "delegate" || actor.id !== plan.delegateId) fail("التسعير للمندوب المسند إليه فقط", "FORBIDDEN");
+  if (!isDelegateRole(actor.role) || actor.id !== plan.delegateId) fail("التسعير للمندوب المسند إليه فقط", "FORBIDDEN");
   if (!["pricing", "pending_accounting", "pending_management", "ready_to_purchase"].includes(plan.stage)) fail("مرحلة التعويض لا تسمح بتعديل التسعير");
   if (!credit.confirmed || credit.currency !== plan.currency || credit.valuationBasis !== plan.valuationBasis) fail("يجب التحقق من رصيد المورد وعملته وأساس الضريبة");
   const money = compensationAmounts(total, credit.available);
@@ -49,7 +50,7 @@ export function approveReplacementFunding(actor: Actor, plan: ReplacementPlan, r
 }
 export function assertReplacementPurchase(actor: Actor, plan: ReplacementPlan, revision: number) {
   check(actor, plan, revision);
-  if (actor.role !== "delegate" || actor.id !== plan.delegateId) fail("الشراء للمندوب المسند إليه فقط", "FORBIDDEN");
+  if (!isDelegateRole(actor.role) || actor.id !== plan.delegateId) fail("الشراء للمندوب المسند إليه فقط", "FORBIDDEN");
   if (plan.stage !== "ready_to_purchase") fail("التعويض غير جاهز للشراء");
   if (decimal4(plan.additionalFunding) > BigInt(0) && (!plan.accountingApprovedById || !plan.managementApprovedById)) fail("فرق العهدة لم يكتمل اعتماده");
   if (decimal4(plan.total) !== decimal4(plan.creditAllocated) + decimal4(plan.additionalFunding)) fail("مصادر تمويل التعويض لا تطابق سعره");

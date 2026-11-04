@@ -8,7 +8,7 @@ import { PricingBundleService } from "../services/delegate-pricing-bundles/servi
 import { createPricingBundlesRouter } from "../routers/delegate-pricing-bundles/router";
 import { router } from "../routers/_shared/procedures";
 import { reservedPricingItemIds } from "../services/delegate-pricing-bundles/reservations";
-import { canRoleAccessPath } from "../../shared/roles";
+import { canRoleAccessPath, isDelegateRole } from "../../shared/roles";
 import { readAccountingSignature } from "../services/pdf/accountingSignature";
 import { assertRoutedPurchaseItemReady } from "../services/purchase-review-routing";
 import type { TrpcContext } from "../_core/context";
@@ -70,6 +70,7 @@ function fixture() {
   } };
   const database: any = { execute: tx.execute, transaction: (work: any) => { const next = queue.then(async () => { const old = structuredClone(state); transactionDepth++; try { return await work(tx); } catch (error) { state = old; throw error; } finally { transactionDepth--; } }); queue = next.catch(() => {}); return next; } };
   const submit = vm.runInNewContext(submitCode, {
+    isDelegateRole,
     TRPCError, pricingBundlesEnabled: () => true, reservedPricingItemIds, assertRoutedPurchaseItemReady,
     reserveReplacementPricing: async () => null,
     isItemAssignedToPODelegate: (user: any, item: any) => user.id === item.delegateId,
@@ -93,6 +94,19 @@ function fixture() {
   };
   return { service: new PricingBundleService(ports), ports, flags, tx, queries, state: () => state, async add(...ids: number[]) { let id = 0; for (const itemId of ids) id = (await this.service.add(actor,itemId)).id; return id; } };
 }
+describe("delegate manager keeps the delegate's own pricing bundle workflow",()=>{
+  it("sends and downloads its frozen bundle while denying another manager's bundle",async()=>{
+    const f=fixture(),manager={...actor,role:"delegate_manager"};
+    const {id}=await f.service.add(manager,1);
+    await expect(f.service.detail({...manager,id:12},id)).rejects.toMatchObject({code:"FORBIDDEN"});
+    await f.service.send(manager,id,1);
+    expect(f.state().bundles[0]).toMatchObject({delegateId:11,status:"archived"});
+    expect(f.state().items.find((item:any)=>item.id===1)).toMatchObject({delegateId:11,status:"estimated"});
+    const pdf=await f.service.pdf(manager,id);
+    expect(pdf.name).toMatch(/\.pdf$/);expect(pdf.content).toBeTruthy();
+    expect(f.queries.some(query=>query.includes("AND role=? FOR UPDATE"))).toBe(true);
+  });
+});
 beforeEach(() => vi.stubEnv("DELEGATE_PRICING_BUNDLES_ENABLED", "true"));
 afterEach(() => vi.unstubAllEnvs());
 describe("Pricing bundle → existing accounting batches, isolated with no database", () => {
@@ -371,13 +385,13 @@ describe("Compatibility with the existing submission outside the new delegate la
     const items=[{id:1,delegateId:11,status:"estimated",batchId:null,estimatedTotalCost:"30"},{id:2,delegateId:22,status:"estimated",batchId:null},{id:3,delegateId:11,status:"pending",batchId:null}];
     const db={getPurchaseOrderById:vi.fn(async()=>({id:101,poNumber:"PR-101",status:"pending_estimate"})),getPOItems:vi.fn(async()=>items),getNextBatchNumber:vi.fn(async()=>2),createPOPricingBatch:vi.fn(async(..._args:any[])=>17),updatePOItem:vi.fn((..._args:any[])=>{}),updatePurchaseOrder:vi.fn()};
     const finalize=vi.fn(),archive=vi.fn(async()=>true);
-    const submit=vm.runInNewContext(submitCode,{db:{...db,getDb:async()=>null},TRPCError,pricingBundlesEnabled:()=>false,reservedPricingItemIds,isItemAssignedToPODelegate:(user:any,item:any)=>item.delegateId===user.id,finalizePricedBatchForPO:finalize,archiveDelegatePricingBatchPdf:archive});
+    const submit=vm.runInNewContext(submitCode,{isDelegateRole,db:{...db,getDb:async()=>null},TRPCError,pricingBundlesEnabled:()=>false,reservedPricingItemIds,isItemAssignedToPODelegate:(user:any,item:any)=>item.delegateId===user.id,finalizePricedBatchForPO:finalize,archiveDelegatePricingBatchPdf:archive});
     vi.stubEnv("DELEGATE_PRICING_BUNDLES_ENABLED","false");const result=await submit(101,actor);
     expect(result).toMatchObject({batchId:17,itemCount:1,pricingDocumentArchived:true});expect(db.createPOPricingBatch.mock.calls[0][0]).toMatchObject({purchaseOrderId:101,batchNumber:2,itemCount:1,status:"pending_accounting"});
     expect(db.updatePOItem.mock.calls[0][0]).toBe(1); expect(finalize).toHaveBeenCalledOnce();expect(archive).toHaveBeenCalledOnce();
   });
   it("requires the new layer for delegates when enabled without changing other roles",async()=>{
-    const database=vi.fn();const submit=vm.runInNewContext(submitCode,{TRPCError,pricingBundlesEnabled:()=>true,db:{getPurchaseOrderById:database}});
+    const database=vi.fn();const submit=vm.runInNewContext(submitCode,{isDelegateRole,TRPCError,pricingBundlesEnabled:()=>true,db:{getPurchaseOrderById:database}});
     await expect(submit(101,actor)).rejects.toMatchObject({code:"PRECONDITION_FAILED"});expect(database).not.toHaveBeenCalled();
   });
   it("reuses the existing notification helper, ticket synchronization and audit for finalization",async()=>{

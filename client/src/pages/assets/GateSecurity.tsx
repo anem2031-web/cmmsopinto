@@ -15,6 +15,7 @@ import { usePurchaseOpsText } from "@/i18n/purchaseOpsUi";
 import { localizeApiError } from "@/i18n/apiError";
 import { useBatchTranslation } from "@/hooks/useContentTranslation";
 import { useMemo, useState } from "react";
+import { hasCurrentExternalDelegateReceipt } from "@shared/externalMaintenanceWorkflow";
 
 function statusLabel(status: string, p: (source: string, vars?: Record<string, any>) => string) {
   const labels: Record<string, string> = {
@@ -39,7 +40,8 @@ export default function GateSecurity() {
   const [carrierName, setCarrierName] = useState("");
   const [notes, setNotes] = useState("");
 
-  const exitRows = (rows as any[]).filter(row => row.job.status === "waiting_gate_exit");
+  const exitRows = (rows as any[]).filter(row => row.job.status === "waiting_gate_exit"
+    && hasCurrentExternalDelegateReceipt(row.job));
   const entryRows = (rows as any[]).filter(row => row.job.status === "waiting_gate_entry");
   const historyRows = (rows as any[]).filter(row => !["waiting_gate_exit", "waiting_gate_entry"].includes(row.job.status));
   const externalJobIds = useMemo(
@@ -106,6 +108,7 @@ export default function GateSecurity() {
             <Badge variant="secondary">{statusLabel(row.job.status, p)}</Badge>
           </div>
           <div className="font-semibold">{externalJobTranslations[Number(row.job.id)]?.assetName || row.job.assetName || row.assetRegisteredName || row.ticketTitle}</div>
+          {row.job.purchaseTitle && <div className="text-sm">{p("عنوان طلب الشراء")}: {row.job.purchaseTitle}</div>}
           <div className="text-xs text-muted-foreground flex flex-wrap gap-3">
             <span>{p("المندوب")}: {row.delegateName || "—"}</span>
             <span>{p("الفني المسند")}: {row.assignedTechnicianName || "—"}</span>

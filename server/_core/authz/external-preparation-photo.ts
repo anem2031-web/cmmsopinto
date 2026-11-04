@@ -11,7 +11,14 @@ export async function isWaitingExternalWarehousePreparation(ticketId: number): P
     LEFT JOIN external_maintenance_jobs job ON job.ticketItemId = item.id
     WHERE item.ticketId = ${ticketId}
       AND item.maintenancePath = 'C' AND item.status = 'work_approved'
-      AND job.id IS NULL
+      AND (job.id IS NULL OR (job.purchaseOrderId IS NULL AND job.gateExitApprovedAt IS NULL AND (
+        job.status='waiting_warehouse_preparation' OR (job.status='waiting_gate_exit' AND (
+          job.purchaseTitle IS NULL OR TRIM(job.purchaseTitle)='' OR job.delegateReceiptStatus IS NULL
+          OR job.delegateReceiptStatus<>'accepted' OR job.preparationRevision<=0 OR job.delegateId IS NULL OR job.delegateId<=0
+          OR job.delegateReceiptById IS NULL OR job.delegateReceiptById<>job.delegateId OR job.delegateReceiptAt IS NULL
+          OR job.warehousePreparedAt IS NULL OR job.delegateReceiptAt<job.warehousePreparedAt
+        ))
+      )))
     LIMIT 1
   `);
   if (!Array.isArray(rows)) throw new Error("Invalid external preparation photo scope response");

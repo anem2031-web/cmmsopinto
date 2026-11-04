@@ -1,4 +1,5 @@
 import { readScopeChunks } from "../authz/read-batch";
+import { APP_ROLE } from "../../../shared/roles";
 import { pricingBundlesEnabled, assertItemOutsidePricingBundle } from "../../services/delegate-pricing-bundles/reservations";
 import { getPackageSubmissionsWithBatchesForPackages } from "./purchase-read-lists";
 // ============================================================
@@ -303,7 +304,7 @@ async function recordPOItemMutationHistory(
 export async function getUsersByRole(role: string) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(users).where(eq(users.role, role as any));
+  return db.select().from(users).where(role===APP_ROLE.DELEGATE?inArray(users.role,[APP_ROLE.DELEGATE,APP_ROLE.DELEGATE_MANAGER]):eq(users.role, role as any));
 }
 
 async function getUsersByRoles(roles: string[]) {
@@ -347,7 +348,7 @@ export async function getOperationalManagerUsers() {
 export async function getUserIdsByRole(role: string): Promise<number[]> {
   const db = await getDb();
   if (!db) return [];
-  const rows = await db.select({ id: users.id }).from(users).where(eq(users.role, role as any));
+  const rows = await db.select({ id: users.id }).from(users).where(role===APP_ROLE.DELEGATE?inArray(users.role,[APP_ROLE.DELEGATE,APP_ROLE.DELEGATE_MANAGER]):eq(users.role, role as any));
   return rows.map(r => r.id);
 }
 
@@ -1152,19 +1153,21 @@ export async function updatePOItemIfDelegateChangeUnlocked(
   historyMeta?: POItemHistoryMeta,
   tx?: any,
   expectedBatchId?: number | null,
+  expectedDelegateId?: number,
 ): Promise<boolean> {
   const db = tx || await getDb();
   if (!db) return false;
-  if (pricingBundlesEnabled()) {
-    if (!tx) return db.transaction((locked: any) => updatePOItemIfDelegateChangeUnlocked(id, data, expectedStatus, historyMeta, locked, expectedBatchId));
+  if (pricingBundlesEnabled() || expectedDelegateId!==undefined) {
+    if (!tx) return db.transaction((locked: any) => updatePOItemIfDelegateChangeUnlocked(id, data, expectedStatus, historyMeta, locked, expectedBatchId,expectedDelegateId));
     await tx.select({ id: purchaseOrderItems.id }).from(purchaseOrderItems).where(eq(purchaseOrderItems.id, id)).for("update");
-    await assertItemOutsidePricingBundle(tx, id);
+    if(pricingBundlesEnabled())await assertItemOutsidePricingBundle(tx, id);
   }
   const before = await readPOItemHistorySnapshot(db, id);
   const conditions = [
     eq(purchaseOrderItems.id, id),
     isNull(purchaseOrderItems.delegateChangeRequestedAt),
   ];
+  if(expectedDelegateId!==undefined)conditions.push(eq(purchaseOrderItems.delegateId,expectedDelegateId));
   if (pricingBundlesEnabled() && expectedBatchId !== undefined) conditions.push(expectedBatchId == null ? isNull(purchaseOrderItems.batchId) : eq(purchaseOrderItems.batchId, expectedBatchId));
   if (expectedStatus) {
     conditions.push(eq(purchaseOrderItems.status, expectedStatus as any));
@@ -1185,6 +1188,7 @@ export async function updatePOItemIfDelegateChangeUnlocked(
       delegateChangeRequestedAt: purchaseOrderItems.delegateChangeRequestedAt,
       status: purchaseOrderItems.status,
       batchId: purchaseOrderItems.batchId,
+      delegateId: purchaseOrderItems.delegateId,
     })
     .from(purchaseOrderItems)
     .where(eq(purchaseOrderItems.id, id))
@@ -1192,6 +1196,7 @@ export async function updatePOItemIfDelegateChangeUnlocked(
   return !!row[0]
     && !row[0].delegateChangeRequestedAt
     && (!expectedStatus || row[0].status === expectedStatus)
+    && (expectedDelegateId===undefined || row[0].delegateId===expectedDelegateId)
     && (!pricingBundlesEnabled() || expectedBatchId === undefined || row[0].batchId === expectedBatchId);
 }
 

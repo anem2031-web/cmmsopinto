@@ -1,3 +1,4 @@
+import { isDelegateRole } from "@shared/roles";
 import { trpc } from "@/lib/trpc";
 import { useLocation, useRoute } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -101,9 +102,9 @@ export default function PurchaseBatchDetail() {
     { id: packageId },
     { enabled: Number.isFinite(packageId) }
   );
-  const { data: directoryUsers = [] } = trpc.users.list.useQuery(undefined, { enabled: !!user && user.role !== "delegate" });
+  const { data: directoryUsers = [] } = trpc.users.list.useQuery(undefined, { enabled: !!user && !isDelegateRole(user.role) });
   const packageOrders = (pkg as any)?.orders ?? [];
-  const users = user?.role === "delegate" ? [
+  const users = user && isDelegateRole(user.role) ? [
     { id: user.id, name: user.name },
     { id: (pkg as any)?.createdById, name: (pkg as any)?.createdByName },
     ...packageOrders.map((po: any) => ({ id: po.requestedById, name: po.requestedByName })),
@@ -121,7 +122,7 @@ export default function PurchaseBatchDetail() {
   );
   const workflowItemField = (item: any, field: string) => itemWorkflowTranslations[Number(item.id)]?.[field] || item?.[field] || "";
 
-  const isDelegate = user?.role === "delegate";
+  const isDelegate = isDelegateRole(user?.role);
   // عند الدخول من «بانتظار إجرائي» أثناء التسعير نعرض البطاقة التشغيلية
   // الكاملة للحزمة. الدخول العادي من «جميع الطلبات» يبقى ملخصًا كما اتفقنا.
   const isDelegatePricingActionView =
@@ -971,7 +972,7 @@ export function PackageSubmissions({
   const isAccountant = user?.role === "accountant" || ["owner", "admin"].includes(user?.role || "");
   const isManagementApprover = user?.role === "senior_management" || ["owner", "admin"].includes(user?.role || "");
   const isManagementViewer = isManagementApprover || user?.role === "executive_director";
-  const isDelegate = user?.role === "delegate";
+  const isDelegate = isDelegateRole(user?.role);
 
   if (isLoading || submissions.length === 0) return null;
 

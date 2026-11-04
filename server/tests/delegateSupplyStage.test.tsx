@@ -7,13 +7,16 @@ import { delegateSupplyStage, isDelegateSupplyItemOpen } from "../../shared/dele
 import { delegateFollowupText } from "../../client/src/i18n/delegateFollowup";
 import { isDelegateOwnPurchaseDraft } from "../../shared/purchaseDraftVisibility";
 import { isPurchasePdfApprover } from "../_core/authz/purchase-document";
+import { isDelegateRole } from "../../shared/roles";
 const ui=vi.hoisted(()=>({language:"ar"}));
 vi.mock("../../client/src/contexts/LanguageContext",()=>({useTranslation:()=>({language:ui.language})}));
 vi.mock("../../client/src/hooks/useContentTranslation",()=>({getLocalizedItemField:(item:any)=>item.itemName}));
 vi.mock("wouter",()=>({Link:({children,href,...props}:any)=><a href={href} {...props}>{children}</a>}));
 import { DelegateSupplyRows } from "../../client/src/components/purchase/DelegateSupplyRows";
 const file="server/routers/purchase/purchase-orders.router.ts",source=ts.createSourceFile(file,fs.readFileSync(file,"utf8"),ts.ScriptTarget.Latest,true);
-function evaluate(code:string,context:any){return vm.runInNewContext(ts.transpileModule(`(${code})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,{isDelegateOwnPurchaseDraft,isPurchasePdfApprover,localizeMasterDataReferences:async(value:any)=>value,...context});}
+function evaluate(code:string,context:any){return vm.runInNewContext(ts.transpileModule(`(${code})`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,{isDelegateOwnPurchaseDraft,isPurchasePdfApprover,isDelegateRole,
+  createPurchaseOrderReadScope:async(user:any,orders:any[])=>{for(const order of orders)await context.assertCanViewPurchaseOrder(user,order);return{assert:()=>{},isRoutedReviewOnly:()=>false,filterItems:(_po:any,items:any[])=>items};},
+  localizeMasterDataReferences:async(value:any)=>value,...context});}
 function handler(name:string,context:any){let fn="";function walk(node:ts.Node){if(ts.isPropertyAssignment(node)&&node.name.getText(source)===name&&ts.isCallExpression(node.initializer)&&ts.isPropertyAccessExpression(node.initializer.expression)&&node.initializer.expression.name.text==="query")fn=node.initializer.arguments[0].getText(source);ts.forEachChild(node,walk);}walk(source);if(!fn)throw Error(name);return evaluate(fn,{TRPCError,...context});}
 const fn=(name:string,context:any)=>evaluate((source.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name)!).getText(source).replace(/^export /,""),context);
 describe("Delegate supply stage from the item's batch and path",()=>{

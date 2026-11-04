@@ -1141,7 +1141,7 @@ async function startServer() {
       // الدورين حتى لا توجد وثيقتا عهدة لنفس الإرسال. الإدارة/المالك يحتفظون
       // بصلاحيات الاستعراض الحالية لأغراض التدقيق.
       const { getPOPricingBatchById, getPOPricingBatches } = await import("./db");
-      const mustUsePackageOfficialDocument = ["delegate", "accountant"].includes(user?.role || "");
+      const mustUsePackageOfficialDocument = ["delegate", "delegate_manager", "accountant"].includes(user?.role || "");
       if (mustUsePackageOfficialDocument && !submissionId) {
         if (batchId) {
           const requestedBatch = await getPOPricingBatchById(batchId);

@@ -1062,11 +1062,18 @@ export const externalMaintenanceJobs = mysqlTable("external_maintenance_jobs", {
 		'reinstall_in_progress',
 		'ready_for_closure',
 		'closed',
+		'waiting_delegate_receipt',
 	]).default('waiting_warehouse_preparation').notNull(),
 	assetName: varchar({ length: 300 }),
+	purchaseTitle: varchar({ length: 300 }),
 	assetBeforePhotoUrl: text(),
 	assetBeforeCondition: text(),
 	delegateId: int(),
+	delegateReceiptStatus: mysqlEnum(['pending','accepted','rejected']),
+	delegateReceiptById: int(),
+	delegateReceiptAt: timestamp({ mode: 'string' }),
+	delegateReceiptReason: text(),
+	preparationRevision: int().default(0).notNull(),
 	warehousePreparedById: int(),
 	warehousePreparedAt: timestamp({ mode: 'string' }),
 	warehouseNotes: text(),
@@ -2704,7 +2711,7 @@ export const users = mysqlTable("users", {
 	name: text(),
 	email: varchar({ length: 320 }),
 	loginMethod: varchar({ length: 64 }),
-	role: mysqlEnum(['user','admin','operator','technician','it_manager','it_member','maintenance_manager','general_maintenance_manager','construction_procurement_manager','supervisor','purchase_manager','purchase_requester','delegate','accountant','senior_management','executive_director','warehouse','gate_security','owner','food_warehouse_manager','food_warehouse_assistant','observer']).default('user').notNull(),
+	role: mysqlEnum(['user','admin','operator','technician','it_manager','it_member','maintenance_manager','general_maintenance_manager','construction_procurement_manager','supervisor','purchase_manager','purchase_requester','delegate','accountant','senior_management','executive_director','warehouse','gate_security','owner','food_warehouse_manager','food_warehouse_assistant','observer','delegate_manager']).default('user').notNull(),
 	createdAt: timestamp({ mode: 'string' }).default('CURRENT_TIMESTAMP').notNull(),
 	updatedAt: timestamp({ mode: 'string' }).defaultNow().onUpdateNow().notNull(),
 	lastSignedIn: timestamp({ mode: 'string' }).default('CURRENT_TIMESTAMP').notNull(),
@@ -3396,7 +3403,7 @@ export const pmv2MaterialRequestItems = mysqlTable("pmv2_material_request_items"
 // (تم تصحيح poItemStatuses لتطابق القيم الـ12 الفعلية المؤكدة من قاعدة الإنتاج).
 // ══════════════════════════════════════════════════════════════════════
 
-export const userRoles = ["operator", "technician", "it_manager", "it_member", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "supervisor", "purchase_manager", "purchase_requester", "delegate", "accountant", "senior_management", "executive_director", "warehouse", "gate_security", "owner", "food_warehouse_manager", "food_warehouse_assistant"] as const;
+export const userRoles = ["operator", "technician", "it_manager", "it_member", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "supervisor", "purchase_manager", "purchase_requester", "delegate", "accountant", "senior_management", "executive_director", "warehouse", "gate_security", "owner", "food_warehouse_manager", "food_warehouse_assistant", "delegate_manager"] as const;
 
 export type UserRole = typeof userRoles[number];
 

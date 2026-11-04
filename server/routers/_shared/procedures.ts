@@ -1,13 +1,13 @@
 import { publicProcedure, protectedProcedure, router } from "../../_core/trpc";
 import { TRPCError } from "@trpc/server";
-import { APP_ROLE } from "@shared/roles";
+import { APP_ROLE, isDelegateRole } from "@shared/roles";
 
 export { publicProcedure, protectedProcedure, router };
 
 const roleMiddleware = (allowedRoles: string[]) => {
   return protectedProcedure.use(({ ctx, next }) => {
     if (
-      !allowedRoles.includes(ctx.user.role) &&
+      !allowedRoles.includes(ctx.user.role) && !(isDelegateRole(ctx.user.role) && allowedRoles.includes(APP_ROLE.DELEGATE)) &&
       ctx.user.role !== APP_ROLE.ADMIN &&
       ctx.user.role !== APP_ROLE.OWNER
     ) {
@@ -22,7 +22,7 @@ const roleMiddleware = (allowedRoles: string[]) => {
 
 const denyRolesMiddleware = (deniedRoles: string[]) => {
   return protectedProcedure.use(({ ctx, next }) => {
-    if (deniedRoles.includes(ctx.user.role)) {
+    if (deniedRoles.includes(ctx.user.role) || (isDelegateRole(ctx.user.role) && deniedRoles.includes(APP_ROLE.DELEGATE))) {
       throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية للوصول إلى هذا القسم" });
     }
     return next({ ctx });

@@ -5,11 +5,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../_core/trpc";
+import { isDelegateRole } from "../../shared/roles";
+import { isDelegateOwnPurchaseDraft } from "../../shared/purchaseDraftVisibility";
+import { isPurchasePdfApprover } from "../_core/authz/purchase-document";
 
 const document = { id: 1, requestedById: 7, poNumber: "PR-FIXTURE" };
 const items = [{ id: 11, delegateId: 3 }, { id: 12, delegateId: 4 }];
 const comments = [{ purchaseOrderItemId: 11 }, { purchaseOrderItemId: 12 }];
-const scope = vi.fn(async (_user: any, po: any) => { if (po.id !== 1) throw new TRPCError({ code: "FORBIDDEN" }); });
+const scope = vi.fn((_user: any, po: any) => { if (po.id !== 1) throw new TRPCError({ code: "FORBIDDEN" }); });
 const names = vi.fn(async (value: any) => value);
 const packageOrders = vi.fn(async () => [{ ...document, items }]);
 function procedure(file: string, rootName: string) {
@@ -26,9 +29,14 @@ function procedure(file: string, rootName: string) {
   }
   if (!expression) throw new Error("Missing production document handler");
   return vm.runInNewContext(ts.transpileModule(`(${expression})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, {
-    z, TRPCError, protectedProcedure,
+    z, TRPCError, protectedProcedure, isDelegateRole, isDelegateOwnPurchaseDraft, isPurchasePdfApprover,
     db: { getPurchaseOrderById: async (id: number) => ({ ...document, id }), getPOItems: async () => items, getProcurementComments: async () => comments, getPurchasePackageById: async () => ({ id: 20, createdById: 8 }) },
     assertCanViewPurchaseOrder: scope, assertCanPerformPOAction: () => {},
+    createPurchaseOrderReadScope: async (user: any) => ({
+      assert: (po: any) => scope(user, po),
+      filterItems: (_po: any, rows: any[]) => rows,
+      isRoutedReviewOnly: () => false,
+    }),
     localizePurchaseUserNames: async (rows: any) => rows,
     localizeMasterDataReferences: names, getVisiblePackageOrdersWithItems: packageOrders,
     withPurchaseSubmissionTime: (value: any) => value,

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { router, protectedProcedure } from "../_shared/procedures";
 import * as db from "../../_core/db";
 import { assertCanAccessAttachments } from "./attachments.access";
-import { APP_ROLE } from "@shared/roles";
+import { APP_ROLE, isDelegateRole } from "@shared/roles";
 import { catalogAuditRequestMeta } from "../../_core/catalog-audit";
 import { documentListPageInput } from "@shared/document-list";
 import { decorateDocumentRows } from "../../_core/authz/document-list";
@@ -28,19 +28,19 @@ export const attachmentsRouter = router({
     if (input.entityType === "delegate_pricing_documents") {
       // المندوب يرى مستنداته فقط؛ الحسابات والإدارة تراجعان البيانات هنا،
       // ولا تعاد مفاتيح/PDF إلا بعد اعتماد المستخدم نفسه للنطاق المحدد.
-      const allowedRoles = [APP_ROLE.DELEGATE, APP_ROLE.OWNER, APP_ROLE.ADMIN, APP_ROLE.ACCOUNTANT, APP_ROLE.SENIOR_MANAGEMENT];
+      const allowedRoles = [APP_ROLE.DELEGATE, APP_ROLE.DELEGATE_MANAGER, APP_ROLE.OWNER, APP_ROLE.ADMIN, APP_ROLE.ACCOUNTANT, APP_ROLE.SENIOR_MANAGEMENT];
       if (!allowedRoles.includes(ctx.user.role as any)) {
         throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية للاطلاع على وثائق تسعير المندوبين" });
       }
 
       if (input.pagination) {
         const result = await getAttachmentDocumentPage(input.entityType, input.pagination,
-          ctx.user.role === APP_ROLE.DELEGATE ? ctx.user.id : undefined);
+          isDelegateRole(ctx.user.role) ? ctx.user.id : undefined);
         return { ...result, rows: await documentRows(ctx.user, result.rows) };
       }
 
       const rows = await db.getDelegatePricingAttachmentsWithDelegate();
-      if (ctx.user.role === APP_ROLE.DELEGATE) {
+      if (isDelegateRole(ctx.user.role)) {
         return documentRows(ctx.user, rows.filter((row: any) => Number(row.delegateId) === Number(ctx.user.id)));
       }
       return documentRows(ctx.user, rows);

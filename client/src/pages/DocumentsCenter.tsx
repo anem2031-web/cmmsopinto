@@ -1,3 +1,4 @@
+import { isDelegateRole } from "@shared/roles";
 // ============================================================
 // مركز المستندات — /documents
 // صفحة تجميع وقراءة فقط لمستندات الشراء والمخزون الموجودة بالنظام.
@@ -90,7 +91,7 @@ function ExistingDocumentsCenter({typeFilter}: {typeFilter:DocType}) {
   const isAccountantOnly = role === "accountant";
   // المندوب لم يكن يملك مركز المستندات سابقًا. بعد إضافة تبويب مستندات
   // التسعير نمنحه المركز لهذا التبويب فقط، دون جلب بقية أنواع المستندات.
-  const isDelegateOnly = role === "delegate";
+  const isDelegateOnly = isDelegateRole(role);
   const canViewGeneralDocs = !isAccountantOnly && !isDelegateOnly;
 
   const [search, setSearch] = useState("");
@@ -132,7 +133,7 @@ function ExistingDocumentsCenter({typeFilter}: {typeFilter:DocType}) {
   // فقط، لا حارس صلاحية حقيقي — راجع attachments.router.ts::listByType).
   const financialRoles = ["accountant", "senior_management", "owner", "admin"];
   const canViewFinancialDocs = financialRoles.includes(role);
-  const delegatePricingRoles = ["delegate", "accountant", "senior_management", "owner", "admin"];
+  const delegatePricingRoles = ["delegate", "delegate_manager", "accountant", "senior_management", "owner", "admin"];
   const canViewDelegatePricingDocs = delegatePricingRoles.includes(role);
   const financialDocsQ = trpc.attachments.listByType.useQuery(
     { entityType: "po_financial_batch", pagination: paginated ? pagination : undefined },
@@ -368,13 +369,13 @@ function ExistingDocumentsCenter({typeFilter}: {typeFilter:DocType}) {
     if(!preview)throw Error("اسمح بفتح النوافذ لعرض الوثيقة وطباعتها");
     preview.opener=null;
     try {
-      const file=await bundlePdf.mutateAsync({id,approvedDocument:role!=="delegate"});
+      const file=await bundlePdf.mutateAsync({id,approvedDocument:!isDelegateRole(role)});
       const bytes=Uint8Array.from(atob(file.content),char=>char.charCodeAt(0));
       const url=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}));
       preview.location.replace(url);setTimeout(()=>URL.revokeObjectURL(url),60000);
     }catch(error){preview.close();throw error;}
   };
-  const downloadBundlePdf = async (id:number) => downloadPricingBundlePdf(await bundlePdf.mutateAsync({id,approvedDocument:role!=="delegate"}));
+  const downloadBundlePdf = async (id:number) => downloadPricingBundlePdf(await bundlePdf.mutateAsync({id,approvedDocument:!isDelegateRole(role)}));
 
   const handlePrint = async (row: DocRow) => {
     if (!rowPdfAllowed(row)) return toast.error(approvalPdfNotice());
@@ -476,7 +477,7 @@ function ExistingDocumentsCenter({typeFilter}: {typeFilter:DocType}) {
         onChange={value=>{setSearch(value.search);setDateFrom(value.dateFrom);setDateTo(value.dateTo);setSort(value.sort);setDelegateFilter(value.delegateId||"all");setPage(1);}}
         onRefresh={refresh} refreshing={isLoading}
         delegateVisible={["accountant","senior_management"].includes(role)&&typeFilter==="delegate_pricing_bundle"}
-        delegates={role!=="delegate"&&["po_financial_batch","delegate_pricing_documents","delegate_pricing_bundle"].includes(typeFilter)?financialDelegateOptions:undefined} />
+        delegates={!isDelegateRole(role)&&["po_financial_batch","delegate_pricing_documents","delegate_pricing_bundle"].includes(typeFilter)?financialDelegateOptions:undefined} />
       {!isLoading&&!activeError&&<p className="text-sm text-muted-foreground" role="status">{resultCount} مستند مطابق</p>}
 
       {(role === "accountant" || role === "senior_management") && typeFilter !== "delegate_pricing_bundle" && <p className="text-sm text-muted-foreground">{approvalPdfNotice()}</p>}

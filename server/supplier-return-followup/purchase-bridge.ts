@@ -3,6 +3,8 @@ import { ReturnFollowupError } from "./policy";
 import { decimal4 } from "./amounts";
 import { readRows, trialEnabled } from "./runtime";
 import type { FollowupTx } from "./commands";
+import { verifyStandaloneReturnSource } from "./standalone-source";
+import { resolveReturnLineage } from "./lineage";
 
 type Actor = { id: number; role: string; isActive?: number };
 type ReplacementItem = { catalogItemId?: number | null; itemName: string; quantity: number; unit?: string | null;
@@ -23,7 +25,8 @@ export async function prepareReplacementPurchase(tx: FollowupTx, actor: Actor, p
   if (!await trialEnabled(tx)) throw new ReturnFollowupError("FORBIDDEN", "متابعة مرتجع المورد غير مفعّلة لهذه القاعدة");
   const [user] = await readRows(tx, sql`SELECT id,role,isActive FROM users WHERE id=${actor.id} FOR UPDATE`);
   if (!user || user.role !== actor.role || Number(user.isActive) !== 1) throw new ReturnFollowupError("FORBIDDEN", "الحساب غير متاح");
-  const [plan] = await readRows(tx, sql`SELECT p.*,c.handoverStatus,c.resolution,c.creatorDecision,c.creatorId,c.purchaseOrderId AS originalOrderId,
+  const [plan] = await readRows(tx, sql`SELECT p.*,c.handoverStatus,c.resolution,c.creatorDecision,c.creatorId,c.createdById,
+      c.returnId,c.receiptId,c.receiptItemId,c.lotId,c.inventoryId,c.returnedUnit,c.parentReplacementPlanId,c.purchaseOrderId AS originalOrderId,
       c.purchaseOrderItemId AS originalItemId,c.returnedQuantity,c.originalPurchaseValue,c.currency,c.valuationBasis,
       original.requestedById,original.ticketId AS originalTicketId,original.ticketItemId AS originalTicketItemId,
       original.siteId AS originalSiteId,original.sectionId AS originalSectionId,
@@ -32,12 +35,26 @@ export async function prepareReplacementPurchase(tx: FollowupTx, actor: Actor, p
       sourceItem.categoryId AS originalItemCategoryId,sourceItem.assetId AS originalItemAssetId
     FROM supplier_return_replacement_plans p
     INNER JOIN supplier_return_cases c ON c.id=p.caseId
-    INNER JOIN purchase_orders original ON original.id=c.purchaseOrderId
-    INNER JOIN purchase_order_items sourceItem ON sourceItem.id=c.purchaseOrderItemId AND sourceItem.purchaseOrderId=original.id
-    WHERE p.id=${planId} FOR UPDATE`);
+    LEFT JOIN purchase_orders original ON original.id=c.purchaseOrderId
+    LEFT JOIN purchase_order_items sourceItem ON sourceItem.id=c.purchaseOrderItemId AND sourceItem.purchaseOrderId=original.id
+    WHERE p.id=${planId} AND ((c.purchaseOrderId IS NULL AND c.purchaseOrderItemId IS NULL)
+      OR (original.id=c.purchaseOrderId AND sourceItem.id=c.purchaseOrderItemId)) FOR UPDATE`);
   if (!plan) conflict("خطة البديل أو طلب الشراء الأصلي غير متاح");
-  if (Number(plan.creatorId) !== Number(plan.requestedById) || Number(plan.originalQuantityCovered) !== Number(plan.returnedQuantity)) conflict("مصدر خطة البديل لا يطابق الطلب أو الكمية المرتجعة");
-  if (Number(plan.creatorId) !== actor.id && !["admin", "owner"].includes(actor.role)) throw new ReturnFollowupError("FORBIDDEN", "طلب التعويض لمنشئ الطلب الأصلي");
+  const standalone = plan.originalOrderId == null && plan.originalItemId == null;
+  const standaloneSource = standalone ? await verifyStandaloneReturnSource(tx, { ...plan,
+    purchaseOrderId: plan.originalOrderId, purchaseOrderItemId: plan.originalItemId }) : null;
+  const creatorId = standaloneSource?.creatorId ?? Number(plan.creatorId);
+  // An administrator may have entered the preceding replacement on behalf of
+  // the original creator. A later round inherits the verified original creator,
+  // rather than changing ownership to that administrative data-entry actor.
+  const lineage = plan.parentReplacementPlanId == null ? null : await resolveReturnLineage(tx, {
+    lotId: Number(plan.lotId), receiptId: Number(plan.receiptId), receiptItemId: Number(plan.receiptItemId),
+    purchaseOrderId: Number(plan.originalOrderId), purchaseOrderItemId: Number(plan.originalItemId),
+  });
+  if ((lineage ? lineage.parentReplacementPlanId !== Number(plan.parentReplacementPlanId) || lineage.creatorId !== creatorId
+      : !standalone && creatorId !== Number(plan.requestedById))
+    || Number(plan.originalQuantityCovered) !== Number(plan.returnedQuantity)) conflict("مصدر خطة البديل لا يطابق الطلب أو الكمية المرتجعة");
+  if (creatorId !== actor.id && !["admin", "owner"].includes(actor.role)) throw new ReturnFollowupError("FORBIDDEN", "طلب التعويض لمنشئ الطلب الأصلي");
   if (plan.handoverStatus !== "accepted" || plan.status !== "pending_review" || plan.purchaseOrderId != null || plan.purchaseOrderItemId != null) conflict("خطة البديل تغيرت أو ارتبطت بطلب شراء سابق");
   if (plan.resolution !== "same_item" && !(["change_item", "refund"].includes(plan.resolution) && plan.creatorDecision === "replace")) conflict("لم يُعتمد اختيار الصنف البديل");
   if (plan.originalPurchaseValue == null || plan.currency !== "SAR" || plan.valuationBasis !== "tax_inclusive") conflict("مرجع قيمة الفاتورة غير مكتمل أو أساسه المالي مختلف");
@@ -67,7 +84,9 @@ export async function prepareReplacementPurchase(tx: FollowupTx, actor: Actor, p
       || decimal4(String(refund.amount)) !== decimal4(String(plan.originalPurchaseValue))) conflict("المبلغ المسترد الموجود لدى المندوب غير مثبت");
     creditId = Number(refund.id);
   }
-  return { planId: Number(plan.id), caseId: Number(plan.caseId), creditId, originalOrderId: Number(plan.originalOrderId) };
+  return { planId: Number(plan.id), caseId: Number(plan.caseId), creditId,
+    originalOrderId: standalone ? null : Number(plan.originalOrderId),
+    sourceReceiptId: standaloneSource?.receiptId ?? null, sourceReturnId: Number(plan.returnId) || null };
 }
 
 export async function linkReplacementPurchase(tx: FollowupTx, prepared: Awaited<ReturnType<typeof prepareReplacementPurchase>>, purchaseOrderId: number, purchaseOrderItemId: number) {

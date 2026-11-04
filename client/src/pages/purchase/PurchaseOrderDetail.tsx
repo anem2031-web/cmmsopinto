@@ -1,3 +1,5 @@
+import { isDelegateRole } from "@shared/roles";
+import { defaultDelegateManagerId, reviewDelegateId, reviewBulkDelegateValue } from "@/lib/delegateReviewDefaults";
 import { PricingBundleLink, PricingBundleAddButton } from "@/components/purchase/PricingBundleActions";
 import { ReplacementRepriceButton } from "@/components/purchase/ReplacementRepriceButton";
 import { isDelegateOwnPurchaseDraft } from "@shared/purchaseDraftVisibility";
@@ -134,9 +136,9 @@ export default function PurchaseOrderDetail() {
     getLocalizedCatalogUnitName(value, catalogUnits as any[], language);
 
   const { data: po, isLoading, refetch } = trpc.purchaseOrders.getById.useQuery({ id: poId }, { enabled: !!poId, ...independentReadOptions });
-  const { data: directoryUsers } = trpc.users.list.useQuery(undefined, { enabled: !!user && user.role !== "delegate" });
-  const users = user?.role === "delegate" ? [
-    { id: user.id, name: user.name, role: "delegate" },
+  const { data: directoryUsers } = trpc.users.list.useQuery(undefined, { enabled: !!user && !isDelegateRole(user.role) });
+  const users = user && isDelegateRole(user.role) ? [
+    { id: user.id, name: user.name, role: user.role },
     { id: po?.requestedById, name: (po as any)?.requestedByName },
   ] : directoryUsers;
   const { data: sites = [] } = trpc.sites.list.useQuery();
@@ -198,7 +200,7 @@ export default function PurchaseOrderDetail() {
     itemWorkflowTranslations[Number(item.id)]?.[fieldName] || item?.[fieldName] || "";
 
   const estimateMut = trpc.purchaseOrders.estimateCost.useMutation({ onSuccess: () => { toast.success(t.common.save); refetch(); refetchBatches(); }, onError: (e) => toast.error(localizeApiError(e.message)) });
-  const pricingBundleStatus = trpc.delegatePricingBundles.status.useQuery(undefined, { enabled: user?.role === "delegate", retry: false });
+  const pricingBundleStatus = trpc.delegatePricingBundles.status.useQuery(undefined, { enabled: isDelegateRole(user?.role), retry: false });
   const submitPricedBatchMut = trpc.purchaseOrders.submitPricedBatch.useMutation({
     onSuccess: (res: any) => {
       toast.success(t.workflow.purchase.pricingSentBatch.replace("{count}", String(res.itemCount)).replace("{batch}", String(res.batchNumber)));
@@ -352,7 +354,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   // تتطلب منه الإجراء الذي ضغطه: تسعير أو شراء أو كلاهما. الفتح العادي
   // للطلب يبقى كما كان ويعرض كل أصناف المندوب المرتبطة به.
   const delegateActionView =
-    role === "delegate" && typeof window !== "undefined"
+    isDelegateRole(role) && typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("action")
       : null;
   const focusedItemId =
@@ -411,14 +413,16 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   const selectedReviewItems = hasRoutedReview ? reviewableItems.filter((item: any) => selectedReviewItemIds.includes(Number(item.id))) : reviewableItems;
 
   const [bulkDelegateId, setBulkDelegateId] = useState<string | undefined>(undefined);
+  const suggestedDelegateId = defaultDelegateManagerId(users || []);
+  const reviewFallbackDelegateId = bulkDelegateId ? Number(bulkDelegateId) : suggestedDelegateId;
   const [lateRejections, setLateRejections] = useState<Record<number, boolean>>({});
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const handleBulkApprove = () => {
-    const newReviewDecisions: Record<number, { action: "approve" | "reject"; delegateId?: number; rejectionReason?: string }> = hasRoutedReview ? { ...reviewDecisions } : {};
+    const newReviewDecisions: Record<number, { action: "approve" | "reject"; delegateId?: number; rejectionReason?: string }> = { ...reviewDecisions };
     if (selectedReviewItems.length > 0) {
       selectedReviewItems.forEach((item: any) => {
-        newReviewDecisions[item.id] = { action: "approve", ...(hasRoutedReview && bulkDelegateId ? { delegateId: Number(bulkDelegateId) } : {}) };
+        newReviewDecisions[item.id] = { ...newReviewDecisions[item.id], action: "approve", delegateId: reviewDelegateId(item, newReviewDecisions[item.id], reviewFallbackDelegateId) };
       });
       setReviewDecisions(newReviewDecisions);
     }
@@ -554,7 +558,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
 
   const readyToSubmitCount = (po?.items || []).filter((i: any) => i.status === "estimated" && !i.batchId && !i.delegateChangeRequestedAt).length;
   const isAdminOrOwner = role === "admin" || role === "owner";
-  const isDelegate = role === "delegate" || isAdminOrOwner;
+  const isDelegate = isDelegateRole(role) || isAdminOrOwner;
   const isAccountant = role === "accountant" || isAdminOrOwner;
   const isManagement = role === "senior_management" || role === "executive_director" || isAdminOrOwner;
   const isWarehouse = role === "warehouse" || isAdminOrOwner;
@@ -573,7 +577,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   const canManageDelegateChange = isAdminOrOwner ||
     (isMaintenanceManagerVariant &&
       (po?.reviewedById === null || po?.reviewedById === undefined || String(po?.reviewedById) === String(userId)));
-  const delegateUsers = (users || []).filter((u: any) => u.role === "delegate");
+  const delegateUsers = (users || []).filter((u: any) => isDelegateRole(u.role));
   const isRequester = String(po?.requestedById) === String(userId);
   // الأصناف التي أعادها المندوب لاتخاذ قرار: القرار النهائي للمنشئ أو owner/admin.
   // مدير الصيانة يحتفظ بصلاحية التعديل الحالية، لكنه لا يعيد الإرسال ولا يلغي نهائياً نيابة عن المنشئ.
@@ -604,7 +608,7 @@ const visibleItems = useMemo(() => {
   // owner/admin/maintenance_manager لديهم صلاحية تعديل الأصناف بشكل عام، فيرون كل الأصناف
   if (isAdminOrOwner || isMaintenanceManagerVariant) return po.items;
 
-  if (role === "delegate") {
+  if (isDelegateRole(role)) {
     if (isDelegateOwnPurchaseDraft({ id: userId ?? 0, role }, po)) return po.items;
     return po.items.filter((item: any) => {
       if (item.delegateId !== userId) return false;
@@ -748,7 +752,7 @@ const visibleItems = useMemo(() => {
               <AlertCircle className="w-4 h-4 mr-1.5" /> {t.purchaseOrders.returnForRevision}
             </Button>
           )}
-          {isDelegate && readyToSubmitCount > 0 && !po.packageId && !(role === "delegate" && pricingBundleStatus.data?.enabled) && (
+          {isDelegate && readyToSubmitCount > 0 && !po.packageId && !(isDelegateRole(role) && pricingBundleStatus.data?.enabled) && (
             <Button
               className="bg-teal-600 hover:bg-teal-700 gap-1.5"
               onClick={() => submitPricedBatchMut.mutate({ purchaseOrderId: po.id })}
@@ -1336,7 +1340,7 @@ const visibleItems = useMemo(() => {
         {t.workflow.purchase.itemReviewRequest}
       </Button>
 
-      {role === "delegate" && item.delegateId === userId && !item.estimatedUnitCost && (
+      {isDelegateRole(role) && item.delegateId === userId && !item.estimatedUnitCost && (
         <Button
           size="sm"
           variant="outline"
@@ -1754,12 +1758,12 @@ const visibleItems = useMemo(() => {
       </Card>
 
       {(hasRoutedReview ? reviewableItems.length > 0 : isManager && po.status === "pending_review") && (() => {
-        const delegates = users?.filter((u: any) => u.role === "delegate") || [];
+        const delegates = users?.filter((u: any) => isDelegateRole(u.role)) || [];
         const allDecided = selectedReviewItems.length > 0 && selectedReviewItems.every((item: any) => reviewDecisions[item.id]?.action);
         const isValid = selectedReviewItems.length > 0 && selectedReviewItems.every((item: any) => {
           const d = reviewDecisions[item.id];
           if (!d) return false;
-          if (d.action === "approve") return !!d.delegateId;
+          if (d.action === "approve") return !!reviewDelegateId(item, d, reviewFallbackDelegateId);
           if (d.action === "reject") return !!(d.rejectionReason?.trim());
           return false;
         }) || false;
@@ -1779,7 +1783,7 @@ const visibleItems = useMemo(() => {
                   {hasRoutedReview ? t.purchaseOrders.approveSelected : t.purchaseOrders.approveAll}
                 </Button>
                 <Select
-                  value={bulkDelegateId}
+                  value={reviewBulkDelegateValue(selectedReviewItems, reviewDecisions, suggestedDelegateId, bulkDelegateId)}
                   onValueChange={v => {
                     setBulkDelegateId(v);
                     handleBulkAssignDelegate(parseInt(v));
@@ -1826,7 +1830,7 @@ const visibleItems = useMemo(() => {
                       <div className="space-y-1">
                         <Label className="text-xs">{t.purchaseOrders.delegate} *</Label>
                         <Select
-                          value={decision.delegateId ? String(decision.delegateId) : ""}
+                          value={String(reviewDelegateId(item, decision, reviewFallbackDelegateId) || "")}
                           onValueChange={v => setReviewDecisions(p => ({ ...p, [item.id]: { ...p[item.id], delegateId: parseInt(v) } }))}
                         >
                           <SelectTrigger className="bg-white"><SelectValue placeholder={t.purchaseOrders.delegate} /></SelectTrigger>
@@ -1859,7 +1863,7 @@ const visibleItems = useMemo(() => {
                     return {
                       id: item.id,
                       action: d.action as "approve" | "reject",
-                      delegateId: d.action === "approve" ? d.delegateId : undefined,
+                      delegateId: d.action === "approve" ? reviewDelegateId(item, d, reviewFallbackDelegateId) : undefined,
                       rejectionReason: d.action === "reject" ? d.rejectionReason : undefined,
                     };
                   });
@@ -1945,7 +1949,7 @@ const visibleItems = useMemo(() => {
                   // للمندوب والحسابات هو مستند purchase_package_submission فقط.
                   // الطلب المنفرد لا يصدر مستند عهدة موازيًا لنفس الإرسال.
                   const mustUsePackageDocument =
-                    isPackageSubmissionBatch && (role === "delegate" || isAccountant || role === "senior_management");
+                    isPackageSubmissionBatch && (isDelegateRole(role) || isAccountant || role === "senior_management");
 
                   if (mustUsePackageDocument) {
                     const submissionId = Number(batch.purchasePackageSubmissionId);

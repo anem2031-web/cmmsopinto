@@ -251,7 +251,7 @@ export interface RecipientReturnAdapter {
     returnedQuantity: number;
     reason: string;
     returnedById: Pmv2ExternalId;
-  }): Promise<Pmv2RecipientReturnResult>;
+  }, transaction?: any): Promise<Pmv2RecipientReturnResult>;
 }
 
 export interface DeliveryAdapter {

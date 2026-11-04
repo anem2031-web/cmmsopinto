@@ -3,7 +3,7 @@ import { ImprovementReference } from "@/components/improvement/ImprovementRefere
 import { ItTeamPanel, ItTaskActions } from "./ItTeamPanel";
 import { ExternalRouteReviewPanel } from "./ExternalRouteReviewPanel";
 import { isExternalRouteReviewer } from "@shared/external-route-review";
-import { isItTeamRole } from "@shared/roles";
+import { isItTeamRole, isDelegateRole } from "@shared/roles";
 import { trpc } from "@/lib/trpc";
 import { mediaUrl } from "@/lib/mediaUrl";
 import { goBackOrFallback } from "@/lib/backStack";
@@ -142,7 +142,7 @@ const { getField } = useResolvedTranslation(
     ["notes"],
   );
   const restrictedTechnician = user?.role === APP_ROLE.TECHNICIAN;
-  const scopedUserReferences = restrictedTechnician || user?.role === APP_ROLE.DELEGATE;
+  const scopedUserReferences = restrictedTechnician || isDelegateRole(user?.role);
   const references = trpc.tickets.executionReferences.useQuery({ ticketId }, { enabled: scopedUserReferences && !!ticketId });
   const { data: directoryUsers } = trpc.users.list.useQuery(undefined, { enabled: !!user && !scopedUserReferences });
   const users = scopedUserReferences ? references.data?.users : directoryUsers;

@@ -13,6 +13,7 @@
  */
 
 import * as db from "../db";
+import { isDelegateRole } from "../../../shared/delegate-role";
 import { TRPCError } from "@trpc/server";
 import { canReviewPurchaseItem, canResolvePurchaseItemReviewer, isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
 import {
@@ -56,7 +57,7 @@ async function buildVisibilityContext(user: MinimalCtxUser): Promise<VisibilityC
   if (user.role === "food_warehouse_manager") {
     ctx.assistantUserIds = await db.getUserIdsByRole("food_warehouse_assistant");
   }
-  if (user.role === "delegate") {
+  if (isDelegateRole(user.role)) {
     const items = await db.getPOItemsByDelegate(user.id);
     ctx.delegateAssignedPoIds = Array.from(new Set(items.map((i: any) => i.purchaseOrderId)));
   }

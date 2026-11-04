@@ -296,7 +296,7 @@ function InventoryCatalogTreePicker({
 
 export default function Inventory() {
   const [, navigate] = useLocation();
-  const { user } = useAuth();
+  const { user, authenticatedUser } = useAuth();
   const [printBarcode, setPrintBarcode] = useState<any>(null);
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [deliverItem, setDeliverItem] = useState<any>(null);
@@ -580,7 +580,7 @@ export default function Inventory() {
               } } : {}),
             }}
           />
-          {isWarehouse && (
+          {isOwnerOrAdminRole(authenticatedUser?.role) && Number(authenticatedUser?.isActive) === 1 && (
             <Button className="gap-2" onClick={() => navigate("/inventory/receive")}>
               <Plus className="w-4 h-4" /> {t.common.add}
             </Button>

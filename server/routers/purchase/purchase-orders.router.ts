@@ -5,7 +5,8 @@ import { isDelegateSupplyItemOpen } from "../../../shared/delegateSupplyStage";
 import { delegateCompletedInput } from "../../../shared/delegate-completed";
 import { listDelegateCompleted } from "../../services/delegate-completed";
 import { isDelegateOwnPurchaseDraft } from "../../../shared/purchaseDraftVisibility";
-import { isItTeamRole } from "@shared/roles";
+import { isItTeamRole, isDelegateRole } from "@shared/roles";
+import { assignOwnDelegateItem, delegateAssignmentOptions, managerAssignableItemIds } from "../../services/delegate-manager-assignment";
 import { assertLegacyTeamExecutionAllowed } from "../maintenance-teams/execution.guard";
 import { createTicketMaterialPurchase } from "../maintenance-teams/purchase-form";
 import { TeamTicketError } from "../../../shared/maintenance-team-tickets/model";
@@ -59,6 +60,15 @@ import { trialEnabled, readRows } from "../../supplier-return-followup/runtime";
 
 /** Serialize review-time editing/deletion/cancellation with the review decision. */
 async function withPendingReviewItemWrite<T>(actor: any, po: any, item: any, action: "editItem" | "deleteItem" | "cancelItem", write: (tx?: any) => Promise<T>): Promise<T> {
+  if(isDelegateRole(actor.role))return db.withTransaction(async(tx:any)=>{
+    const [currentPo]=await tx.select().from(purchaseOrders).where(eq(purchaseOrders.id,po.id)).for("update");
+    const [currentItem]=await tx.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.id,item.id)).for("update");
+    const [currentActor]=await tx.select().from(users).where(eq(users.id,actor.id)).for("update");
+    if(!currentPo||!currentItem||currentItem.purchaseOrderId!==currentPo.id||!currentActor||currentActor.role!==actor.role||Number(currentActor.isActive)!==1||Number(currentItem.delegateId)!==actor.id)
+      throw new TRPCError({code:"FORBIDDEN",message:"تغيّر إسناد الصنف أو صلاحية المستخدم؛ حدّث الصفحة"});
+    assertCanPerformPurchaseItemReviewAction(action,currentActor,currentPo,currentItem);
+    return write(tx);
+  });
   if (!isRoutedPurchaseItem(item) || item.status !== "pending_review") return write();
   return db.withTransaction(async (tx: any) => {
     const [currentPo] = await tx.select().from(purchaseOrders).where(eq(purchaseOrders.id, po.id)).for("update");
@@ -87,7 +97,7 @@ async function resolveRoutedDelegateChange(actor: any, po: any, item: any, newDe
       throw new TRPCError({ code: "FORBIDDEN", message: "تغيّرت صلاحية حسم المندوب أو مرحلة الطلب" });
     }
     assertCanResolveDelegateChange(currentActor, { ...currentItem, itemStatus: currentItem.status, reviewedById: currentItem.reviewedById });
-    if (!recipient || recipient.role !== "delegate" || Number(recipient.isActive) !== 1) throw new TRPCError({ code: "BAD_REQUEST", message: "اختر مندوبًا نشطًا" });
+    if (!recipient || !isDelegateRole(recipient.role) || Number(recipient.isActive) !== 1) throw new TRPCError({ code: "BAD_REQUEST", message: "اختر مندوبًا نشطًا" });
     return db.resolvePOItemDelegateChangeAtomic({ itemId: currentItem.id, newDelegateId, actorUserId: currentActor.id, actorName: currentActor.name,
       reviewRole: currentItem.reviewRole, reviewedById: currentItem.reviewedById }, tx);
   });
@@ -674,7 +684,7 @@ export async function submitPricedBatchForPO(
   user: { id: number; role: string; [key: string]: any },
   opts?: { purchasePackageSubmissionId?: number; selectedItemIds?: number[]; tx?: any; skipArchive?: boolean; bundleId?: number; delegateSignatureSnapshot?: string | null },
 ) {
-  if (pricingBundlesEnabled() && user.role === "delegate" && !opts?.bundleId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "أضف الأصناف إلى حزمة التسعير ثم أرسلها من شاشة الحزمة" });
+  if (pricingBundlesEnabled() && isDelegateRole(user.role) && !opts?.bundleId) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "أضف الأصناف إلى حزمة التسعير ثم أرسلها من شاشة الحزمة" });
   const po = await db.getPurchaseOrderById(purchaseOrderId, opts?.tx);
   if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
 
@@ -1837,7 +1847,7 @@ export const purchaseOrdersRouter = router({
           requestedById: ctx.user.id,
           status: "pending_review",
           submittedAt,
-          notes: replacement ? [input.notes?.trim(), `تعويض مرتجع المورد #${replacement.caseId} — طلب الشراء الأصلي #${replacement.originalOrderId}`].filter(Boolean).join("\n") : input.notes,
+          notes: replacement ? [input.notes?.trim(), `تعويض مرتجع المورد #${replacement.caseId} — ${replacement.originalOrderId != null ? `طلب الشراء الأصلي #${replacement.originalOrderId}` : `سند الاستلام #${replacement.sourceReceiptId} — المرتجع #${replacement.sourceReturnId}`}`].filter(Boolean).join("\n") : input.notes,
           ...purchaseContext,
         }, tx);
         // delegateId is optional at creation — assigned during reviewItems step
@@ -2070,7 +2080,7 @@ export const purchaseOrdersRouter = router({
     }
     await withPendingReviewItemWrite(ctx.user, po, oldItem, "editItem", async tx => {
     if (input.estimatedUnitCost !== undefined) {
-      const updated = await db.updatePOItemIfDelegateChangeUnlocked(input.id, updates, undefined, undefined, tx, oldItem.batchId);
+      const updated = await db.updatePOItemIfDelegateChangeUnlocked(input.id, updates, undefined, undefined, tx, oldItem.batchId,isDelegateRole(ctx.user.role)?ctx.user.id:undefined);
       if (!updated) {
         throw new TRPCError({
           code: "CONFLICT",
@@ -2347,7 +2357,7 @@ export const purchaseOrdersRouter = router({
     });
 
     const newDelegate = await db.getUserById(input.delegateId);
-    if (!newDelegate || newDelegate.role !== "delegate" || !newDelegate.isActive) {
+    if (!newDelegate || !isDelegateRole(newDelegate.role) || !newDelegate.isActive) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "المندوب المختار غير موجود أو غير نشط" });
     }
 
@@ -2455,7 +2465,7 @@ export const purchaseOrdersRouter = router({
         actorUserId: ctx.user.id,
         actorName: ctx.user.name || null,
         eventType: "estimate_updated",
-      });
+      },undefined,undefined,isDelegateRole(ctx.user.role)?ctx.user.id:undefined);
       if (!estimateSaved) {
         throw new TRPCError({
           code: "CONFLICT",
@@ -2505,7 +2515,7 @@ export const purchaseOrdersRouter = router({
     await assertCanViewPurchaseOrder(ctx.user, po);
     await rejectEmptyPendingPricingBatches(input.purchaseOrderId);
     const batches = await db.getPOPricingBatches(input.purchaseOrderId);
-    const visible = ctx.user.role === "delegate" ? batches.filter(batch => Number(batch.submittedById) === ctx.user.id) : batches;
+    const visible = isDelegateRole(ctx.user.role) ? batches.filter(batch => Number(batch.submittedById) === ctx.user.id) : batches;
     const pricingDb = typeof db.getDb === "function" ? await db.getDb() : null;
     const replacementRows = pricingDb && await trialEnabled(pricingDb)
       ? await readRows(pricingDb, sql`SELECT p.id,p.quotedTotal,p.creditAllocated,p.additionalFunding,i.batchId
@@ -2559,14 +2569,14 @@ export const purchaseOrdersRouter = router({
     readScope.assert(po);
 
     const allItems = readScope.filterItems(po, await db.getPOItems(input.id));
-    const items = ctx.user.role === "delegate" && !isDelegateOwnPurchaseDraft(ctx.user, po)
+    const items = isDelegateRole(ctx.user.role) && !isDelegateOwnPurchaseDraft(ctx.user, po)
       ? allItems.filter((item: any) => Number(item.delegateId) === ctx.user.id) : allItems;
     const allComments = await db.getProcurementComments(input.id);
     const ownItemIds = new Set(items.map((item: any) => item.id));
-    const comments = ctx.user.role === "delegate" || readScope.isRoutedReviewOnly(po)
+    const comments = isDelegateRole(ctx.user.role) || readScope.isRoutedReviewOnly(po)
       ? allComments.filter(comment => !comment.purchaseOrderItemId || ownItemIds.has(comment.purchaseOrderItemId)) : allComments;
     const [localizedPo] = await localizePurchaseUserNames([po as any], (ctx.user.preferredLanguage || "ar") as SupportedLanguage);
-    if (ctx.user.role === "delegate") {
+    if (isDelegateRole(ctx.user.role)) {
       // Participant names stay on the authorized document; no directory/profile is returned.
       return localizeMasterDataReferences({ ...localizedPo, requestedByName: localizedPo.requestedByName ?? null,
         items: items.map((item: any) => ({ ...item, delegateName: null })), comments }, (ctx.user.preferredLanguage || "ar") as SupportedLanguage);
@@ -2609,7 +2619,7 @@ list: protectedProcedure.input(z.object({
   });
   const visible = await filterVisiblePurchaseOrders(ctx.user, allPOs);
 
-  if (role === "delegate") {
+  if (isDelegateRole(role)) {
     // itemCount الأصلي = إجمالي أصناف الطلب كله (لكل الأدوار). للمندوب تحديداً
     // يجب أن يعكس عدد أصنافه هو فقط ضمن هذا الطلب، وليس إجمالي كل المناديب.
     const items = await db.getPOItemsByDelegate(ctx.user.id);
@@ -2627,13 +2637,27 @@ list: protectedProcedure.input(z.object({
   // Delegate-only read archive; existing operation/download boundaries remain unchanged.
   completedItems: delegateProcedure.input(delegateCompletedInput).query(({ ctx, input }) => listDelegateCompleted(ctx.user, input)),
 
+  delegateAssignmentOptions: protectedProcedure.query(async ({ctx})=>{
+    const database=await db.getDb();if(!database)throw new TRPCError({code:"INTERNAL_SERVER_ERROR",message:"تعذر الاتصال بقاعدة البيانات"});
+    return delegateAssignmentOptions(database,ctx.authenticatedUser??ctx.user);
+  }),
+
+  assignOwnDelegateItem: protectedProcedure.input(z.object({purchaseOrderId:z.number().int().positive(),itemId:z.number().int().positive(),delegateId:z.number().int().positive()}).strict())
+    .mutation(async({ctx,input})=>{
+      const actor=ctx.authenticatedUser??ctx.user;
+      const result=await db.withTransaction(tx=>assignOwnDelegateItem(tx,actor,input));
+      try { await db.createNotification({userId:result.delegateId,title:"تم إسناد صنف شراء لك",message:`تم إسناد الصنف #${result.itemId} إليك بواسطة مسئول المناديب، وهو بانتظار التسعير.`,type:"info",relatedPoId:input.purchaseOrderId}); }
+      catch(error){console.error("[DelegateManagerAssignment] notification failed",error);}
+      return result;
+    }),
+
   myItems: protectedProcedure.query(async ({ ctx }) => {
     const isAdminOrOwner = ctx.user.role === "admin" || ctx.user.role === "owner";
     if (isAdminOrOwner) {
       // Admin/owner see all items
       return db.getAllPOItems();
     }
-    if (ctx.user.role !== "delegate") return [];
+    if (!isDelegateRole(ctx.user.role)) return [];
     return db.getPOItemsByDelegate(ctx.user.id);
   }),
 
@@ -2654,7 +2678,7 @@ list: protectedProcedure.input(z.object({
    * مجرد إخفاء تبويب في الواجهة.
    */
   supplyTracking: protectedProcedure.query(async ({ ctx }) => {
-    if (ctx.user.role === APP_ROLE.DELEGATE) {
+    if (isDelegateRole(ctx.user.role)) {
       const items = await db.getPurchaseSupplyTrackingItems(ctx.user.id);
       const scoped = items.filter(item => Number(item.delegateId) === ctx.user.id);
       const enriched = (await enrichPurchaseCycleItemsBatch(scoped)).filter(isDelegateSupplyItemOpen);
@@ -2673,7 +2697,7 @@ list: protectedProcedure.input(z.object({
   itemHistory: protectedProcedure.input(z.object({ itemId: z.number() })).query(async ({ input, ctx }) => {
     const item = await db.getPOItemById(input.itemId);
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "الصنف غير موجود" });
-    if (ctx.user.role === "delegate") assertPOItemAssignedToDelegate(ctx.user, item);
+    if (isDelegateRole(ctx.user.role)) assertPOItemAssignedToDelegate(ctx.user, item);
     const po = await db.getPurchaseOrderById(item.purchaseOrderId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
     const scope = await createPurchaseOrderReadScope(ctx.user, [po]);
@@ -2691,13 +2715,15 @@ list: protectedProcedure.input(z.object({
    * تبويب «أصنافي بانتظار المعالجة» لتفادي فتح عشرات الطلبات واحدًا واحدًا.
    */
   actionableItemsForMe: protectedProcedure.query(async ({ ctx }) => {
-    if (ctx.user.role !== "delegate") return { items: [], total: 0 };
+    if (!isDelegateRole(ctx.user.role)) return { items: [], total: 0 };
 
     const assignedItems = await db.getPOItemsByDelegate(ctx.user.id);
     if (assignedItems.length === 0) return { items: [], total: 0 };
 
     const bundleReserved = await reservedPricingItemIds(pricingBundlesEnabled() ? await db.getDb() : null, assignedItems.map((i: any) => i.id));
     const enriched = await enrichPurchaseCycleItemsBatch(assignedItems);
+    const managerAssignable=ctx.user.role===APP_ROLE.DELEGATE_MANAGER
+      ? await managerAssignableItemIds((await db.getDb())!,ctx.user,assignedItems.map(item=>item.id)):new Set<number>();
     const items = enriched.flatMap((item: any) => {
       const poStatus = String(item.purchaseOrderStatus || "");
       const actionMode = getDelegateItemActionMode(poStatus, item);
@@ -2707,7 +2733,7 @@ list: protectedProcedure.input(z.object({
         ? (poStatus === "partial_purchase" ? "إكمال الشراء" : "تنفيذ الشراء")
         : (item.status === "estimated" ? "جاهز للإرسال" : "بانتظار التسعير");
 
-      return [{ ...item, actionMode, actionLabel }];
+      return [{ ...item, actionMode, actionLabel,...(ctx.user.role===APP_ROLE.DELEGATE_MANAGER?{managerAssignable:managerAssignable.has(Number(item.id))}:{}) }];
     });
 
     const localized = await localizePurchaseUserNames(items, (ctx.user.preferredLanguage || "ar") as SupportedLanguage);
@@ -2756,7 +2782,7 @@ list: protectedProcedure.input(z.object({
       ]);
       return collectEligibleItems([...pending, ...estimated]);
     }
-    if (ctx.user.role !== "delegate") return [];
+    if (!isDelegateRole(ctx.user.role)) return [];
     const items = await db.getPOItemsByDelegate(ctx.user.id);
     return collectEligibleItems(items);
   }),
@@ -2904,7 +2930,7 @@ list: protectedProcedure.input(z.object({
       const approved = await db.getPOItemsByStatus("approved");
       const funded = await db.getPOItemsByStatus("funded");
       items = [...approved, ...funded];
-    } else if (ctx.user.role === "delegate") {
+    } else if (isDelegateRole(ctx.user.role)) {
       const mine = await db.getPOItemsByDelegate(ctx.user.id);
       items = mine.filter(i => i.status === "approved" || i.status === "funded");
     }

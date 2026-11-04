@@ -1,9 +1,10 @@
 import { sql } from "drizzle-orm";
-import { loadReplacementFulfillments, replacementPhysicalToOriginal,representableReplacementAllocation,replacementAllocationQuantum,exactOriginalAllocation, type ReplacementFulfillment } from "../../supplier-return-followup/fulfillment";
+import { loadReplacementFulfillments, replacementCoverageLimit, replacementPhysicalToOriginal,representableReplacementAllocation,replacementAllocationQuantum,exactOriginalAllocation, type ReplacementFulfillment } from "../../supplier-return-followup/fulfillment";
 import { readRows,trialEnabled } from "../../supplier-return-followup/runtime";
 import type { FollowupTx } from "../../supplier-return-followup/commands";
 import { decimal4, format4 } from "../../supplier-return-followup/amounts";
 import { getPmv2MaterialQuantityValidationMessage,pmv2MaterialUnitRequiresWholeQuantity } from "../../../shared/pmv2MaterialQuantity";
+import { loadActiveCompensationCases } from "../../supplier-return-followup/active-cases";
 
 export type Pmv2Replacement = { requestItemId: number; plan: ReplacementFulfillment; maximumOriginalQuantity: number };
 export class Pmv2ReplacementCoverageError extends Error {}
@@ -63,7 +64,7 @@ export function planPmv2Fulfillment(input:{requiredOriginal:number;originalUnit:
 
 /** This is provenance, never authorization. Call only after the PMV2 request or
  * execution scope has been checked, and reload it in each write transaction. */
-export async function loadPmv2Replacements(tx: FollowupTx, requestItemIds: number[]): Promise<Map<number, Pmv2Replacement[]>> {
+export async function loadPmv2Replacements(tx: FollowupTx, requestItemIds: number[], options: { includeZeroCoverage?: boolean } = {}): Promise<Map<number, Pmv2Replacement[]>> {
   const ids = Array.from(new Set(requestItemIds));
   const result = new Map<number, Pmv2Replacement[]>();
   if (!ids.length) return result;
@@ -83,8 +84,8 @@ export async function loadPmv2Replacements(tx: FollowupTx, requestItemIds: numbe
       if (plan.sourceCatalogItemId !== Number(link.catalogItemId) || plan.originalUnit.trim() !== String(link.unitSnapshot ?? "").trim()) {
         throw Error("وحدة أو هوية تعويض المرتجع لا تطابق احتياج PMV2 الأصلي");
       }
-      const maximumOriginalQuantity = Math.min(available, Number(plan.originalQuantityCovered));
-      if (maximumOriginalQuantity <= 0) continue;
+      const maximumOriginalQuantity = Math.min(available, Number(replacementCoverageLimit(plan)));
+      if (maximumOriginalQuantity <= 0 && !options.includeZeroCoverage) continue;
       const list = result.get(Number(link.materialRequestItemId)) ?? [];
       list.push({ requestItemId: Number(link.materialRequestItemId), plan, maximumOriginalQuantity });
       result.set(Number(link.materialRequestItemId), list);
@@ -177,15 +178,17 @@ export async function loadPmv2ReplacementStock(tx:FollowupTx,replacements:Pmv2Re
  * not itself evidence of PMV2 fulfillment. */
 export async function assertPmv2CompensationSettled(tx:FollowupTx,requestItemId:number,taskItemId:number) {
   if(!await trialEnabled(tx)) return;
-  const cases=await readRows(tx,sql`SELECT c.id,c.returnedQuantity,c.returnedUnit,k.linkedQuantity,n.unitSnapshot,p.id AS planId,p.status AS planStatus
+  const links=await readRows(tx,sql`SELECT k.purchaseOrderItemId,k.linkedQuantity,n.unitSnapshot
     FROM pmv2_material_purchase_links k
     INNER JOIN pmv2_material_request_items n ON n.id=k.materialRequestItemId
     INNER JOIN purchase_order_items i ON i.id=k.purchaseOrderItemId AND i.purchaseOrderId=k.purchaseOrderId
-    INNER JOIN supplier_return_cases c ON c.purchaseOrderItemId=i.id AND c.purchaseOrderId=i.purchaseOrderId AND c.closedAt IS NULL
-    LEFT JOIN supplier_return_replacement_plans p ON p.caseId=c.id AND p.planNumber=1
     WHERE k.materialRequestItemId=${requestItemId}`);
+  const active=await loadActiveCompensationCases(tx,links.map(link=>Number(link.purchaseOrderItemId)),{includeReceived:true});
+  const cases=links.flatMap(link=>(active.get(Number(link.purchaseOrderItemId))??[]).map(record=>({...record,linkedQuantity:link.linkedQuantity,unitSnapshot:link.unitSnapshot})));
   if(!cases.length) return;
-  const verified=cases.some(row=>row.planStatus==="received") ? (await loadPmv2Replacements(tx,[requestItemId])).get(requestItemId)??[] : [];
+  const unsettled=()=>new Pmv2ReplacementCoverageError("استكمل تعويض المرتجع القائم وربط تحويله باحتياج PMV2 قبل إنشاء شراء آخر لهذا الاحتياج");
+  if(cases.some(row=>row.planStatus!=="received")) throw unsettled();
+  const verified=(await loadPmv2Replacements(tx,[requestItemId],{includeZeroCoverage:true})).get(requestItemId)??[];
   const actions=await readRows(tx,sql`SELECT note FROM pmv2_item_actions WHERE taskItemId=${taskItemId} AND action='material_transfer_linked'`);
   const fulfilled=new Map<number,number>(),transfers=new Set<number>();
   for(const row of actions) {
@@ -194,9 +197,12 @@ export async function assertPmv2CompensationSettled(tx:FollowupTx,requestItemId:
     transfers.add(note.transferId);fulfilled.set(note.replacementPlanId,(fulfilled.get(note.replacementPlanId)||0)+Number(note.originalQuantity));
   }
   for(const row of cases) {
-    const required=Math.min(Number(row.returnedQuantity),Number(row.linkedQuantity));
-    if(row.planStatus!=="received" || !verified.some(({plan})=>plan.planId===Number(row.planId)&&plan.caseId===Number(row.id)) || String(row.returnedUnit).trim()!==String(row.unitSnapshot).trim() || !(required>0) || Number(fulfilled.get(Number(row.planId))||0)+0.0005<required) {
-      throw new Pmv2ReplacementCoverageError("استكمل تعويض المرتجع القائم وربط تحويله باحتياج PMV2 قبل إنشاء شراء آخر لهذا الاحتياج");
-    }
+    const received=verified.find(({plan})=>plan.planId===Number(row.planId)&&plan.caseId===Number(row.id));
+    if(!received || received.plan.originalUnit.trim()!==String(row.unitSnapshot).trim()) throw unsettled();
+    // Receipt closes follow-up, not team fulfillment. Only the verified net
+    // root-equivalent coverage remains due here; fully returned ancestors have
+    // zero coverage and never demand an old transfer a second time.
+    const required=Math.min(received.maximumOriginalQuantity,Number(row.linkedQuantity));
+    if(!Number.isFinite(required) || required<0 || Number(fulfilled.get(Number(row.planId))||0)+0.0005<required) throw unsettled();
   }
 }

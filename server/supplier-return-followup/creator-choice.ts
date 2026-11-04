@@ -3,7 +3,9 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { decideCreator, ReturnFollowupError, type Followup } from "./policy";
 import { readRows, trialEnabled } from "./runtime";
-import type { FollowupPort } from "./commands";
+import type { FollowupPort, FollowupTx } from "./commands";
+import { verifyStandaloneReturnSource } from "./standalone-source";
+import { resolveReturnLineageOrigin } from "./lineage";
 
 export const creatorReplacementChoice = z.object({
   caseId: z.number().int().positive(), expectedRevision: z.number().int().nonnegative(),
@@ -18,6 +20,32 @@ export const creatorCancellation = z.object({
 const conflict = (message: string): never => { throw new ReturnFollowupError("CONFLICT", message); };
 const deny = (message: string): never => { throw new ReturnFollowupError("FORBIDDEN", message); };
 
+/** A later round belongs to the original creator, even when an administrator
+ * created the intervening purchase. Recheck its physical source and the whole
+ * lineage in this transaction; the stored parent alone is not authorization. */
+async function verifyCreatorLineage(tx: FollowupTx, record: any, creatorId: number) {
+  if (record.parentReplacementPlanId == null) return null;
+  const source = {
+    lotId: Number(record.lotId), receiptId: Number(record.receiptId), receiptItemId: Number(record.receiptItemId),
+    purchaseOrderId: Number(record.purchaseOrderId), purchaseOrderItemId: Number(record.purchaseOrderItemId),
+  };
+  if (Object.values(source).some(id => !Number.isSafeInteger(id) || id <= 0)) conflict("مصدر جولة التعويض غير صالح");
+  const [physical] = await readRows(tx, sql`SELECT r.id FROM warehouse_returns r
+    INNER JOIN inventory_lots l ON l.id=r.lotId AND l.receiptId=r.receiptId
+      AND l.purchaseOrderId=r.purchaseOrderId AND l.purchaseOrderItemId=r.purchaseOrderItemId
+    INNER JOIN warehouse_receipt_items ri ON ri.id=l.receiptItemId AND ri.receiptId=l.receiptId
+      AND ri.purchaseOrderItemId=l.purchaseOrderItemId AND ri.inventoryId=r.inventoryId
+    WHERE r.id=${Number(record.returnId)} AND r.inventoryId=${Number(record.inventoryId)}
+      AND r.lotId=${source.lotId} AND r.receiptId=${source.receiptId} AND l.receiptItemId=${source.receiptItemId}
+      AND r.purchaseOrderId=${source.purchaseOrderId} AND r.purchaseOrderItemId=${source.purchaseOrderItemId}
+      AND r.sourceDeliveryDocumentId IS NULL FOR UPDATE`);
+  if (!physical) conflict("مصدر المرتجع لا يطابق جولة التعويض");
+  const origin = await resolveReturnLineageOrigin(tx, source);
+  if (origin.parentReplacementPlanId !== Number(record.parentReplacementPlanId) || origin.creatorId !== creatorId)
+    conflict("تغيرت جولة التعويض أو مسؤول الاحتياج الأصلي");
+  return origin;
+}
+
 /** The original requester chooses a different catalog item after the delegate
  * has accepted the return. This only creates a plan; purchase, pricing and
  * stock still use their existing guarded writers. */
@@ -28,16 +56,20 @@ export async function runTrialCreatorReplacement(actor: {id:number;role:string},
     const [user] = await readRows(tx, sql`SELECT id,role,isActive FROM users WHERE id=${actor.id} FOR UPDATE`);
     if (!user || user.role !== actor.role || Number(user.isActive) !== 1) deny("الحساب غير متاح");
     const [record] = await readRows(tx, sql`SELECT * FROM supplier_return_cases WHERE id=${input.caseId} FOR UPDATE`);
-    if (!record || Number(record.creatorId) !== actor.id) deny("قرار البديل لمنشئ الطلب الأصلي فقط");
-    const [source] = await readRows(tx, sql`SELECT r.id,r.inventoryId,r.purchaseOrderId,r.purchaseOrderItemId,r.sourceDeliveryDocumentId,
+    const standalone = record && record.purchaseOrderId == null && record.purchaseOrderItemId == null;
+    const creatorId = Number(record?.creatorId ?? (standalone ? record.createdById : null));
+    if (!record || creatorId !== actor.id) deny("قرار البديل لمنشئ الطلب الأصلي فقط");
+    const lineage = await verifyCreatorLineage(tx, record, creatorId);
+    const standaloneSource = standalone ? await verifyStandaloneReturnSource(tx, record) : null;
+    const [source] = standaloneSource ? [{ originalCatalogItemId: standaloneSource.originalCatalogItemId }] : await readRows(tx, sql`SELECT r.id,r.inventoryId,r.purchaseOrderId,r.purchaseOrderItemId,r.sourceDeliveryDocumentId,
         p.requestedById,i.id AS itemId,i.catalogItemId AS originalCatalogItemId
       FROM warehouse_returns r INNER JOIN purchase_orders p ON p.id=r.purchaseOrderId
       INNER JOIN purchase_order_items i ON i.id=r.purchaseOrderItemId AND i.purchaseOrderId=p.id
       WHERE r.id=${Number(record.returnId)} FOR UPDATE`);
-    if (!source || Number(source.inventoryId) !== Number(record.inventoryId)
+    if (!standalone && (!source || Number(source.inventoryId) !== Number(record.inventoryId)
       || Number(source.purchaseOrderId) !== Number(record.purchaseOrderId)
       || Number(source.purchaseOrderItemId) !== Number(record.purchaseOrderItemId)
-      || Number(source.requestedById) !== actor.id || source.sourceDeliveryDocumentId != null) conflict("مصدر المرتجع أو منشئ الطلب تغير");
+      || (!lineage && Number(source.requestedById) !== actor.id) || source.sourceDeliveryDocumentId != null)) conflict("مصدر المرتجع أو منشئ الطلب تغير");
     const hash = createHash("sha256").update(JSON.stringify({actorId:actor.id,...input})).digest("hex");
     const [previous] = await readRows(tx, sql`SELECT actorId,requestHash,result FROM supplier_return_events WHERE caseId=${input.caseId} AND operationKey=${input.operationKey}`);
     if (previous) {
@@ -57,7 +89,7 @@ export async function runTrialCreatorReplacement(actor: {id:number;role:string},
     if (source.originalCatalogItemId != null && Number(source.originalCatalogItemId) === input.catalogItemId) conflict("اختر صنفًا مختلفًا عن الصنف الأصلي");
     const [existingPlan] = await readRows(tx, sql`SELECT id FROM supplier_return_replacement_plans WHERE caseId=${input.caseId} LIMIT 1`);
     if (existingPlan) conflict("يوجد طلب بديل سابق لهذا المرتجع");
-    const before: Followup = { delegateId:Number(record.delegateId),creatorId:Number(record.creatorId),returnedQuantity:Number(record.returnedQuantity),
+    const before: Followup = { delegateId:Number(record.delegateId),creatorId,returnedQuantity:Number(record.returnedQuantity),
       revision:Number(record.revision),handover:record.handoverStatus,resolution:record.resolution,rejectionReason:record.rejectionReason,creatorDecision:record.creatorDecision };
     const after = decideCreator({id:actor.id,role:actor.role,active:true},before,input.expectedRevision,"replace",
       {verified:true,hasMaintenance:false,hasTask:false,hasMaterialNeed:false});
@@ -85,14 +117,27 @@ export async function runTrialCreatorCancellation(actor: {id:number;role:string}
     const [user] = await readRows(tx, sql`SELECT id,role,isActive FROM users WHERE id=${actor.id} FOR UPDATE`);
     if (!user || user.role !== actor.role || Number(user.isActive) !== 1) deny("الحساب غير متاح");
     const [record] = await readRows(tx, sql`SELECT * FROM supplier_return_cases WHERE id=${input.caseId} FOR UPDATE`);
-    if (!record || Number(record.creatorId) !== actor.id) deny("الإلغاء لمنشئ الطلب الأصلي فقط");
-    const [source] = await readRows(tx, sql`SELECT p.id,p.requestedById,p.ticketId,p.ticketItemId,i.id AS itemId
+    const standalone = record && record.purchaseOrderId == null && record.purchaseOrderItemId == null;
+    const creatorId = Number(record?.creatorId ?? (standalone ? record.createdById : null));
+    if (!record || creatorId !== actor.id) deny("الإلغاء لمنشئ الطلب الأصلي فقط");
+    const lineage = await verifyCreatorLineage(tx, record, creatorId);
+    const standaloneSource = standalone ? await verifyStandaloneReturnSource(tx, record) : null;
+    const [source] = standaloneSource ? [{ id: null, itemId: null, ticketId: null, ticketItemId: null, requestedById: creatorId }] : await readRows(tx, sql`SELECT p.id,p.requestedById,p.ticketId,p.ticketItemId,i.id AS itemId
       FROM warehouse_returns r INNER JOIN purchase_orders p ON p.id=r.purchaseOrderId
       INNER JOIN purchase_order_items i ON i.id=r.purchaseOrderItemId AND i.purchaseOrderId=p.id
       WHERE r.id=${record.returnId} AND r.inventoryId=${record.inventoryId} AND r.sourceDeliveryDocumentId IS NULL FOR UPDATE`);
-    if (!source || Number(source.id) !== Number(record.purchaseOrderId)
-      || Number(source.itemId) !== Number(record.purchaseOrderItemId) || Number(source.requestedById) !== actor.id)
+    if (!standalone && (!source || Number(source.id) !== Number(record.purchaseOrderId)
+      || Number(source.itemId) !== Number(record.purchaseOrderItemId) || (!lineage && Number(source.requestedById) !== actor.id)))
       conflict("تغير مصدر المرتجع أو منشئ الطلب");
+    const needSources = standalone ? [] : [source];
+    if (lineage && (lineage.rootPurchaseOrderId != null || lineage.rootPurchaseOrderItemId != null)) {
+      if (lineage.rootPurchaseOrderId == null || lineage.rootPurchaseOrderItemId == null) conflict("مرجع الاحتياج الأصلي غير مكتمل");
+      const [original] = await readRows(tx, sql`SELECT p.id,p.ticketId,p.ticketItemId,i.id AS itemId
+        FROM purchase_orders p INNER JOIN purchase_order_items i ON i.purchaseOrderId=p.id
+        WHERE p.id=${lineage.rootPurchaseOrderId} AND i.id=${lineage.rootPurchaseOrderItemId} FOR UPDATE`);
+      if (!original) conflict("مرجع الاحتياج الأصلي غير موجود");
+      if (!needSources.some(item => Number(item.id) === Number(original.id) && Number(item.itemId) === Number(original.itemId))) needSources.push(original);
+    }
     const hash = createHash("sha256").update(JSON.stringify({ actorId:actor.id,...input })).digest("hex");
     const [previous] = await readRows(tx, sql`SELECT actorId,requestHash,result FROM supplier_return_events WHERE caseId=${input.caseId} AND operationKey=${input.operationKey}`);
     if (previous) {
@@ -107,18 +152,21 @@ export async function runTrialCreatorCancellation(actor: {id:number;role:string}
     const [plan] = await readRows(tx, sql`SELECT id FROM supplier_return_replacement_plans WHERE caseId=${input.caseId} LIMIT 1`);
     if (plan) conflict("يوجد طلب بديل لهذا المرتجع");
     const knownTables = ["it_purchase_needs", "pmv2_material_purchase_links", "operational_issue_purchase_links", "external_maintenance_jobs"] as const;
-    const tables = await readRows(tx, sql`SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()
+    const tables = !needSources.length ? [] : await readRows(tx, sql`SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()
       AND TABLE_NAME IN ('it_purchase_needs','pmv2_material_purchase_links','operational_issue_purchase_links','external_maintenance_jobs')`);
     const present = new Set(tables.map(row => String(row.name).toLowerCase()));
     let hasOtherLink = false;
-    if (present.has(knownTables[0])) hasOtherLink ||= (await readRows(tx, sql`SELECT id FROM it_purchase_needs WHERE purchaseOrderId=${source.id} LIMIT 1`)).length > 0;
-    if (present.has(knownTables[1])) hasOtherLink ||= (await readRows(tx, sql`SELECT id FROM pmv2_material_purchase_links WHERE purchaseOrderItemId=${source.itemId} LIMIT 1`)).length > 0;
-    if (present.has(knownTables[2])) hasOtherLink ||= (await readRows(tx, sql`SELECT 1 AS linked FROM operational_issue_purchase_links WHERE purchaseOrderItemId=${source.itemId} LIMIT 1`)).length > 0;
-    if (present.has(knownTables[3])) hasOtherLink ||= (await readRows(tx, sql`SELECT id FROM external_maintenance_jobs WHERE purchaseOrderId=${source.id} LIMIT 1`)).length > 0;
-    const before: Followup = { delegateId:Number(record.delegateId),creatorId:Number(record.creatorId),returnedQuantity:Number(record.returnedQuantity),
+    for (const need of needSources) {
+      if (present.has(knownTables[0])) hasOtherLink ||= (await readRows(tx, sql`SELECT id FROM it_purchase_needs WHERE purchaseOrderId=${need.id} LIMIT 1`)).length > 0;
+      if (present.has(knownTables[1])) hasOtherLink ||= (await readRows(tx, sql`SELECT id FROM pmv2_material_purchase_links WHERE purchaseOrderItemId=${need.itemId} LIMIT 1`)).length > 0;
+      if (present.has(knownTables[2])) hasOtherLink ||= (await readRows(tx, sql`SELECT 1 AS linked FROM operational_issue_purchase_links WHERE purchaseOrderItemId=${need.itemId} LIMIT 1`)).length > 0;
+      if (present.has(knownTables[3])) hasOtherLink ||= (await readRows(tx, sql`SELECT id FROM external_maintenance_jobs WHERE purchaseOrderId=${need.id} LIMIT 1`)).length > 0;
+    }
+    const before: Followup = { delegateId:Number(record.delegateId),creatorId,returnedQuantity:Number(record.returnedQuantity),
       revision:Number(record.revision),handover:record.handoverStatus,resolution:record.resolution,rejectionReason:record.rejectionReason,creatorDecision:record.creatorDecision };
     const after = decideCreator({ id:actor.id,role:actor.role,active:true },before,input.expectedRevision,"cancel",{
-      verified:true,hasMaintenance:source.ticketId != null || hasOtherLink,hasTask:source.ticketItemId != null,hasMaterialNeed:hasOtherLink,
+      verified:true,hasMaintenance:needSources.some(need => need.ticketId != null) || hasOtherLink,
+      hasTask:needSources.some(need => need.ticketItemId != null),hasMaterialNeed:hasOtherLink,
     });
     const [written] = await tx.execute(sql`UPDATE supplier_return_cases SET creatorDecision='cancel',revision=${after.revision},closedAt=CURRENT_TIMESTAMP
       WHERE id=${input.caseId} AND revision=${before.revision} AND creatorDecision='pending' AND closedAt IS NULL`);

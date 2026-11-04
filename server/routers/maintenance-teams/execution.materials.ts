@@ -15,7 +15,7 @@ import type { TeamManagementActor } from "../../../shared/maintenance-team-ticke
 import type { TeamDatabaseTransaction } from "./repository";
 import { selectRows, type ExecutionOptions } from "./execution.repository";
 import { canExecuteAllTicketTeams } from "../../../shared/maintenance-team-tickets/execution-permissions";
-import { exactOriginalAllocation, limitReplacementSourceCoverage, loadReplacementFulfillments, replacementAllocationQuantum, representableReplacementAllocation, replacementOriginalToPhysical, replacementPhysicalToOriginal, type ReplacementFulfillment } from "../../supplier-return-followup/fulfillment";
+import { exactOriginalAllocation, limitReplacementSourceCoverage, loadReplacementFulfillments, replacementOriginalPerPhysical, replacementAllocationQuantum, representableReplacementAllocation, replacementOriginalToPhysical, replacementPhysicalToOriginal, type ReplacementFulfillment } from "../../supplier-return-followup/fulfillment";
 
 export interface InventoryWriters {
   transferBatch?(input: any, tx: any): Promise<any>;
@@ -166,7 +166,7 @@ export class ProductionMaterialGateway implements MaterialGateway {
       const used = this.state.deliveries.filter(row => row.needId === needId && plan.lots.some(lot => lot.lotId === row.lotId))
         .reduce((sum, row) => sum + (row.originalEquivalent ?? Number(replacementPhysicalToOriginal(plan, String(row.quantity)))), 0);
       for (const lot of stock.lots.filter(lot => plan.lots.some(source => source.lotId === Number(lot.lotId)))) result.push({ ...mapLot(lot, stock),
-        originalPerUnit: Number(plan.originalQuantityCovered) / plan.lots.reduce((sum, row) => sum + Number(row.quantity), 0), coverageKey: String(plan.planId), coverageLimit: Math.max(0, Number(plan.maximumOriginalQuantity) - used) });
+        originalPerUnit: replacementOriginalPerPhysical(plan), coverageKey: String(plan.planId), coverageLimit: Math.max(0, Number(plan.maximumOriginalQuantity) - used) });
     }
     return result;
   }

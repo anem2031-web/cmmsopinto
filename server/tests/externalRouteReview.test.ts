@@ -28,10 +28,15 @@ describe("existing workflow boundaries", () => {
   it.each([null, { maintenancePath: "C", status: "under_inspection" }, { maintenancePath: "A", status: "work_approved" }])("preparation rechecks the locked item before any write: %j", async item => {
     const source = ts.createSourceFile("db.ts", readFileSync("server/_core/db/external-maintenance.ts", "utf8"), ts.ScriptTarget.Latest, true);
     const fn = source.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === "prepareExternalMaintenanceJob")!;
+    const sourceLock = source.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === "lockExternalSource")!;
     const lock = vi.fn(); const insert = vi.fn(); let read = 0;
     const tx = { insert, select: () => ({ from: () => ({ where: () => ({ for: async (mode: string) => { lock(mode); return ++read === 1 ? [{ id: 10 }] : item ? [item] : []; } }) }) }) };
-    const prepare = vm.runInNewContext(ts.transpileModule(`(${fn.getText(source).replace("export ", "")})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, { withTransaction: (work: any) => work(tx), tickets: { id: "id" }, ticketItems: { id: "id", ticketId: "ticketId" }, eq: (...args: any[]) => args, and: (...args: any[]) => args });
-    await expect(prepare({ ticketId: 10, ticketItemId: 11 })).rejects.toThrow("EXTERNAL_TICKET_INVALID_EXIT_STAGE");
+    // Actor allow/deny is exercised by the real core transaction suite. This
+    // focused AST contract still executes the production parent-lock helper.
+    const context = vm.createContext({ withTransaction: (work: any) => work(tx), assertExternalActor: async () => {}, tickets: { id: "id" }, ticketItems: { id: "id", ticketId: "ticketId" }, eq: (...args: any[]) => args, and: (...args: any[]) => args });
+    vm.runInContext(ts.transpileModule(sourceLock.getText(source), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+    const prepare = vm.runInContext(ts.transpileModule(`(${fn.getText(source).replace("export ", "")})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+    await expect(prepare({ ticketId: 10, ticketItemId: 11, purchaseTitle: "إصلاح الأصل", assetName: "الأصل", assetBeforePhotoUrl: "/before.jpg", assetBeforeCondition: "عطل" })).rejects.toThrow("EXTERNAL_TICKET_INVALID_EXIT_STAGE");
     expect(lock).toHaveBeenCalledTimes(2); expect(insert).not.toHaveBeenCalled();
   });
 });

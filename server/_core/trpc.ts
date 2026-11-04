@@ -17,6 +17,8 @@ import { assertDelegateDirectoryRpc } from "./authz/delegate-directory-guard";
 import { assertGateSecurityRpc, assertGateSecurityResourceAccess } from "./authz/gate-security-guard";
 import { isOwnerAdminOnlyRpc, isOwnerOrAdminRole } from "../../shared/restricted-module-policy";
 import { approvedPricingDocumentRpcAllowed } from "../../shared/approved-pricing-documents";
+import { externalDelegateRpcAllowed } from "../../shared/external-delegate-access";
+import { isDelegateRole, delegateManagerAssignmentRpcAllowed } from "../../shared/delegate-role";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -25,7 +27,12 @@ const t = initTRPC.context<TrpcContext>().create({
 export const router = t.router;
 const roleScopeGuard = t.middleware(async opts => {
   const user = opts.ctx.authenticatedUser ?? opts.ctx.user;
-  if (user?.role === "delegate") assertDelegateDirectoryRpc(user, opts.path, await opts.getRawInput());
+  if (!delegateManagerAssignmentRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "تعيين الصنف لمسئول المناديب فقط" });
+  if (!externalDelegateRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "الإجراء للمندوب المسند إليه الأصل فقط" });
+  if (isDelegateRole(user?.role)) {
+    assertDelegateDirectoryRpc(user, opts.path, await opts.getRawInput());
+    return opts.next({ ctx: { ...opts.ctx, user: user! } });
+  }
   if (user?.role === "gate_security") {
     assertGateSecurityRpc(user, opts.type, opts.path);
     await assertGateSecurityResourceAccess(user, opts.type, opts.path, await opts.getRawInput());

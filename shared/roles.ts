@@ -14,6 +14,8 @@ import { businessPageAllowed, isBusinessGuardedRole } from "./business-role-poli
 import { gateSecurityPageAllowed } from "./gate-security-policy";
 import { delegateDirectoryPageAllowed } from "./delegate-directory-policy";
 import { isOwnerAdminOnlyPage, isOwnerOrAdminRole } from "./restricted-module-policy";
+import { isDelegateRole } from "./delegate-role";
+export { isDelegateRole } from "./delegate-role";
 
 export const APP_ROLE = {
   USER: "user",
@@ -31,6 +33,7 @@ export const APP_ROLE = {
   PURCHASE_MANAGER: "purchase_manager",
   PURCHASE_REQUESTER: "purchase_requester",
   DELEGATE: "delegate",
+  DELEGATE_MANAGER: "delegate_manager",
   ACCOUNTANT: "accountant",
   SENIOR_MANAGEMENT: "senior_management",
   EXECUTIVE_DIRECTOR: "executive_director",
@@ -227,6 +230,7 @@ export const PURCHASE_SUPPLY_TRACKING_MANAGER_ROLES = [
 export const PURCHASE_SUPPLY_TRACKING_ROLES = [
   ...PURCHASE_SUPPLY_TRACKING_MANAGER_ROLES,
   APP_ROLE.DELEGATE,
+  APP_ROLE.DELEGATE_MANAGER,
 ] as const;
 
 export function canRoleAccessPurchaseSupplyTracking(role?: string | null): boolean {
@@ -294,12 +298,13 @@ export function canRoleAccessPath(role: string | null | undefined, path: string)
   // to the authenticated owner/admin identity. Observer projection must not
   // turn an observer into an admin for these modules.
   if (isOwnerAdminOnlyPage(normalizedPath)) return isOwnerOrAdminRole(role);
+  if (normalizedPath === "/warehouse-returns-followup") return isDelegateRole(role) || role === APP_ROLE.OWNER || role === APP_ROLE.ADMIN;
   if (isObserver(role)) return canRoleAccessPath(APP_ROLE.ADMIN, path);
   if (role === APP_ROLE.GATE_SECURITY) return gateSecurityPageAllowed(normalizedPath);
   if (!delegateDirectoryPageAllowed(role, normalizedPath)) return false;
   if (isBusinessGuardedRole(role)) return businessPageAllowed(role, normalizedPath);
   if (matchesPrefix(normalizedPath, "/inventory-settlement-review")) return role === APP_ROLE.OWNER || role === APP_ROLE.ADMIN;
-  if (matchesPrefix(normalizedPath, "/delegate-pricing-bundles")) return ["owner", "admin", "delegate", "accountant"].includes(role);
+  if (matchesPrefix(normalizedPath, "/delegate-pricing-bundles")) return isDelegateRole(role) || ["owner", "admin", "accountant"].includes(role);
   if (matchesPrefix(normalizedPath, "/operational-issues")) return ["owner", "admin", "warehouse", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "it_manager"].includes(role);
   if (role === APP_ROLE.TECHNICIAN) return technicianPageAllowed(normalizedPath);
   if (matchesPrefix(normalizedPath, "/maintenance-team-tickets")) {

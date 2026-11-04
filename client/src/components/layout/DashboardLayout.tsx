@@ -1,3 +1,4 @@
+import { isDelegateRole } from "@shared/roles";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { businessHomePath, isBusinessGuardedRole } from "@shared/business-role-policy";
 import { ticketTeamNotificationPath } from "@shared/maintenance-team-tickets/warehouse-navigation";
@@ -80,7 +81,7 @@ const NAV_SECTIONS: NavSection[] = [
       { icon: Bell, labelKey: "nav.notifications", path: "/notifications" },
       { icon: ClipboardList, labelKey: "nav.pmv2MyTasks", path: "/scheduled-maintenance/my-tasks",
         roles: ["technician","it_manager","it_member","owner","admin","maintenance_manager","general_maintenance_manager","construction_procurement_manager"] },
-      { icon: ShoppingBag, labelKey: "nav.myItems", path: "/my-items", roles: ["delegate","owner","admin"] },
+      { icon: ShoppingBag, labelKey: "nav.myItems", path: "/my-items", roles: ["delegate", "delegate_manager","owner","admin"] },
     ],
   },
   // 2. البلاغات والتشغيل
@@ -92,7 +93,7 @@ const NAV_SECTIONS: NavSection[] = [
       { icon: Nfc,           labelKey: "nav.scanAsset",    path: "/scan-asset",
         roles: ["operator","technician","maintenance_manager","general_maintenance_manager","supervisor","gate_security","owner","admin"] },
       { icon: ClipboardList, labelKey: "nav.tickets",      path: "/tickets",
-        roles: ["operator","technician","it_manager","it_member","maintenance_manager","general_maintenance_manager","construction_procurement_manager","supervisor","gate_security","delegate","senior_management","executive_director","owner","admin"] },
+        roles: ["operator","technician","it_manager","it_member","maintenance_manager","general_maintenance_manager","construction_procurement_manager","supervisor","gate_security","delegate", "delegate_manager","senior_management","executive_director","owner","admin"] },
       { icon: ClipboardList, labelKey: "nav.operationalIssues", path: "/operational-issues",
         roles: ["maintenance_manager","general_maintenance_manager","construction_procurement_manager","it_manager","warehouse","owner","admin"] },
       { icon: ClipboardList, labelKey: "nav.maintenanceTeamTickets", path: "/maintenance-team-tickets",
@@ -133,15 +134,17 @@ const NAV_SECTIONS: NavSection[] = [
     id: "purchasing",
     labelKey: "nav.sections.purchasing",
     icon: ShoppingCart,
-    roles: ["delegate","warehouse","accountant","senior_management","executive_director","maintenance_manager","general_maintenance_manager","construction_procurement_manager","it_manager","purchase_requester","food_warehouse_manager","food_warehouse_assistant","owner","admin"],
+    roles: ["delegate", "delegate_manager","warehouse","accountant","senior_management","executive_director","maintenance_manager","general_maintenance_manager","construction_procurement_manager","it_manager","purchase_requester","food_warehouse_manager","food_warehouse_assistant","owner","admin"],
     items: [
       { icon: ShoppingCart, labelKey: "nav.purchaseOrders", path: "/purchase-orders",
-        roles: ["delegate","warehouse","accountant","senior_management","executive_director","maintenance_manager","general_maintenance_manager","construction_procurement_manager","it_manager","purchase_requester","food_warehouse_manager","food_warehouse_assistant","owner","admin"] },
+        roles: ["delegate", "delegate_manager","warehouse","accountant","senior_management","executive_director","maintenance_manager","general_maintenance_manager","construction_procurement_manager","it_manager","purchase_requester","food_warehouse_manager","food_warehouse_assistant","owner","admin"] },
       { icon: ShoppingBag, labelKey: "nav.delegatePricingBundles", path: "/delegate-pricing-bundles",
-        roles: ["delegate","accountant","senior_management","owner","admin"] },
-      { icon: Truck, labelKey: "nav.purchaseCycle", path: "/purchase-cycle", roles: ["delegate","warehouse","owner","admin"] },
+        roles: ["delegate", "delegate_manager","accountant","senior_management","owner","admin"] },
+      { icon: RotateCcw, labelKey: "nav.delegateWarehouseReturns", path: "/warehouse-returns-followup",
+        roles: ["delegate", "delegate_manager","owner","admin"] },
+      { icon: Truck, labelKey: "nav.purchaseCycle", path: "/purchase-cycle", roles: ["delegate", "delegate_manager","warehouse","owner","admin"] },
       { icon: FileStack, labelKey: "nav.documentsCenter", path: "/documents",
-        roles: ["delegate","warehouse","accountant","senior_management","executive_director","maintenance_manager","purchase_requester","food_warehouse_manager","food_warehouse_assistant","owner","admin"] },
+        roles: ["delegate", "delegate_manager","warehouse","accountant","senior_management","executive_director","maintenance_manager","purchase_requester","food_warehouse_manager","food_warehouse_assistant","owner","admin"] },
     ],
   },
   // 5. المستودع والمخزون
@@ -595,7 +598,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
     const fallback = role === "technician"
       ? "/scheduled-maintenance/my-tasks"
       : role === "gate_security" ? "/gate-security"
-      : role === "delegate" ? "/purchase-orders"
+      : isDelegateRole(role) ? "/purchase-orders"
       : role === "warehouse" && location.startsWith("/scheduled-maintenance")
         ? "/scheduled-maintenance/warehouse-requests"
         : isBusinessGuardedRole(role) ? businessHomePath(role)

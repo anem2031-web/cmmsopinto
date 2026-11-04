@@ -1,4 +1,6 @@
 import { TRPCError } from "@trpc/server";
+import { hasCurrentExternalDelegateReceipt } from "../../../shared/externalMaintenanceWorkflow";
+import { readScopeChunks } from "./read-batch";
 import {
   GATE_SECURITY_JOB_STATUSES,
   GATE_SECURITY_ROLE,
@@ -18,6 +20,9 @@ export interface GateSecurityJobScope {
   ticketMaintenancePath: string | null;
   itemTicketId: number | null;
   itemMaintenancePath: string | null;
+  purchaseTitle?:string|null;delegateId?:number|null;delegateReceiptStatus?:string|null;
+  delegateReceiptById?:number|null;delegateReceiptAt?:unknown;warehousePreparedAt?:unknown;preparationRevision?:number|null;
+  purchaseOrderId?:number|null;gateExitApprovedAt?:unknown;
 }
 export interface GateSecurityResourcePort {
   jobs(ids: number[]): Promise<GateSecurityJobScope[]>;
@@ -30,12 +35,15 @@ export const gateSecurityResourcePort: GateSecurityResourcePort = {
     const { eq, inArray } = await import("drizzle-orm");
     const connection = await getDb();
     if (!connection) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر التحقق من سجل الحراسة" });
-    return connection.select({
+    return readScopeChunks(ids,part=>connection.select({
       id: jobs.id, ticketId: jobs.ticketId, ticketItemId: jobs.ticketItemId, status: jobs.status,
+      purchaseTitle:jobs.purchaseTitle,delegateId:jobs.delegateId,delegateReceiptStatus:jobs.delegateReceiptStatus,
+      delegateReceiptById:jobs.delegateReceiptById,delegateReceiptAt:jobs.delegateReceiptAt,warehousePreparedAt:jobs.warehousePreparedAt,
+      preparationRevision:jobs.preparationRevision,purchaseOrderId:jobs.purchaseOrderId,gateExitApprovedAt:jobs.gateExitApprovedAt,
       ticketMaintenancePath: tickets.maintenancePath,
       itemTicketId: ticketItems.ticketId, itemMaintenancePath: ticketItems.maintenancePath,
     }).from(jobs).innerJoin(tickets, eq(tickets.id, jobs.ticketId))
-      .leftJoin(ticketItems, eq(ticketItems.id, jobs.ticketItemId)).where(inArray(jobs.id, ids));
+      .leftJoin(ticketItems, eq(ticketItems.id, jobs.ticketItemId)).where(inArray(jobs.id, part)));
   },
 };
 
@@ -43,6 +51,7 @@ export const gateSecurityResourcePort: GateSecurityResourcePort = {
 export function isGateSecurityJob(job: GateSecurityJobScope): boolean {
   return validId(job.id) && validId(job.ticketId)
     && (GATE_SECURITY_JOB_STATUSES as readonly string[]).includes(job.status)
+    && (job.status!=="waiting_gate_exit" || (job.purchaseOrderId==null&&!job.gateExitApprovedAt&&hasCurrentExternalDelegateReceipt(job)))
     && (job.ticketItemId == null ? job.ticketMaintenancePath === "C"
       : validId(job.ticketItemId) && job.itemTicketId === job.ticketId && job.itemMaintenancePath === "C");
 }

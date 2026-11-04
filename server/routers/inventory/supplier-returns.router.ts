@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { sql } from "drizzle-orm";
+import { isDelegateRole } from "../../../shared/roles";
 import { router, protectedProcedure, warehouseProcedure } from "../_shared/procedures";
 import { followupCommand } from "../../supplier-return-followup/commands";
 import { newReturnRequest } from "../../supplier-return-followup/create-once";
@@ -9,11 +10,11 @@ import { confirmSupplierRefund, confirmSupplierRefundInput } from "../../supplie
 import { createTrialReturn, listInput, listSupplierReturns, readRows, runTrialCommand, supplierReturnStatus, trialPort, valuationInput, supplierReturnValuePreview } from "../../supplier-return-followup/runtime";
 
 const scope = protectedProcedure.use(({ ctx, next }) => {
-  if (!["warehouse", "delegate", "admin", "owner", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "it_manager", "purchase_manager", "accountant", "senior_management", "executive_director", "user", "operator", "technician", "it_member", "supervisor", "purchase_requester", "food_warehouse_manager", "food_warehouse_assistant"].includes(ctx.user.role)) throw new TRPCError({ code: "FORBIDDEN" });
+  if (!isDelegateRole(ctx.user.role)&&!["warehouse", "admin", "owner", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "it_manager", "purchase_manager", "accountant", "senior_management", "executive_director", "user", "operator", "technician", "it_member", "supervisor", "purchase_requester", "food_warehouse_manager", "food_warehouse_assistant"].includes(ctx.user.role)) throw new TRPCError({ code: "FORBIDDEN" });
   return next({ ctx });
 });
 const commandScope = protectedProcedure.use(({ ctx, next }) => {
-  if (!["warehouse", "delegate", "admin", "owner"].includes(ctx.user.role)) throw new TRPCError({ code: "FORBIDDEN" });
+  if (!isDelegateRole(ctx.user.role)&&!["warehouse", "admin", "owner"].includes(ctx.user.role)) throw new TRPCError({ code: "FORBIDDEN" });
   return next({ ctx });
 });
 async function errors<T>(work: () => Promise<T>): Promise<T> {
@@ -30,7 +31,7 @@ export const supplierReturnsRouter = router({
   delegates: warehouseProcedure.query(async ({ ctx }) => {
     const db = await trialPort();
     if (!(await supplierReturnStatus(ctx.user, db)).enabled) throw new TRPCError({ code: "FORBIDDEN" });
-    return readRows(db, sql`SELECT id,name,username FROM users WHERE role='delegate' AND isActive=1 ORDER BY id`);
+    return readRows(db, sql`SELECT id,name,username FROM users WHERE role IN ('delegate','delegate_manager') AND isActive=1 ORDER BY id`);
   }),
   command: commandScope.input(followupCommand).mutation(async ({ ctx, input }) => errors(async () => runTrialCommand(ctx.user, input, await trialPort()))),
   chooseReplacement: scope.input(creatorReplacementChoice).mutation(async ({ ctx, input }) => errors(async () => {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isDelegateRole } from "../../../shared/roles";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, accountantProcedure, managementProcedure } from "../_shared/procedures";
 import * as db from "../../_core/db";
@@ -259,8 +260,8 @@ export const purchasePackagesRouter = router({
         });
       }
 
-      const response = { ...pkg, orders: ordersWithItems.map(po => withPurchaseSubmissionTime({ ...po, items: ctx.user.role === "delegate" ? po.items.filter((item: any) => Number(item.delegateId) === ctx.user.id) : po.items })) };
-      if (ctx.user.role === "delegate") {
+      const response = { ...pkg, orders: ordersWithItems.map(po => withPurchaseSubmissionTime({ ...po, items: isDelegateRole(ctx.user.role) ? po.items.filter((item: any) => Number(item.delegateId) === ctx.user.id) : po.items })) };
+      if (isDelegateRole(ctx.user.role)) {
         return localizeMasterDataReferences({ ...response, createdByName: null,
           orders: response.orders.map((po: any) => ({ ...po, requestedByName: po.requestedByName ?? null,
             items: po.items.map((item: any) => ({ ...item, delegateName: null })) })) }, (ctx.user.preferredLanguage || "ar") as any);
@@ -295,7 +296,7 @@ export const purchasePackagesRouter = router({
    */
   cards: protectedProcedure.query(async ({ ctx }) => {
     assertCanPerformPOAction("viewPurchasePackage", ctx.user);
-    const delegateId = ctx.user.role === "delegate" ? ctx.user.id : undefined;
+    const delegateId = isDelegateRole(ctx.user.role) ? ctx.user.id : undefined;
     const cards = await db.getPurchaseCards({ delegateId });
 
     // getPurchaseCards مسؤولة عن التجميع فقط. القرار الأمني النهائي يبقى
@@ -539,7 +540,7 @@ export const purchasePackagesRouter = router({
   submitPackageBatch: protectedProcedure
     .input(z.object({ packageId: z.number() }))
     .mutation(async ({ input, ctx }) => {
-      if (ctx.user.role !== "delegate") {
+      if (!isDelegateRole(ctx.user.role)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "إرسال دفعة التسعير متاح للمندوب فقط",

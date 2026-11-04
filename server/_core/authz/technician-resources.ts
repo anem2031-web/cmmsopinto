@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { isDelegateRole } from "../../../shared/delegate-role";
 import type { SupportedLanguage } from "../../services/translation/translation";
 
 const translationTables = {
@@ -99,7 +100,7 @@ export async function readTicketExecutionReferences(user: Actor, ticketId: numbe
     localizeNamedRecords("SECTION", sections, language), localizeNamedRecords("TECHNICIAN", technicians, language),
     localizeNamedRecords("CENTER_CATEGORY", categories, language),
   ]);
-  return { users: user.role === "delegate" ? localizedUsers.map(({ id, name }) => ({ id, name })) : localizedUsers,
+  return { users: isDelegateRole(user.role) ? localizedUsers.map(({ id, name }) => ({ id, name })) : localizedUsers,
     sites: localizedSites, sections: localizedSections, technicians: localizedTechnicians, categories: localizedCategories };
 }
 

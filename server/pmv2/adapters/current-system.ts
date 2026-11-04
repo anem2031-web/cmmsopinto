@@ -662,8 +662,8 @@ export const currentInventoryIssueAdapter: InventoryIssueAdapter = {
 
 /** Existing recipient-to-warehouse Return workflow boundary. */
 export const currentRecipientReturnAdapter: RecipientReturnAdapter = {
-  async createReturn(input) {
-    const result = await createRecipientWarehouseReturn(input);
+  async createReturn(input, transaction) {
+    const result = await createRecipientWarehouseReturn(input, transaction);
     return {
       returnId: Number(result.returnId),
       returnNumber: String(result.returnNumber),

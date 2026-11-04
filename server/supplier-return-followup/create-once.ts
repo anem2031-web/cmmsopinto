@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
+import { isDelegateRole } from "../../shared/roles";
 import { z } from "zod";
 import type { FollowupPort, FollowupTx } from "./commands";
 import { ReturnFollowupError } from "./policy";
@@ -44,7 +45,7 @@ export async function createSupplierReturnOnce(
       return { caseId: Number(existing.id), returnId: Number(existing.returnId) };
     }
     const [delegate] = await read(tx, sql`SELECT id,role,isActive FROM users WHERE id=${input.delegateId}`);
-    if (!delegate || delegate.role !== "delegate" || Number(delegate.isActive) !== 1) throw new ReturnFollowupError("CONFLICT", "المندوب المحدد غير متاح");
+    if (!delegate || !isDelegateRole(delegate.role) || Number(delegate.isActive) !== 1) throw new ReturnFollowupError("CONFLICT", "المندوب المحدد غير متاح");
     const result = await writer(tx, input, metadata);
     // Enforce the adapter contract before committing the stock deduction.
     const [saved] = await read(tx, sql`SELECT id,returnId,creationRequestHash FROM supplier_return_cases WHERE createdById=${actor.id} AND creationKey=${input.operationKey} FOR UPDATE`);

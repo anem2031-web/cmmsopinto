@@ -1,3 +1,4 @@
+import { isDelegateRole } from "@shared/roles";
 import { isItTeamRole, MAINTENANCE_RESPONSIBLE_DEPARTMENT } from "@shared/roles";
 import { useState, useRef } from "react";
 import QRCode from "qrcode";
@@ -514,7 +515,7 @@ export default function PurchaseCycle() {
   const isRTL = language === "ar" || language === "ur";
   const role = user?.role || "";
   const isAdminOrOwner = role === "admin" || role === "owner";
-  const isDelegate = role === "delegate" || isAdminOrOwner;
+  const isDelegate = isDelegateRole(role) || isAdminOrOwner;
   const isWarehouse = role === "warehouse" || isAdminOrOwner;
 
   // Determine active tab based on role

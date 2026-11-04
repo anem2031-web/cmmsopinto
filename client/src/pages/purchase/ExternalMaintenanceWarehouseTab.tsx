@@ -1,3 +1,4 @@
+import { isDelegateRole } from "@shared/roles";
 import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -17,11 +18,13 @@ import { toast } from "sonner";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { localizeApiError } from "@/i18n/apiError";
 import { useBatchTranslation } from "@/hooks/useContentTranslation";
+import { canWarehouseReprepareExternalAsset } from "@shared/externalMaintenanceWorkflow";
 
 // ترتيب مراحل سجل الصيانة الخارجية كما هي مُعرَّفة في shared/externalMaintenanceWorkflow.ts،
 // كل مرحلة مرتبطة (عند توفره) بالحقل الذي يسجّل وقت اكتمالها فعليًا — يُستخدم لرسم الخط الزمني.
 const EXTERNAL_MAINTENANCE_STAGES: { key: string; labelKey: keyof any; tsField?: string }[] = [
   { key: "waiting_warehouse_preparation", labelKey: "stageWarehousePreparation", tsField: "warehousePreparedAt" },
+  { key: "waiting_delegate_receipt", labelKey: "stageDelegateReceipt", tsField: "delegateReceiptAt" },
   { key: "waiting_gate_exit", labelKey: "stageGateExit", tsField: "gateExitApprovedAt" },
   { key: "purchase_cycle", labelKey: "stageDelegateFinance", tsField: "delegateReadyForReturnAt" },
   { key: "waiting_gate_entry", labelKey: "stageGateEntry", tsField: "gateEntryApprovedAt" },
@@ -202,6 +205,7 @@ async function uploadFile(file: File, t: any): Promise<string> {
 
 function stageLabel(status: string, t: any) {
   const labels: Record<string, string> = {
+    waiting_delegate_receipt: t.workflow.purchase.statusWaitingDelegateReceipt,
     waiting_gate_exit: t.workflow.purchase.statusWaitingGateExit,
     purchase_cycle: t.workflow.purchase.statusPurchaseCycle,
     waiting_gate_entry: t.workflow.purchase.statusWaitingGateEntry,
@@ -213,6 +217,28 @@ function stageLabel(status: string, t: any) {
     closed: t.workflow.purchase.stageClosed,
   };
   return labels[status] || status;
+}
+
+export function externalPreparationRows(waiting: any[], jobs: any[]) {
+  const existing = jobs.filter(row => canWarehouseReprepareExternalAsset(row.job));
+  const result = new Map<string, any>();
+  for (const row of [...waiting, ...existing]) {
+    const ticket = { ...row, ticketId: row.ticketId ?? row.job?.ticketId, ticketItemId: row.ticketItemId ?? row.job?.ticketItemId ?? undefined };
+    result.set(ticket.ticketItemId != null ? `item:${ticket.ticketItemId}` : `ticket:${ticket.ticketId}`, ticket);
+  }
+  return Array.from(result.values());
+}
+
+export function externalPreparationDraft(ticket: any) {
+  const job = ticket.job;
+  return {
+    purchaseTitle: job?.purchaseTitle || "",
+    assetName: job?.assetName || ticket.assetName || ticket.assetRegisteredName || ticket.ticketTitle || "",
+    assetBeforePhotoUrl: job?.assetBeforePhotoUrl || ticket.assetPhotoUrl || "",
+    assetBeforeCondition: job?.assetBeforeCondition || "",
+    delegateId: job?.delegateId ? String(job.delegateId) : "",
+    warehouseNotes: job?.warehouseNotes || "",
+  };
 }
 
 export default function ExternalMaintenanceWarehouseTab() {
@@ -238,6 +264,7 @@ export default function ExternalMaintenanceWarehouseTab() {
   const [uploading, setUploading] = useState<string | null>(null);
 
   const [prepareForm, setPrepareForm] = useState({
+    purchaseTitle: "",
     assetName: "",
     assetBeforePhotoUrl: "",
     assetBeforeCondition: "",
@@ -257,7 +284,7 @@ export default function ExternalMaintenanceWarehouseTab() {
   const [pageHandover, setPageHandover] = useState(1);
   const [pageMonitoring, setPageMonitoring] = useState(1);
 
-  const delegates = useMemo(() => (users as any[]).filter(user => user.role === "delegate" && user.isActive !== 0), [users]);
+  const delegates = useMemo(() => (users as any[]).filter(user => isDelegateRole(user.role) && user.isActive !== 0), [users]);
   const recipients = useMemo(() => (users as any[]).filter(user =>
     RECIPIENT_ROLES.has(user.role) &&
     user.isActive !== 0
@@ -269,7 +296,7 @@ export default function ExternalMaintenanceWarehouseTab() {
     onSuccess: (result) => {
       toast.success(t.workflow.purchase.assetPreparedSuccess);
       const row = {
-        job: { ...prepareForm, exitDocumentNumber: result.exitDocumentNumber, warehousePreparedAt: new Date() },
+        job: { ...prepareForm, status: "waiting_delegate_receipt", delegateReceiptStatus: "pending", exitDocumentNumber: result.exitDocumentNumber, warehousePreparedAt: new Date() },
         ticketNumber: prepareTicket?.ticketNumber,
         assetRegisteredName: prepareTicket?.assetName,
         assignedTechnicianName: prepareTicket?.assignedTechnicianName,
@@ -328,8 +355,8 @@ export default function ExternalMaintenanceWarehouseTab() {
     }
   };
 
-  const waitingPreparation = data?.waitingPreparation || [];
   const jobs = (data?.jobs || []) as any[];
+  const waitingPreparation = externalPreparationRows(data?.waitingPreparation || [], jobs);
   const externalJobIds = useMemo(
     () => jobs.map(row => Number(row.job?.id)).filter((id: number) => Number.isFinite(id)),
     [jobs],
@@ -359,7 +386,8 @@ export default function ExternalMaintenanceWarehouseTab() {
   };
   const waitingReceipt = jobs.filter(row => row.job.status === "waiting_warehouse_receipt");
   const waitingHandover = jobs.filter(row => row.job.status === "waiting_technician_handover");
-  const monitoring = jobs.filter(row => !["waiting_warehouse_receipt", "waiting_technician_handover"].includes(row.job.status));
+  const preparationIds = new Set(waitingPreparation.map(row => row.job?.id).filter(Boolean));
+  const monitoring = jobs.filter(row => !preparationIds.has(row.job.id) && !["waiting_warehouse_receipt", "waiting_technician_handover"].includes(row.job.status));
 
   // عرض 15 عملية فقط بكل تبويب دفعة واحدة — يقلّل عدد العناصر المرسومة فعليًا
   // بالصفحة (خصوصًا تبويب "متابعة المسار C" اللي يرسم خطًا زمنيًا كاملًا لكل بلاغ).
@@ -417,6 +445,7 @@ export default function ExternalMaintenanceWarehouseTab() {
                     <div className="text-xs text-muted-foreground mt-0.5">{ticket.itemDescription}</div>
                   )}
                   <div className="text-xs text-muted-foreground mt-1">{t.workflow.purchase.asset}: {ticket.assetName || t.workflow.purchase.notRegistered} · {t.workflow.purchase.assignedTechnician}: {ticket.assignedTechnicianName || t.workflow.purchase.notAssigned}</div>
+                  {ticket.job?.delegateReceiptStatus === "rejected" && <p role="alert" className="mt-2 text-sm text-destructive">{t.workflow.purchase.delegateReceiptRejected}: {ticket.job.delegateReceiptReason}</p>}
                   {ticket.ticketBeforePhotoUrl && (
                     <div className="mt-3">
                       <div className="text-xs font-medium mb-1">{t.workflow.purchase.ticketInitialPhoto}</div>
@@ -430,17 +459,11 @@ export default function ExternalMaintenanceWarehouseTab() {
                 </div>
                 <Button onClick={() => {
                   setPrepareTicket(ticket);
-                  setPrepareForm({
-                    assetName: ticket.assetName || ticket.ticketTitle || "",
-                    assetBeforePhotoUrl: ticket.assetPhotoUrl || "",
-                    assetBeforeCondition: "",
-                    delegateId: "",
-                    warehouseNotes: "",
-                  });
+                  setPrepareForm(externalPreparationDraft(ticket));
                 }} className="gap-2"><Truck className="w-4 h-4"/> {t.workflow.purchase.prepareAsset}</Button>
-                <Button variant="outline" onClick={() => { setReturnTicket(ticket); setReturnReason(""); returnRoute.reset(); }}>
+                {!ticket.job && <Button variant="outline" onClick={() => { setReturnTicket(ticket); setReturnReason(""); returnRoute.reset(); }}>
                   {routeText("إعادة للمسؤول لمراجعة المسار", "Return for route review", "راستے کے جائزے کیلئے واپس")}
-                </Button>
+                </Button>}
               </CardContent>
             </Card>
           ))}
@@ -537,13 +560,14 @@ export default function ExternalMaintenanceWarehouseTab() {
                 <div className="mt-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground">{t.workflow.purchase.noInitialPhoto}</div>
               )}
             </div>
+            <div><Label htmlFor="external-purchase-title">{t.workflow.purchase.externalPurchaseTitle} *</Label><Input id="external-purchase-title" required maxLength={300} placeholder={t.workflow.purchase.externalPurchaseTitlePlaceholder} value={prepareForm.purchaseTitle} onChange={e => setPrepareForm(f => ({ ...f, purchaseTitle: e.target.value }))}/></div>
             <div><Label>{t.workflow.purchase.assetNameRequired}</Label><Input value={prepareForm.assetName} onChange={e => setPrepareForm(f => ({ ...f, assetName: e.target.value }))}/></div>
             <div><Label>{t.workflow.purchase.assetBeforeConditionRequired}</Label><Textarea value={prepareForm.assetBeforeCondition} onChange={e => setPrepareForm(f => ({ ...f, assetBeforeCondition: e.target.value }))}/></div>
             <div><Label>{t.workflow.purchase.responsibleDelegateRequired}</Label><select className="w-full border rounded-md h-10 px-3 bg-background" value={prepareForm.delegateId} onChange={e => setPrepareForm(f => ({ ...f, delegateId: e.target.value }))}><option value="">{t.workflow.purchase.chooseDelegate}</option>{delegates.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
             <div><Label>{t.workflow.purchase.assetBeforePhotoRequired}</Label>{prepareForm.assetBeforePhotoUrl ? <img src={mediaUrl(prepareForm.assetBeforePhotoUrl)} className="max-h-44 rounded border mt-2"/> : null}<Input type="file" accept="image/*" disabled={uploading === "before"} onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; if (file) handleUpload(file, "before"); }}/></div>
             <div><Label>{t.workflow.purchase.warehouseNotes}</Label><Textarea value={prepareForm.warehouseNotes} onChange={e => setPrepareForm(f => ({ ...f, warehouseNotes: e.target.value }))}/></div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setPrepareTicket(null)}>{t.workflow.purchase.cancel}</Button><Button disabled={prepareMut.isPending || !prepareForm.assetName.trim() || !prepareForm.assetBeforeCondition.trim() || !prepareForm.assetBeforePhotoUrl || !prepareForm.delegateId} onClick={() => prepareMut.mutate({ ticketId: prepareTicket.ticketId, ticketItemId: prepareTicket.ticketItemId, assetName: prepareForm.assetName.trim(), assetBeforePhotoUrl: prepareForm.assetBeforePhotoUrl, assetBeforeCondition: prepareForm.assetBeforeCondition.trim(), delegateId: Number(prepareForm.delegateId), warehouseNotes: prepareForm.warehouseNotes.trim() || undefined })}>{prepareMut.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> : <CheckCircle2 className="w-4 h-4 me-1"/>} {t.workflow.purchase.saveIssueDocument}</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setPrepareTicket(null)}>{t.workflow.purchase.cancel}</Button><Button disabled={prepareMut.isPending || !prepareForm.purchaseTitle.trim() || prepareForm.purchaseTitle.trim().length > 300 || !prepareForm.assetName.trim() || !prepareForm.assetBeforeCondition.trim() || !prepareForm.assetBeforePhotoUrl || !prepareForm.delegateId} onClick={() => prepareMut.mutate({ ticketId: prepareTicket.ticketId, ticketItemId: prepareTicket.ticketItemId, ...(prepareTicket.job ? { jobId: prepareTicket.job.id, expectedRevision: prepareTicket.job.preparationRevision } : {}), purchaseTitle: prepareForm.purchaseTitle.trim(), assetName: prepareForm.assetName.trim(), assetBeforePhotoUrl: prepareForm.assetBeforePhotoUrl, assetBeforeCondition: prepareForm.assetBeforeCondition.trim(), delegateId: Number(prepareForm.delegateId), warehouseNotes: prepareForm.warehouseNotes.trim() || undefined })}>{prepareMut.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> : <CheckCircle2 className="w-4 h-4 me-1"/>} {t.workflow.purchase.saveIssueDocument}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

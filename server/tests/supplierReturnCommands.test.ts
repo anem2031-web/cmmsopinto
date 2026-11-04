@@ -3,7 +3,7 @@ import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { executeFollowupCommand, type FollowupPort, type FollowupCommand } from "../supplier-return-followup/commands";
 
 function fixture() {
-  let state: any = { active: true, source: true, catalog: true, plans: [], credits: [], record: { id: 1, returnId: 2, inventoryId: 3, delegateId: 10, creatorId: 12, returnedQuantity: "2.000", returnedUnit: "قطعة", revision: 0, handoverStatus: "awaiting_delegate", resolution: null, rejectionReason: null, creatorDecision: null }, events: [] };
+  let state: any = { active: true, source: true, catalog: true, plans: [], credits: [], record: { id: 1, returnId: 2, inventoryId: 3, purchaseOrderId: 4, purchaseOrderItemId: 5, delegateId: 10, creatorId: 12, returnedQuantity: "2.000", returnedUnit: "قطعة", revision: 0, handoverStatus: "awaiting_delegate", resolution: null, rejectionReason: null, creatorDecision: null }, events: [] };
   let serial: Promise<any> = Promise.resolve();
   const queries: string[] = [];
   let failEvent = false;
@@ -15,7 +15,8 @@ function fixture() {
         queries.push(text);
         if (text.startsWith("SELECT id,role,isActive")) return [[{ id: p[0], role: p[0] === 20 ? "warehouse" : "delegate", isActive: next.active ? 1 : 0 }]];
         if (text.startsWith("SELECT * FROM supplier_return_cases")) return [p[0] === 1 ? [next.record] : []];
-        if (text.startsWith("SELECT id,inventoryId")) return [next.source ? [{ id: 2, inventoryId: 3 }] : []];
+        if (text.startsWith("SELECT id,inventoryId")) return [next.source ? [{ id: 2, inventoryId: 3, purchaseOrderId: 4, purchaseOrderItemId: 5 }] : []];
+        if (text.startsWith("SELECT p.id FROM purchase_orders")) return [[{ id: 4 }]];
         if (text.startsWith("SELECT actorId,requestHash")) return [next.events.filter((e: any) => e.caseId === p[0] && e.operationKey === p[1])];
         if (text.startsWith("SELECT COALESCE(i.itemName,v.itemName)")) return [[{ itemName: "مصباح", activeCatalogId: next.catalog ? 44 : null }]];
         if (text.startsWith("SELECT id FROM supplier_return_replacement_plans")) return [next.plans.length ? [{ id: 1 }] : []];

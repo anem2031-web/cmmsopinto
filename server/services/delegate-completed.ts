@@ -1,5 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import { isDelegateRole } from "../../shared/roles";
 import { assertPOVisible, assertItemAssignedToDelegate } from "../_core/authz/engine";
 import { delegateCompletedInput, type DelegateCompletedInput, type DelegateCompletedItem } from "../../shared/delegate-completed";
 import { documentSearchPattern } from "../../shared/document-list";
@@ -11,12 +12,12 @@ async function read(db: ReadDatabase, query: SQL): Promise<any[]> {
   return result[0];
 }
 export async function listDelegateCompleted(actor: { id: number; role: string }, raw: DelegateCompletedInput, database?: ReadDatabase) {
-  if (actor.role !== "delegate") throw new TRPCError({ code: "FORBIDDEN" });
+  if (!isDelegateRole(actor.role)) throw new TRPCError({ code: "FORBIDDEN" });
   const input = delegateCompletedInput.parse(raw);
   const db = database ?? await (await import("../_core/db/client")).getDb();
   if (!db) throw new Error("Database unavailable");
   const [identity] = await read(db, sql`SELECT id,role,isActive FROM users WHERE id=${actor.id}`);
-  if (!identity || identity.role !== "delegate" || Number(identity.isActive) !== 1) throw new TRPCError({ code: "FORBIDDEN" });
+  if (!identity || identity.role !== actor.role || !isDelegateRole(identity.role) || Number(identity.isActive) !== 1) throw new TRPCError({ code: "FORBIDDEN" });
   const pattern = documentSearchPattern(input.search);
   // No item fan-out: EXISTS/subquery handle external jobs without duplicating rows.
   const completed = sql`(i.status IN ('delivered_to_warehouse','delivered_to_requester') OR

@@ -1,6 +1,7 @@
 import type { PurchaseDocumentActor, PurchaseDocumentPort } from "./purchase-document";
 import { isPurchasePdfApprover, purchaseAttachmentPermission } from "./purchase-document";
 import { mediaKeyFromValue } from "./media-access";
+import { isDelegateRole } from "../../../shared/delegate-role";
 
 /** Reuse the exact download guard; no approval decision is cached across requests. */
 export async function decorateDocumentRows(user: PurchaseDocumentActor, rows: any[], source: PurchaseDocumentPort) {
@@ -9,7 +10,7 @@ export async function decorateDocumentRows(user: PurchaseDocumentActor, rows: an
     const key = `${row.entityType}:${row.entityId}`;
     if (!cache.has(key)) cache.set(key, (async () => {
       // Retains the delegate's existing own archived-document list behavior.
-      const access = user.role === "delegate" && Number(row.delegateId) === user.id
+      const access = isDelegateRole(user.role) && Number(row.delegateId) === user.id
         ? { pdfAllowed: true, pdfBlockedReason: null }
         : await purchaseAttachmentPermission(user, row.entityType, Number(row.entityId), source);
       const isBatch = ["po_financial_batch", "delegate_pricing_batch"].includes(row.entityType);

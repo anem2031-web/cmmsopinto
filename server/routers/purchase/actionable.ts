@@ -25,6 +25,7 @@ import { canPerformAction, canPerformItemAction, canResolvePOItemDelegateChange 
 import { PO_STATUS, ROUTED_REVIEW_BLOCKED_PO_STATUSES, type ActionName } from "../../_core/authz/policy";
 import { canReviewPurchaseItem, isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
 import { hasCommittedPurchaseItemReview } from "../../../shared/purchaseItemReviewWorkflow";
+import { isDelegateRole } from "../../../shared/roles";
 
 /** حالات الأصناف التي تتطلب قرارًا من منشئ الطلب */
 const ITEM_STATUSES_NEEDING_CREATOR = ["needs_item_revision", "purchase_cancelled"];
@@ -299,7 +300,7 @@ export function computeActionablePOs(
     // صنف آخر لنفس المندوب pending للتسعير. الاعتماد على po.status وحده كان
     // يعرض «إكمال الشراء» ثم يفتح صفحة بلا أصناف لأن الصنف الحقيقي pending.
     // كذلك كان الطلب يبقى ظاهرًا للمندوب حتى لو كان الصنف المتبقي لمندوب آخر.
-    if (ctx.role === "delegate") {
+    if (isDelegateRole(ctx.role)) {
       const delegateItems = poItems.filter((i) => i.delegateId === ctx.id);
       const pricingItems = delegateItems.filter((i) => getDelegateItemActionMode(po.status, i) === "estimate");
       const purchaseItems = delegateItems.filter((i) => getDelegateItemActionMode(po.status, i) === "purchase");

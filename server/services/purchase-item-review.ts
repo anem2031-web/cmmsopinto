@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { isDelegateRole } from "../../shared/roles";
 import { canReviewPurchaseItem, isRoutedPurchaseItem, type PurchaseReviewActor, type PurchaseReviewItem } from "../../shared/purchase-item-review";
 
 type Actor = PurchaseReviewActor & { name?: string | null; signatureUrl?: string | null };
@@ -49,7 +50,7 @@ export async function reviewRoutedPurchaseItems(
   for (const decision of decisions) {
     if (decision.action === "approve") {
       const delegate = users.find(user => user.id === decision.delegateId);
-      if (!delegate || delegate.role !== "delegate" || !(delegate.isActive === 1 || delegate.isActive === true)) {
+      if (!delegate || !isDelegateRole(delegate.role) || !(delegate.isActive === 1 || delegate.isActive === true)) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "يجب اختيار مندوب نشط لكل صنف موافق عليه" });
       }
     } else if (decision.action !== "reject" || !decision.rejectionReason) {

@@ -2,6 +2,7 @@
  * Persistence adapters must load the actor/source/links again under transaction
  * locks, enforce central capabilities, and persist the event + revision atomically.
  */
+import { isDelegateRole } from "../../shared/roles";
 export type Handover = "awaiting_delegate" | "rejected" | "accepted";
 export type Resolution = "same_item" | "change_item" | "refund";
 export interface Followup {
@@ -24,7 +25,7 @@ function check(actor: Actor, state: Followup, expectedRevision: number) {
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== state.revision) reject("CONFLICT", "تغير المرتجع؛ حدّث الصفحة");
 }
 function delegate(actor: Actor, state: Followup) {
-  if (actor.role !== "delegate" || actor.id !== state.delegateId) reject("FORBIDDEN", "الإجراء للمندوب المسند إليه المرتجع فقط");
+  if (!isDelegateRole(actor.role) || actor.id !== state.delegateId) reject("FORBIDDEN", "الإجراء للمندوب المسند إليه المرتجع فقط");
 }
 function reason(value: string) {
   const text = value.trim();

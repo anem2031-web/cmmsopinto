@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
+import { isDelegateRole } from "../../shared/roles";
 import { sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { decideHandover, resendHandover, chooseResolution, ReturnFollowupError, type Actor, type Followup } from "./policy";
 import { decimal4, format4 } from "./amounts";
+import { verifyStandaloneReturnSource } from "./standalone-source";
 
 /** This adapter deliberately has no stock writer and no default/live DB import.
  * The RPC must apply its central capability guard before supplying this port.
@@ -39,7 +41,7 @@ export async function executeFollowupCommand(port: FollowupPort, actor: Pick<Act
     if (!record) deny("المرتجع غير متاح");
     if (input.action === "resend") {
       if (!["warehouse", "owner", "admin"].includes(actor.role)) deny("إعادة التسليم للمستودع فقط");
-    } else if (actor.role !== "delegate" || Number(record.delegateId) !== actor.id) deny("المرتجع لمندوب آخر");
+    } else if (!isDelegateRole(actor.role) || Number(record.delegateId) !== actor.id) deny("المرتجع لمندوب آخر");
     const [source] = await rows(tx, sql`SELECT id,inventoryId,purchaseOrderId,purchaseOrderItemId,sourceDeliveryDocumentId FROM warehouse_returns WHERE id=${Number(record.returnId)} FOR UPDATE`);
     if (!source || source.sourceDeliveryDocumentId != null || Number(source.inventoryId) !== Number(record.inventoryId)
       || (source.purchaseOrderId ?? null) !== (record.purchaseOrderId ?? null)
@@ -50,6 +52,8 @@ export async function executeFollowupCommand(port: FollowupPort, actor: Pick<Act
           (SELECT 1 FROM purchase_order_items i WHERE i.id=${record.purchaseOrderItemId ?? null} AND i.purchaseOrderId=p.id))`);
       if (!parent) deny("طلب الشراء المرتبط غير متاح");
     }
+    const standaloneSource = record.purchaseOrderId == null && record.purchaseOrderItemId == null
+      ? await verifyStandaloneReturnSource(tx, record) : null;
     const [previous] = await rows(tx, sql`SELECT actorId,requestHash,result FROM supplier_return_events WHERE caseId=${input.caseId} AND operationKey=${input.operationKey}`);
     if (previous) {
       if (Number(previous.actorId) !== actor.id || previous.requestHash !== hash) conflict("مفتاح العملية مستخدم لطلب مختلف");
@@ -59,7 +63,7 @@ export async function executeFollowupCommand(port: FollowupPort, actor: Pick<Act
     }
     if (record.closedAt) conflict("متابعة المرتجع مغلقة");
     const before: Followup = {
-      delegateId: Number(record.delegateId), creatorId: record.creatorId == null ? null : Number(record.creatorId),
+      delegateId: Number(record.delegateId), creatorId: standaloneSource?.creatorId ?? (record.creatorId == null ? null : Number(record.creatorId)),
       returnedQuantity: Number(record.returnedQuantity), revision: Number(record.revision), handover: record.handoverStatus,
       resolution: record.resolution, rejectionReason: record.rejectionReason, creatorDecision: record.creatorDecision,
     };
@@ -105,7 +109,7 @@ export async function executeFollowupCommand(port: FollowupPort, actor: Pick<Act
       VALUES (${input.caseId},${actor.id},${input.action},${input.operationKey},${hash},${before.revision},${after.revision},${JSON.stringify(before)},${JSON.stringify(after)},${input.action === "reject" ? input.reason : null},${JSON.stringify(result)})`);
     const target = input.action === "reject" ? Number(record.createdById)
       : input.action === "resend" ? Number(record.delegateId)
-      : input.action === "resolve" && input.resolution !== "same_item" ? Number(record.creatorId) : 0;
+      : input.action === "resolve" && input.resolution !== "same_item" ? Number(before.creatorId) : 0;
     if (Number.isSafeInteger(target) && target > 0) {
       const message = input.action === "reject" ? `لم يستلم المندوب المرتجع: ${input.reason}`
         : input.action === "resend" ? "أعاد المستودع إرسال المرتجع لتأكيد استلامك"

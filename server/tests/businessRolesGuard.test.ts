@@ -11,7 +11,7 @@ import { BUSINESS_GUARDED_ROLES, businessHttpAllowed, canCreateUserRole, busines
 import { assertBusinessRpc } from "../_core/authz/business-guard";
 import { assertBusinessTranslationAccess } from "../_core/authz/business-resources";
 import { assertCanViewPurchaseOrder } from "../_core/authz/guard";
-import { canRoleAccessPath, APP_ROLE } from "../../shared/roles";
+import { canRoleAccessPath, APP_ROLE, isDelegateRole } from "../../shared/roles";
 import { observerHttpAllowed } from "../../shared/observer-policy";
 import { technicianHttpAllowed } from "../../shared/technician-policy";
 
@@ -33,7 +33,7 @@ function expression(file: string, property: string, variable?: string) {
   walk(source); if (!found) throw Error(`Missing actual handler ${file}:${property}`); return found;
 }
 const evaluate = (code: string, scope: object) => vm.runInNewContext(ts.transpileModule(`(${code})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, scope);
-const common = { z, TRPCError, protectedProcedure, inventoryReadProcedure, accountantProcedure, managementProcedure, warehouseProcedure };
+const common = { z, TRPCError, protectedProcedure, inventoryReadProcedure, accountantProcedure, managementProcedure, warehouseProcedure, isDelegateRole };
 const fixtureUser = { id: 1, name: "Fixture", role: "admin", passwordHash: "fixture-only-secret", signatureUrl: null };
 const api = router({
   audit: router({ list: evaluate(expression("server/routers/system/audit.router.ts", "list"), { ...common, db: { getAuditLogsEnhanced: spies.audit } }) }),

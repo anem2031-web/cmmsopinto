@@ -80,6 +80,7 @@ export function printExternalMaintenanceDocument(type: ExternalDocumentType, row
     const baseFields: [string, unknown][] = [
       [p("رقم البلاغ"), row.ticketNumber],
       [p("اسم الأصل"), assetName],
+      [p("عنوان طلب الشراء"), job.purchaseTitle],
       [p("المندوب المسؤول"), row.delegateName],
       [p("موظف المستودع"), row.warehousePreparedByName],
       [p("تاريخ التجهيز"), fmt(job.warehousePreparedAt, locale)],
@@ -92,7 +93,10 @@ export function printExternalMaintenanceDocument(type: ExternalDocumentType, row
     ] : [];
     mainTable = infoTable([...baseFields, ...gateFields]);
     if (!gateApproved) {
-      mainTable += `<div class="pending-note">⏳ ${p("بانتظار اعتماد الحراسة لخروج الأصل بالنظام — ستُستكمل بيانات الخروج تلقائيًا في الوثيقة بعد الاعتماد")}</div>`;
+      const waiting = job.delegateReceiptStatus === "accepted"
+        ? "بانتظار اعتماد الحراسة لخروج الأصل بالنظام — ستُستكمل بيانات الخروج تلقائيًا في الوثيقة بعد الاعتماد"
+        : "بانتظار تأكيد استلام المندوب للأصل قبل اعتماد الحراسة للخروج";
+      mainTable += `<div class="pending-note">⏳ ${p(waiting)}</div>`;
     }
     extraRows = fullRow(p("حالة الأصل قبل الخروج"), job.assetBeforeCondition) + fullRow(p("ملاحظات المستودع"), job.warehouseNotes);
     gateSection = `

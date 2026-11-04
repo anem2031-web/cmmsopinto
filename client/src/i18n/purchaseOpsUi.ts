@@ -4,6 +4,8 @@ type Vars = Record<string, string | number | null | undefined>;
 type Entry = { en: string; ur: string };
 
 const M: Record<string, Entry> = {
+  "عنوان طلب الشراء": { en: "Purchase request title", ur: "خریداری درخواست کا عنوان" },
+  "بانتظار تأكيد استلام المندوب للأصل قبل اعتماد الحراسة للخروج": { en: "Waiting for the delegate to confirm asset receipt before Gate Security exit approval", ur: "گیٹ خروج منظوری سے پہلے مندوب کی اثاثہ وصولی کی تصدیق کا انتظار" },
   // Gate security / Path C
   "بانتظار موافقة الخروج": { en: "Waiting for exit approval", ur: "خروج کی منظوری کا انتظار" },
   "خارج الشركة — دورة الصيانة والاعتمادات": { en: "Off-site — maintenance and approval cycle", ur: "ادارے سے باہر — مینٹیننس اور منظوری کا مرحلہ" },

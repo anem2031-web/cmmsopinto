@@ -44,7 +44,7 @@ it.each(["observer", "gate_security"])("does not grant %s return management", as
 it.each(["accountant", "senior_management", "maintenance_manager", "technician", "operator", "purchase_requester"])("limits %s return reads to the original creator", async role => {
   const f = fixture(role); f.data([{ id: 1, creatorId: 10 }]);
   await listSupplierReturns({ ...actor, role }, {}, f.tx);
-  expect(f.queries.some(q => q.sql.includes("c.creatorId=?"))).toBe(true);
+  expect(f.queries.some(q => q.sql.includes("COALESCE(c.creatorId,CASE") && q.sql.includes("THEN c.createdById ELSE NULL END)=?"))).toBe(true);
   f.data([{ id: 2, creatorId: 11 }]);
   await expect(listSupplierReturns({ ...actor, role }, {}, f.tx)).rejects.toMatchObject({ code: "FORBIDDEN" });
 });

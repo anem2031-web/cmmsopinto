@@ -1,7 +1,8 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/mysql-core";
 import {
   assets,
+  auditLogs,
   externalMaintenanceJobs,
   purchaseOrderItems,
   purchaseOrders,
@@ -12,9 +13,12 @@ import {
 } from "../../../drizzle/schema";
 import { getDb, withTransaction } from "./client";
 import { getNextPONumber } from "./purchase";
+import { APP_ROLE, isDelegateRole } from "../../../shared/roles";
+import { canWarehouseReprepareExternalAsset, hasCurrentExternalDelegateReceipt } from "../../../shared/externalMaintenanceWorkflow";
 
 export type ExternalMaintenanceJobStatus =
   | "waiting_warehouse_preparation"
+  | "waiting_delegate_receipt"
   | "waiting_gate_exit"
   | "purchase_cycle"
   | "waiting_gate_entry"
@@ -82,10 +86,7 @@ export async function updateExternalMaintenanceJobByTicketId(ticketId: number, d
     .where(eq(externalMaintenanceJobs.ticketId, ticketId));
 }
 
-export async function listExternalMaintenanceJobs(statuses?: ExternalMaintenanceJobStatus[]) {
-  const db = await getDb();
-  if (!db) return [];
-
+function externalMaintenanceJobRows(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, statuses?: ExternalMaintenanceJobStatus[], delegateId?: number) {
   const assigned = alias(users, "externalAssignedTechnician");
   const delegate = alias(users, "externalDelegate");
   const actualRecipient = alias(users, "externalActualRecipient");
@@ -95,14 +96,22 @@ export async function listExternalMaintenanceJobs(statuses?: ExternalMaintenance
   const warehouseReceivedBy = alias(users, "externalWarehouseReceivedBy");
   const handoverBy = alias(users, "externalHandoverBy");
 
-  const where = statuses?.length
-    ? inArray(externalMaintenanceJobs.status, statuses as any[])
-    : undefined;
+  const currentItem = alias(ticketItems, "externalCurrentItem");
+  const where = and(
+    statuses?.length ? inArray(externalMaintenanceJobs.status, statuses as any[]) : undefined,
+    delegateId == null ? undefined : and(
+      eq(externalMaintenanceJobs.delegateId, delegateId), eq(delegate.id, delegateId), inArray(delegate.role,[APP_ROLE.DELEGATE,APP_ROLE.DELEGATE_MANAGER]), eq(delegate.isActive, 1),
+      isNull(externalMaintenanceJobs.purchaseOrderId), isNull(externalMaintenanceJobs.gateExitApprovedAt),
+      or(and(isNull(externalMaintenanceJobs.ticketItemId), eq(tickets.maintenancePath, "C"), eq(tickets.status, "work_approved")),
+        and(eq(currentItem.id, externalMaintenanceJobs.ticketItemId), eq(currentItem.ticketId, tickets.id), eq(currentItem.maintenancePath, "C"), eq(currentItem.status, "work_approved"))),
+    ),
+  );
 
   return db.select({
     job: externalMaintenanceJobs,
     ticketNumber: tickets.ticketNumber,
     ticketTitle: tickets.title,
+    ticketDescription: sql<string | null>`CASE WHEN TRIM(COALESCE(${currentItem.description},''))<>'' THEN ${currentItem.description} ELSE ${tickets.description} END`,
     ticketStatus: tickets.status,
     ticketAssignedToId: tickets.assignedToId,
     ticketAssetId: tickets.assetId,
@@ -120,6 +129,7 @@ export async function listExternalMaintenanceJobs(statuses?: ExternalMaintenance
   })
     .from(externalMaintenanceJobs)
     .innerJoin(tickets, eq(externalMaintenanceJobs.ticketId, tickets.id))
+    .leftJoin(currentItem, and(eq(externalMaintenanceJobs.ticketItemId, currentItem.id), eq(currentItem.ticketId, tickets.id)))
     .leftJoin(assets, eq(tickets.assetId, assets.id))
     .leftJoin(assigned, eq(tickets.assignedToId, assigned.id))
     .leftJoin(delegate, eq(externalMaintenanceJobs.delegateId, delegate.id))
@@ -132,6 +142,20 @@ export async function listExternalMaintenanceJobs(statuses?: ExternalMaintenance
     .leftJoin(purchaseOrders, eq(externalMaintenanceJobs.purchaseOrderId, purchaseOrders.id))
     .where(where)
     .orderBy(desc(externalMaintenanceJobs.updatedAt));
+}
+
+export async function listExternalMaintenanceJobs(statuses?: ExternalMaintenanceJobStatus[]) {
+  const db = await getDb();
+  if (!db) return [];
+  return externalMaintenanceJobRows(db, statuses);
+}
+
+/** One scoped join: no per-record ticket reader or cached assignment. */
+export async function listExternalMaintenanceJobsForDelegate(delegateId: number) {
+  if (!Number.isSafeInteger(delegateId) || delegateId <= 0) throw new Error("EXTERNAL_DELEGATE_INVALID");
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  return externalMaintenanceJobRows(db, ["waiting_delegate_receipt", "waiting_gate_exit", "waiting_warehouse_preparation"], delegateId);
 }
 
 /**
@@ -167,7 +191,8 @@ export async function listPathCTicketsWaitingWarehousePreparation() {
     .innerJoin(tickets, eq(ticketItems.ticketId, tickets.id))
     .leftJoin(assets, eq(tickets.assetId, assets.id))
     .leftJoin(assigned, eq(ticketItems.assignedToId, assigned.id))
-    .leftJoin(externalMaintenanceJobs, eq(externalMaintenanceJobs.ticketItemId, ticketItems.id))
+    .leftJoin(externalMaintenanceJobs, or(eq(externalMaintenanceJobs.ticketItemId, ticketItems.id),
+      and(isNull(externalMaintenanceJobs.ticketItemId), eq(externalMaintenanceJobs.ticketId, tickets.id), eq(ticketItems.itemNumber, 1))))
     .where(and(
       eq(ticketItems.maintenancePath, "C"),
       eq(ticketItems.status, "work_approved"),
@@ -176,45 +201,100 @@ export async function listPathCTicketsWaitingWarehousePreparation() {
     .orderBy(desc(tickets.updatedAt));
 }
 
+async function assertExternalActor(tx: any, id: number, roles: string[]) {
+  const [actor] = await tx.select().from(users).where(eq(users.id, id)).for("update");
+  if (!actor || Number(actor.isActive) !== 1 || (!roles.includes(actor.role)&&!(roles.includes(APP_ROLE.DELEGATE)&&isDelegateRole(actor.role)))) throw new Error("EXTERNAL_ACTOR_FORBIDDEN");
+  return actor;
+}
+
+/** Parent locks serialize route changes, preparation and gate approval. */
+async function lockExternalSource(tx: any, ticketId: number, ticketItemId?: number | null) {
+  const [ticket] = await tx.select().from(tickets).where(eq(tickets.id, ticketId)).for("update");
+  const [item] = ticketItemId == null ? [] : await tx.select().from(ticketItems)
+    .where(and(eq(ticketItems.id, ticketItemId), eq(ticketItems.ticketId, ticketId))).for("update");
+  if (!ticket || (ticketItemId != null && !item) || (item?.maintenancePath ?? ticket.maintenancePath) !== "C"
+    || (item?.status ?? ticket.status) !== "work_approved") throw new Error("EXTERNAL_TICKET_INVALID_EXIT_STAGE");
+  return { ticket, item };
+}
+
+async function auditExternalPreparation(tx: any, actorId: number, jobId: number, action: string, before: unknown, after: unknown) {
+  await tx.execute(sql`INSERT INTO audit_logs (userId,action,entityType,entityId,oldValues,newValues)
+    VALUES (${actorId},${action},'external_maintenance_job',${jobId},${before == null ? null : JSON.stringify(before)},${JSON.stringify(after)})`);
+}
+
 export async function prepareExternalMaintenanceJob(input: {
   ticketId: number;
   ticketItemId: number;
   assetName: string;
+  purchaseTitle: string;
   assetBeforePhotoUrl: string;
   assetBeforeCondition: string;
   delegateId: number;
   warehousePreparedById: number;
   warehouseNotes?: string;
+  jobId?: number;
+  expectedRevision?: number;
 }) {
+  const purchaseTitle = input.purchaseTitle?.trim(), assetName = input.assetName?.trim();
+  if (!purchaseTitle || purchaseTitle.length > 300) throw new Error("EXTERNAL_PURCHASE_TITLE_REQUIRED");
+  if (!assetName || assetName.length > 300 || !input.assetBeforePhotoUrl?.trim() || !input.assetBeforeCondition?.trim()) throw new Error("EXTERNAL_PREPARATION_INVALID");
   return withTransaction(async (tx) => {
     // Serialize with a warehouse return / manager route decision. The router's
     // earlier read is not authorization for a later write after the path changed.
-    const [freshTicket] = await tx.select({ id: tickets.id }).from(tickets).where(eq(tickets.id, input.ticketId)).for("update");
-    const [freshItem] = await tx.select().from(ticketItems).where(and(eq(ticketItems.id, input.ticketItemId), eq(ticketItems.ticketId, input.ticketId))).for("update");
-    if (!freshTicket || !freshItem || freshItem.maintenancePath !== "C" || freshItem.status !== "work_approved") throw new Error("EXTERNAL_TICKET_INVALID_EXIT_STAGE");
-    const existing = await tx.select({ id: externalMaintenanceJobs.id })
+    await assertExternalActor(tx, input.warehousePreparedById, ["warehouse", "admin", "owner"]);
+    await assertExternalActor(tx, input.delegateId, ["delegate"]);
+    const { ticket: freshTicket, item: freshItem } = await lockExternalSource(tx, input.ticketId, input.ticketItemId);
+    const existingRows = await tx.select()
       .from(externalMaintenanceJobs)
-      .where(eq(externalMaintenanceJobs.ticketItemId, input.ticketItemId))
-      .limit(1);
-    if (existing.length) throw new Error("EXTERNAL_JOB_EXISTS");
-
-    const result = await tx.insert(externalMaintenanceJobs).values({
-      ticketId: input.ticketId,
-      ticketItemId: input.ticketItemId,
-      status: "waiting_gate_exit",
-      assetName: input.assetName,
-      assetBeforePhotoUrl: input.assetBeforePhotoUrl,
-      assetBeforeCondition: input.assetBeforeCondition,
+      .where(input.jobId != null ? eq(externalMaintenanceJobs.id, input.jobId) : or(eq(externalMaintenanceJobs.ticketItemId, input.ticketItemId),
+        Number(freshItem?.itemNumber) === 1 ? and(isNull(externalMaintenanceJobs.ticketItemId), eq(externalMaintenanceJobs.ticketId, input.ticketId)) : undefined))
+      .limit(2).for("update");
+    if (existingRows.length > 1) throw new Error("EXTERNAL_PREPARATION_CONFLICT");
+    const existing = existingRows[0];
+    if (input.jobId != null && !existing) throw new Error("EXTERNAL_JOB_NOT_FOUND");
+    if (existing && input.jobId == null) throw new Error("EXTERNAL_JOB_EXISTS");
+    if (existing && (Number(existing.ticketId) !== input.ticketId || (existing.ticketItemId != null && Number(existing.ticketItemId) !== input.ticketItemId)
+      || (existing.ticketItemId == null && (freshItem?.itemNumber !== 1 || freshTicket.maintenancePath !== "C" || freshTicket.status !== "work_approved")))) throw new Error("EXTERNAL_TICKET_INVALID_EXIT_STAGE");
+    if (existing && (!canWarehouseReprepareExternalAsset(existing) || !Number.isSafeInteger(input.expectedRevision)
+      || Number(existing.preparationRevision) !== input.expectedRevision)) throw new Error("EXTERNAL_PREPARATION_CONFLICT");
+    if (!existing && input.expectedRevision != null && input.expectedRevision !== 0) throw new Error("EXTERNAL_PREPARATION_CONFLICT");
+    const preparationRevision = existing ? Number(existing.preparationRevision) + 1 : 1;
+    if (!Number.isSafeInteger(preparationRevision) || preparationRevision <= 0) throw new Error("EXTERNAL_PREPARATION_CONFLICT");
+    const prepared = {
+      status: "waiting_delegate_receipt",
+      purchaseTitle,
+      assetName,
+      assetBeforePhotoUrl: input.assetBeforePhotoUrl.trim(),
+      assetBeforeCondition: input.assetBeforeCondition.trim(),
       delegateId: input.delegateId,
-      warehousePreparedById: input.warehousePreparedById,
-      warehousePreparedAt: new Date(),
-      warehouseNotes: input.warehouseNotes,
-    } as any);
-    const jobId = Number(result[0].insertId);
-    const exitDocumentNumber = documentNumber("OUT", jobId);
-    await tx.update(externalMaintenanceJobs)
-      .set({ exitDocumentNumber } as any)
-      .where(eq(externalMaintenanceJobs.id, jobId));
+      delegateReceiptStatus: "pending", delegateReceiptById: null, delegateReceiptAt: null, delegateReceiptReason: null,
+      preparationRevision,
+      warehousePreparedById: input.warehousePreparedById, warehousePreparedAt: new Date(), warehouseNotes: input.warehouseNotes?.trim() ?? null,
+    };
+    let jobId: number, exitDocumentNumber: string;
+    if (existing) {
+      jobId = Number(existing.id);
+      exitDocumentNumber = existing.exitDocumentNumber || documentNumber("OUT", jobId);
+      const [written] = await tx.update(externalMaintenanceJobs).set({ ...prepared, exitDocumentNumber } as any)
+        .where(and(eq(externalMaintenanceJobs.id, jobId), eq(externalMaintenanceJobs.preparationRevision, Number(input.expectedRevision)),
+          eq(externalMaintenanceJobs.status, existing.status), isNull(externalMaintenanceJobs.purchaseOrderId), isNull(externalMaintenanceJobs.gateExitApprovedAt)));
+      if (Number(written?.affectedRows) !== 1) throw new Error("EXTERNAL_PREPARATION_CONFLICT");
+    } else {
+      const result = await tx.insert(externalMaintenanceJobs).values({
+        ticketId: input.ticketId,
+        ticketItemId: input.ticketItemId,
+        ...prepared,
+      } as any);
+      jobId = Number(result[0].insertId);
+      if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error("EXTERNAL_PREPARATION_CONFLICT");
+      exitDocumentNumber = documentNumber("OUT", jobId);
+      await tx.update(externalMaintenanceJobs)
+        .set({ exitDocumentNumber } as any)
+        .where(eq(externalMaintenanceJobs.id, jobId));
+    }
+    // Preserve the previous rejected decision and revision before resetting it.
+    await auditExternalPreparation(tx, input.warehousePreparedById, jobId, existing ? "external_preparation_revised" : "external_preparation_created", existing ?? null,
+      { ...prepared, exitDocumentNumber });
     await tx.insert(ticketStatusHistory).values({
       ticketId: input.ticketId,
       fromStatus: "work_approved",
@@ -222,7 +302,39 @@ export async function prepareExternalMaintenanceJob(input: {
       changedById: input.warehousePreparedById,
       notes: `جهز المستودع الأصل للصيانة الخارجية وأصدر وثيقة الخروج ${exitDocumentNumber}`,
     } as any);
-    return { jobId, exitDocumentNumber };
+    return { jobId, exitDocumentNumber, preparationRevision, delegateId: input.delegateId, ticketId: input.ticketId,
+      ticketItemId: existing ? existing.ticketItemId == null ? null : Number(existing.ticketItemId) : input.ticketItemId };
+  });
+}
+
+export async function decideExternalMaintenanceDelegateReceipt(input: {
+  jobId: number; delegateId: number; expectedRevision: number; decision: "accept" | "reject"; reason?: string;
+}) {
+  if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1 || !["accept", "reject"].includes(input.decision)) throw new Error("EXTERNAL_DELEGATE_RECEIPT_CONFLICT");
+  const reason = input.reason?.trim() || null;
+  if (input.decision === "reject" && (!reason || reason.length > 4000)) throw new Error("EXTERNAL_DELEGATE_REJECTION_REASON_REQUIRED");
+  return withTransaction(async tx => {
+    await assertExternalActor(tx, input.delegateId, ["delegate"]);
+    const [observed] = await tx.select().from(externalMaintenanceJobs).where(eq(externalMaintenanceJobs.id, input.jobId)).limit(1);
+    if (!observed || Number(observed.delegateId) !== input.delegateId) throw new Error("EXTERNAL_DELEGATE_RECEIPT_FORBIDDEN");
+    await lockExternalSource(tx, Number(observed.ticketId), observed.ticketItemId == null ? null : Number(observed.ticketItemId));
+    const [job] = await tx.select().from(externalMaintenanceJobs).where(eq(externalMaintenanceJobs.id, input.jobId)).limit(1).for("update");
+    if (!job || Number(job.delegateId) !== input.delegateId || job.ticketId !== observed.ticketId || job.ticketItemId !== observed.ticketItemId) throw new Error("EXTERNAL_DELEGATE_RECEIPT_FORBIDDEN");
+    if (job.status !== "waiting_delegate_receipt" || job.delegateReceiptStatus !== "pending" || !String(job.purchaseTitle ?? "").trim()
+      || Number(job.preparationRevision) !== input.expectedRevision || job.purchaseOrderId != null || job.gateExitApprovedAt) throw new Error("EXTERNAL_DELEGATE_RECEIPT_CONFLICT");
+    const status = input.decision === "accept" ? "waiting_gate_exit" : "waiting_warehouse_preparation";
+    const data = { status, delegateReceiptStatus: input.decision === "accept" ? "accepted" : "rejected", delegateReceiptById: input.delegateId,
+      delegateReceiptAt: new Date(), delegateReceiptReason: input.decision === "reject" ? reason : null };
+    const [written] = await tx.update(externalMaintenanceJobs).set(data as any).where(and(eq(externalMaintenanceJobs.id, input.jobId),
+      eq(externalMaintenanceJobs.delegateId, input.delegateId), eq(externalMaintenanceJobs.preparationRevision, input.expectedRevision),
+      eq(externalMaintenanceJobs.status, "waiting_delegate_receipt"), eq(externalMaintenanceJobs.delegateReceiptStatus, "pending"),
+      isNull(externalMaintenanceJobs.purchaseOrderId), isNull(externalMaintenanceJobs.gateExitApprovedAt)));
+    if (Number(written?.affectedRows) !== 1) throw new Error("EXTERNAL_DELEGATE_RECEIPT_CONFLICT");
+    await auditExternalPreparation(tx, input.delegateId, input.jobId, `external_delegate_receipt_${input.decision}`, job, { ...data, preparationRevision: input.expectedRevision });
+    await tx.insert(ticketStatusHistory).values({ ticketId: job.ticketId, fromStatus: "work_approved", toStatus: "work_approved", changedById: input.delegateId,
+      notes: input.decision === "accept" ? `أكد المندوب استلام الأصل بوثيقة ${job.exitDocumentNumber}` : `رفض المندوب استلام الأصل بوثيقة ${job.exitDocumentNumber}: ${reason}` } as any);
+    return { jobId: Number(job.id), ticketId: Number(job.ticketId), ticketItemId: job.ticketItemId == null ? null : Number(job.ticketItemId),
+      delegateId: input.delegateId, status, preparationRevision: input.expectedRevision, exitDocumentNumber: job.exitDocumentNumber, warehousePreparedById: job.warehousePreparedById };
   });
 }
 
@@ -249,33 +361,34 @@ export async function approveExternalMaintenanceGateExit(input: {
   carrierName: string;
   notes?: string;
 }) {
-  const poNumber = await getNextPONumber();
   return withTransaction(async (tx) => {
-    const rows = await tx.select().from(externalMaintenanceJobs)
+    await assertExternalActor(tx, input.gateUserId, ["gate_security", "admin", "owner"]);
+    const [observed] = await tx.select().from(externalMaintenanceJobs)
       .where(eq(externalMaintenanceJobs.id, input.jobId)).limit(1);
-    const job = rows[0];
+    if (!observed) throw new Error("EXTERNAL_JOB_NOT_FOUND");
+    if (!observed.delegateId) throw new Error("EXTERNAL_JOB_DELEGATE_REQUIRED");
+    await assertExternalActor(tx, Number(observed.delegateId), ["delegate"]);
+    const { ticket, item } = await lockExternalSource(tx, Number(observed.ticketId), observed.ticketItemId == null ? null : Number(observed.ticketItemId));
+    const [job] = await tx.select().from(externalMaintenanceJobs)
+      .where(eq(externalMaintenanceJobs.id, input.jobId)).limit(1).for("update");
     if (!job) throw new Error("EXTERNAL_JOB_NOT_FOUND");
-    if (job.status !== "waiting_gate_exit") throw new Error("EXTERNAL_JOB_INVALID_EXIT_STAGE");
-    if (!job.delegateId) throw new Error("EXTERNAL_JOB_DELEGATE_REQUIRED");
-
-    const ticketRows = await tx.select().from(tickets)
-      .where(eq(tickets.id, job.ticketId)).limit(1);
-    const ticket = ticketRows[0];
-    if (!ticket) throw new Error("EXTERNAL_TICKET_INVALID_EXIT_STAGE");
+    if (job.ticketId !== observed.ticketId || job.ticketItemId !== observed.ticketItemId || job.delegateId !== observed.delegateId
+      || job.status !== "waiting_gate_exit" || job.purchaseOrderId != null || job.gateExitApprovedAt) throw new Error("EXTERNAL_JOB_INVALID_EXIT_STAGE");
+    if (!hasCurrentExternalDelegateReceipt(job)) throw new Error("EXTERNAL_DELEGATE_RECEIPT_REQUIRED");
 
     // ⚠️ المرحلة 6 التكميلية (2026-08-10): يفحص حالة *البند* لا البلاغ عند
     // توفر ticketItemId — يسمح بتعدد سجلات صيانة خارجية نشطة معًا بنفس البلاغ
     // (بند لكل سجل) دون أن يتعارض فحص المسار/الحالة بينها. راجع القاعدة
     // الحرجة #12 بـCLAUDE.md.
-    const itemRows = job.ticketItemId
-      ? await tx.select().from(ticketItems).where(eq(ticketItems.id, job.ticketItemId)).limit(1)
-      : [];
-    const item = itemRows[0];
     const relevantPath = item ? item.maintenancePath : ticket.maintenancePath;
     const relevantStatus = item ? item.status : ticket.status;
     if (relevantPath !== "C" || relevantStatus !== "work_approved") {
       throw new Error("EXTERNAL_TICKET_INVALID_EXIT_STAGE");
     }
+
+    // Do not reserve a PR number for an unaccepted/stale preparation. The job
+    // and parent locks make a concurrent/repeated gate approval a single PO.
+    const poNumber = await getNextPONumber();
 
     const poResult = await tx.insert(purchaseOrders).values({
       poNumber,
@@ -290,7 +403,7 @@ export async function approveExternalMaintenanceGateExit(input: {
 
     await tx.insert(purchaseOrderItems).values({
       purchaseOrderId,
-      itemName: `صيانة خارجية: ${job.assetName || ticket.title}`,
+      itemName: job.purchaseTitle,
       description: job.assetBeforeCondition || ticket.description || undefined,
       quantity: 1,
       unit: "خدمة",
@@ -301,14 +414,17 @@ export async function approveExternalMaintenanceGateExit(input: {
     } as any);
 
     const now = new Date();
-    await tx.update(externalMaintenanceJobs).set({
+    const [written] = await tx.update(externalMaintenanceJobs).set({
       status: "purchase_cycle",
       gateExitApprovedById: input.gateUserId,
       gateExitApprovedAt: now,
       gateExitCarrierName: input.carrierName,
       gateExitNotes: input.notes,
       purchaseOrderId,
-    } as any).where(eq(externalMaintenanceJobs.id, job.id));
+    } as any).where(and(eq(externalMaintenanceJobs.id, job.id), eq(externalMaintenanceJobs.status, "waiting_gate_exit"),
+      eq(externalMaintenanceJobs.delegateId, Number(job.delegateId)), eq(externalMaintenanceJobs.preparationRevision, Number(job.preparationRevision)),
+      eq(externalMaintenanceJobs.delegateReceiptStatus, "accepted"), isNull(externalMaintenanceJobs.purchaseOrderId), isNull(externalMaintenanceJobs.gateExitApprovedAt)));
+    if (Number(written?.affectedRows) !== 1) throw new Error("EXTERNAL_JOB_INVALID_EXIT_STAGE");
 
     // ⚠️ المرحلة 6 التكميلية: تحديث حالة البند تحديدًا. توافق رجعي — البند
     // الأول (أو غياب item، أي بلاغ قديم بلا بنود) يعكس التحديث على tickets

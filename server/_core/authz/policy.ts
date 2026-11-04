@@ -70,6 +70,7 @@ export const ROLE = {
   CONSTRUCTION_PROCUREMENT_MANAGER: "construction_procurement_manager",
   PURCHASE_MANAGER: "purchase_manager",
   DELEGATE: "delegate",
+  DELEGATE_MANAGER: "delegate_manager",
   ACCOUNTANT: "accountant",
   SENIOR_MANAGEMENT: "senior_management",
   EXECUTIVE_DIRECTOR: "executive_director",
@@ -88,7 +89,7 @@ export type Role = (typeof ROLE)[keyof typeof ROLE];
 export const BYPASS_ALL_ROLES: Role[] = [ROLE.OWNER, ROLE.ADMIN];
 
 /** طلب تغيير مندوب الصنف يقدمه المندوب الحالي، ويُحسم بواسطة مدير الصيانة أو الإدارة. */
-export const DELEGATE_CHANGE_REQUEST_ROLES: Role[] = [ROLE.DELEGATE];
+export const DELEGATE_CHANGE_REQUEST_ROLES: Role[] = [ROLE.DELEGATE, ROLE.DELEGATE_MANAGER];
 /** Routed review is decided from the current item, never a header-role grant. */
 export const ROUTED_REVIEW_BLOCKED_PO_STATUSES = ["draft", "revision_needed", "closed", "rejected"] as const;
 export const DELEGATE_CHANGE_RESOLVER_ROLES: Role[] = [
@@ -155,6 +156,7 @@ export const VISIBILITY_POLICY: Record<string, VisibilityRule> = {
   [ROLE.FOOD_WAREHOUSE_MANAGER]: { kind: "own_plus_role", extraRole: ROLE.FOOD_WAREHOUSE_ASSISTANT },
 
   [ROLE.DELEGATE]: { kind: "assigned_items_only" },
+  [ROLE.DELEGATE_MANAGER]: { kind: "assigned_items_only" },
 
   // ⚠️ تطابق تام، وليس نطاقًا — تضييق صريح بتاريخ 2026-07-28 (راجع CHANGELOG_TECHNICAL.md)
   [ROLE.ACCOUNTANT]: { kind: "status_exact", status: PO_STATUS.PENDING_ACCOUNTING },
@@ -263,8 +265,8 @@ export const ACTION_POLICY: Record<ActionName, ActionClause[]> = {
     { roles: [ROLE.SENIOR_MANAGEMENT], statuses: [PO_STATUS.PENDING_MANAGEMENT] },
   ],
 
-  estimateCost: [{ roles: [ROLE.DELEGATE], statuses: "any" }], // مقيّد إضافيًا بملكية الصنف بـengine.ts (isItemAssignedToDelegate)
-  submitPricedBatch: [{ roles: [ROLE.DELEGATE], statuses: "any" }],
+  estimateCost: [{ roles: [ROLE.DELEGATE, ROLE.DELEGATE_MANAGER], statuses: "any" }], // مقيّد إضافيًا بملكية الصنف بـengine.ts (isItemAssignedToDelegate)
+  submitPricedBatch: [{ roles: [ROLE.DELEGATE, ROLE.DELEGATE_MANAGER], statuses: "any" }],
 
   approveAccounting: [{ roles: [ROLE.ACCOUNTANT], statuses: [PO_STATUS.PENDING_ACCOUNTING] }],
   approveManagement: [{ roles: [ROLE.SENIOR_MANAGEMENT], statuses: [PO_STATUS.PENDING_MANAGEMENT] }], // executive_director مستثنى صراحة (ليس بالقائمة)
@@ -275,7 +277,7 @@ export const ACTION_POLICY: Record<ActionName, ActionClause[]> = {
     // executive_director غير مذكور هنا عمدًا — ممنوع صراحة بكل الحالات (Default Deny)
   ],
 
-  confirmPurchase: [{ roles: [ROLE.DELEGATE], statuses: [PO_STATUS.APPROVED, PO_STATUS.PARTIAL_PURCHASE] }], // ملكية الصنف تُفحص إضافيًا بـengine.ts
+  confirmPurchase: [{ roles: [ROLE.DELEGATE, ROLE.DELEGATE_MANAGER], statuses: [PO_STATUS.APPROVED, PO_STATUS.PARTIAL_PURCHASE] }], // ملكية الصنف تُفحص إضافيًا بـengine.ts
   // confirmDeliveryToWarehouse/confirmDeliveryToRequester: تُفحصان بحالة **الصنف**
   // لا حالة الطلب (طلب واحد قد يحوي أصنافًا بحالات مختلفة في آن واحد أثناء
   // الشراء الجزئي) — معرَّفتان بـITEM_STATUS_ACTION_POLICY أدناه بدلًا من هذا الجدول.

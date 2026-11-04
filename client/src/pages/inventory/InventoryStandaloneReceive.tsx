@@ -1,4 +1,6 @@
 import { printInventoryLabels } from "@/lib/printInventoryLabels";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { isOwnerOrAdminRole } from "@shared/restricted-module-policy";
 import { ReceiptConversionFields } from "@/components/inventory/ReceiptConversionFields";
 import { INVALID_CONVERSION_MESSAGE } from "@shared/receipt-conversion";
 import { useState, useEffect, useRef } from "react";
@@ -83,6 +85,15 @@ const ITEM_TYPE_COLORS: Record<ItemType, string> = {
 
 // ─────────────────────────────────────────────────────────────
 export default function InventoryStandaloneReceive() {
+  const { authenticatedUser, loading } = useAuth();
+  if (loading) return <p className="p-6">جارٍ تحميل الحساب…</p>;
+  if (!isOwnerOrAdminRole(authenticatedUser?.role) || Number(authenticatedUser?.isActive) !== 1) {
+    return <p role="alert" className="p-6 text-destructive">استلام فاتورة مستقلة متاح للأدمن والمالك فقط.</p>;
+  }
+  return <InventoryStandaloneReceiveForm />;
+}
+
+function InventoryStandaloneReceiveForm() {
   const [, navigate] = useLocation();
 
   // ── State ──────────────────────────────────────────────────

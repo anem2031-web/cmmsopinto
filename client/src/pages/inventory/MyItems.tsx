@@ -1,3 +1,4 @@
+import { isDelegateRole } from "@shared/roles";
 import { trpc } from "@/lib/trpc";
 import { independentReadOptions } from "@/lib/read-transport";
 import { refreshPurchaseExecution, purchaseRefreshNotice } from "@/lib/purchaseExecutionRefresh";
@@ -99,7 +100,7 @@ export default function MyItems() {
   const utils = trpc.useUtils();
 
   const { data: myItems, isLoading, refetch } = trpc.purchaseOrders.myItems.useQuery(undefined, {
-    enabled: user?.role === "delegate" || user?.role === "admin" || user?.role === "owner",
+    enabled: isDelegateRole(user?.role) || user?.role === "admin" || user?.role === "owner",
     ...independentReadOptions,
   });
 

@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { isDelegateRole } from "../../../shared/delegate-role";
 export type PurchaseDocumentActor = { id: number; role: string };
 export interface PurchaseDocumentPort {
   order(id: number): Promise<any>;
@@ -60,14 +61,14 @@ export async function authorizePurchaseDocument(user: PurchaseDocumentActor, poI
     if (!batches.length || !batches.some(batch => Number(batch.purchaseOrderId) === poId)) throw denied();
     assertOwnPurchaseDocumentApproval(user, [submission, ...batches]);
     for (const batch of batches) {
-      if (user.role === "delegate" && Number(batch.submittedById) !== user.id) throw denied();
+      if (isDelegateRole(user.role) && Number(batch.submittedById) !== user.id) throw denied();
       const related = Number(batch.purchaseOrderId) === poId ? order : await source.order(Number(batch.purchaseOrderId));
       if (!related) throw denied();
       if (!approvalRole) await source.authorize(user, related);
     }
   } else if (batchId) {
     const batch = await source.batch(batchId);
-    if (!batch || Number(batch.purchaseOrderId) !== poId || (user.role === "delegate" && Number(batch.submittedById) !== user.id)) throw denied();
+    if (!batch || Number(batch.purchaseOrderId) !== poId || (isDelegateRole(user.role) && Number(batch.submittedById) !== user.id)) throw denied();
     assertOwnPurchaseDocumentApproval(user, [batch]);
     if (!approvalRole) await source.authorize(user, order);
   } else {
@@ -144,7 +145,7 @@ export async function authorizePurchaseAttachment(user: PurchaseDocumentActor, t
   if (!Number.isSafeInteger(entityId) || entityId <= 0 || !isPurchaseDocumentAttachment(type)) throw denied();
   const financial = type === "po_financial_batch" || type === "purchase_package_submission_financial";
   if (financial && !["owner", "admin", "accountant", "senior_management"].includes(user.role)) throw denied();
-  if (!financial && !["owner", "admin", "delegate", "accountant", "senior_management"].includes(user.role)) throw denied();
+  if (!financial && !isDelegateRole(user.role) && !["owner", "admin", "accountant", "senior_management"].includes(user.role)) throw denied();
   if (type === "po_financial_batch" || type === "delegate_pricing_batch") {
     const batch = await source.batch(entityId);
     if (!batch || !Number.isSafeInteger(Number(batch.purchaseOrderId)) || Number(batch.purchaseOrderId) <= 0) throw denied();

@@ -25,7 +25,9 @@ import {
 const gate = { id: 9, role: "gate_security", isActive: 1 };
 const scope = (patch: Partial<GateSecurityJobScope> = {}): GateSecurityJobScope => ({
   id: 1, ticketId: 100, ticketItemId: null, status: "waiting_gate_exit",
-  ticketMaintenancePath: "C", itemTicketId: null, itemMaintenancePath: null, ...patch,
+  ticketMaintenancePath: "C", itemTicketId: null, itemMaintenancePath: null,
+  purchaseTitle:"Exact title",delegateId:30,delegateReceiptStatus:"accepted",delegateReceiptById:30,
+  warehousePreparedAt:"2026-11-04 10:00:00",delegateReceiptAt:"2026-11-04 10:01:00",preparationRevision:1,...patch,
 });
 const records = [
   scope(),
@@ -189,6 +191,13 @@ describe("Gate operations require a real Path C job", () => {
 });
 
 describe("Gate media follows the external job rather than a known URL", () => {
+  it.each([
+    {delegateReceiptStatus:null},{purchaseTitle:""},{delegateReceiptById:31},{preparationRevision:0},{delegateReceiptAt:"2026-11-04 09:00:00"},
+  ])("does not expose legacy/unaccepted pre-exit media or actions: %j",async patch=>{
+    const port=fixturePort([scope(patch)]);
+    await expect(assertGateSecurityMediaReference(gate,{kind:"external",id:1,parentId:100},port)).rejects.toMatchObject({code:"FORBIDDEN"});
+    await expect(assertGateSecurityResourceAccess(gate,"mutation","externalMaintenance.approveGateExit",{jobId:1},port)).rejects.toMatchObject({code:"FORBIDDEN"});
+  });
   it("permits prepared Path C external assets and their secondary items", async () => {
     await expect(assertGateSecurityMediaReference(gate, { kind: "external", id: 1, parentId: 100 }, fixturePort())).resolves.toBeUndefined();
     await expect(assertGateSecurityMediaReference(gate, { kind: "external", id: 2, parentId: 100 }, fixturePort())).resolves.toBeUndefined();

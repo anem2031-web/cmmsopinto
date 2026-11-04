@@ -35,6 +35,7 @@ function fixture() {
         if (q.sql.includes("SELECT DATABASE")) return [[{ databaseName }]];
         if (q.sql.includes("SELECT id,role,isActive")) return [[{ id: q.params[0], role: q.params[0] === 1 ? "warehouse" : "delegate", isActive: Number(s.active) }]];
         if (q.sql.includes("SELECT name,username")) return [[{ name: "المندوب" }]];
+        if (q.sql.includes("FROM supplier_return_replacement_plans p INNER JOIN supplier_return_cases")) return [[]];
         if (q.sql.includes("FROM supplier_return_cases")) return [s.cases.filter((c: any) => c.createdById === q.params[0] && c.creationKey === q.params[1])];
         if (q.sql.includes("FROM inventory_lots l")) return [[{ ...s.source, availableQuantity: s.balanceQuantity, inventoryQuantity: s.quantity, remainingQuantity: s.lotQuantity }]];
         if (q.sql.includes("SUM(returnedQuantity)")) return [[{ quantity: String(s.returns.reduce((n: number, r: any) => n + r.returnedQuantity, 0)) }]];

@@ -18,4 +18,4 @@ export function approvedPricingDocumentPageAllowed(actor: ApprovedPricingDocumen
   return canReadApprovedPricingDocuments(actor) && path.split(/[?#]/,1)[0] === "/documents";
 }
 /** Mirrors the existing document-center navigation, without granting other APIs. */
-export const EXISTING_DOCUMENT_CENTER_ROLES = ["delegate", "warehouse", "accountant", "senior_management", "executive_director", "maintenance_manager", "purchase_requester", "food_warehouse_manager", "food_warehouse_assistant", "owner", "admin", "observer"];
+export const EXISTING_DOCUMENT_CENTER_ROLES = ["delegate", "delegate_manager", "warehouse", "accountant", "senior_management", "executive_director", "maintenance_manager", "purchase_requester", "food_warehouse_manager", "food_warehouse_assistant", "owner", "admin", "observer"];

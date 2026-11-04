@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
+import { isDelegateRole } from "../../shared/roles";
 import { z } from "zod";
 import { decimal4, format4 } from "./amounts";
 import { ReturnFollowupError } from "./policy";
@@ -20,7 +21,7 @@ export async function confirmSupplierRefund(actor: {id:number;role:string}, raw:
   return port.transaction(async tx => {
     if (!await trialEnabled(tx)) deny("متابعة مرتجع المورد غير مفعّلة لهذه القاعدة");
     const [user] = await readRows(tx, sql`SELECT id,role,isActive FROM users WHERE id=${actor.id} FOR UPDATE`);
-    if (!user || user.role !== actor.role || Number(user.isActive) !== 1 || actor.role !== "delegate") deny("تأكيد الاسترداد للمندوب المسند فقط");
+    if (!user || user.role !== actor.role || Number(user.isActive) !== 1 || !isDelegateRole(actor.role)) deny("تأكيد الاسترداد للمندوب المسند فقط");
     const [record] = await readRows(tx, sql`SELECT * FROM supplier_return_cases WHERE id=${input.caseId} FOR UPDATE`);
     if (!record || Number(record.delegateId) !== actor.id) deny("المرتجع غير مسند إليك");
     const [source] = await readRows(tx, sql`SELECT id,inventoryId,purchaseOrderId,purchaseOrderItemId,sourceDeliveryDocumentId FROM warehouse_returns WHERE id=${record.returnId} FOR UPDATE`);

@@ -1,6 +1,7 @@
 import { canUserExecuteAllPmv2Teams, pmv2ExecutionActor, pmv2ExecutionActorCondition, pmv2ExecutionTeamCondition } from "../security/execution-access";
 import { selectFullIssueLots, type WarehouseLotSelection, type WarehouseLotOption } from "../../../shared/warehouse-lot-selection";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { replacementOriginalPerPhysical } from "../../supplier-return-followup/fulfillment";
 import {
   pmv2ItemActions,
   pmv2MaterialRequestItems,
@@ -14,6 +15,7 @@ import {
   catalogItems,
 } from "../../../drizzle/schema";
 import { getDb } from "../../_core/db/client";
+import { readScopeChunks } from "../../_core/authz/read-batch";
 import {
   currentCatalogAdapter,
   currentDeliveryAdapter,
@@ -688,7 +690,7 @@ export class Pmv2TeamIssueHandoffService {
         const used=previousIssues.filter((row:any)=>row.note.replacementPlanId===replacement.plan.planId).reduce((sum:number,row:any)=>sum+originalEquivalent(row.note),0);
         for(const source of replacement.plan.lots) {
           const lot=replacementStock.get(`${requirement.teamWarehouseId}:${source.lotId}`);
-          if(lot) availableLotOptions.push({...lot,originalPerUnit:Number(replacement.plan.originalQuantityCovered)/replacement.plan.lots.reduce((sum,row)=>sum+Number(row.quantity),0),coverageKey:String(replacement.plan.planId),coverageLimit:Math.max(0,replacement.maximumOriginalQuantity-used)});
+          if(lot) availableLotOptions.push({...lot,originalPerUnit:replacementOriginalPerPhysical(replacement.plan),coverageKey:String(replacement.plan.planId),coverageLimit:Math.max(0,replacement.maximumOriginalQuantity-used)});
         }
       }
       let blocker = target.blocker;
@@ -1175,70 +1177,99 @@ export class Pmv2TeamIssueHandoffService {
   }
 
   async confirmPendingReturn(actorUserId: number, input: { declarationActionId: number; lotAllocations?: Array<{ lotId: number; quantity: number }> }) {
-    const pending = (await this.listPendingReturns()).find((item) => item.declarationActionId === input.declarationActionId);
-    if (!pending) throw new Pmv2TeamIssueHandoffError("المرتجع لم يعد معلقًا أو تم استلامه مسبقًا");
-    let allocations = input.lotAllocations || [];
-    if (pending.singleLot) allocations = [{ lotId: pending.lots[0].lotId, quantity: pending.remainingReturnQuantity }];
-    const normalized = allocations.map((item) => ({ lotId: Number(item.lotId), quantity: roundQuantity(Number(item.quantity)) })).filter((item) => item.quantity > 0);
-    const sum = roundQuantity(normalized.reduce((total, item) => total + item.quantity, 0));
-    if (Math.abs(sum - pending.remainingReturnQuantity) > 0.0005) throw new Pmv2TeamIssueHandoffError(`مجموع توزيع المرتجع يجب أن يساوي ${pending.remainingReturnQuantity}`);
-    for (const allocation of normalized) {
-      const lot = pending.lots.find((item: any) => item.lotId === allocation.lotId);
-      if (!lot || allocation.quantity > lot.returnableQuantity + 0.0005) throw new Pmv2TeamIssueHandoffError("كمية المرتجع للـLot أكبر من الكمية المصروفة القابلة للإرجاع");
-    }
-
     const db = await requireDb();
-    const declarationRows = await db.select({ taskItemId: pmv2ItemActions.taskItemId, note: pmv2ItemActions.note }).from(pmv2ItemActions)
-      .where(eq(pmv2ItemActions.id, input.declarationActionId)).limit(1);
-    const declaration = parseDeclarationNote(declarationRows[0]?.note);
-    if (!declaration) throw new Pmv2TeamIssueHandoffError("بيانات المرتجع غير صالحة");
-    const taskItemId = Number(declarationRows[0].taskItemId);
-    const issues = (await listIssueActions(db, taskItemId)).filter((issue: any) => issue.note.routeDecisionActionId === declaration.routeDecisionActionId);
-    const declaredPhysical=declaration.physicalUsages ? new Map(declaration.physicalUsages.map(part=>[part.deliveryDocumentId,part.usedQuantity])) : null;
-    const existingReturnRows = await db.select({ note: pmv2ItemActions.note }).from(pmv2ItemActions)
-      .where(and(eq(pmv2ItemActions.taskItemId, taskItemId), eq(pmv2ItemActions.action, MATERIAL_RETURN_PART_LINKED_ACTION)));
-    const returnedByDelivery = new Map<number, number>();
-    for (const row of existingReturnRows) {
-      const note = parseReturnPartNote(row.note); if (!note || note.declarationActionId !== input.declarationActionId) continue;
-      returnedByDelivery.set(note.sourceDeliveryDocumentId, roundQuantity((returnedByDelivery.get(note.sourceDeliveryDocumentId) || 0) + note.quantity));
-    }
+    // This pre-read only locates the lock parent. No list snapshot authorizes a
+    // write; declaration, actor and remaining quantities are reloaded below.
+    const [candidate] = await db.select({ taskItemId: pmv2ItemActions.taskItemId }).from(pmv2ItemActions)
+      .where(and(eq(pmv2ItemActions.id, input.declarationActionId), eq(pmv2ItemActions.action, MATERIAL_CONSUMPTION_DECLARED_ACTION))).limit(1);
+    if (!candidate) throw new Pmv2TeamIssueHandoffError("المرتجع لم يعد معلقًا أو تم استلامه مسبقًا");
+    const taskItemId = Number(candidate.taskItemId);
 
-    const posted: any[] = [];
-    for (const allocation of normalized) {
-      let remaining = allocation.quantity;
-      for (const issue of issues.filter((row: any) => Number(row.note.inventoryLotId) === allocation.lotId)) {
-        if (remaining <= 0) break;
-        const physicalAvailable=roundQuantity(issue.note.quantity - Number(declaredPhysical?.get(issue.note.deliveryDocumentId)||0)-Number(returnedByDelivery.get(issue.note.deliveryDocumentId) || 0));
-        const available = declaration.physicalMode ? physicalAvailable : originalEquivalent(issue.note,physicalAvailable);
-        const take = roundQuantity(Math.min(available, remaining));
-        if (take <= 0) continue;
-        const physicalTake=declaration.physicalMode ? take : physicalEquivalent(issue.note,take);
-        if(!Number.isInteger(physicalTake)) throw new Pmv2TeamIssueHandoffError("كمية المرتجع الفعلية يجب أن تكون صحيحة حسب مستند المرتجع الحالي");
-        const result = await currentRecipientReturnAdapter.createReturn({ sourceDeliveryDocumentId: issue.note.deliveryDocumentId, returnedQuantity: physicalTake,
-          reason: `مرتجع غير مستخدم من مهمة PM V2 ${pending.taskNumber}`, returnedById: actorUserId });
-        const insertDb = await requireDb();
-        await insertDb.insert(pmv2ItemActions).values({ taskItemId, visitId: Number((await insertDb.select({ visitId: pmv2ItemActions.visitId }).from(pmv2ItemActions).where(eq(pmv2ItemActions.id, input.declarationActionId)).limit(1))[0]?.visitId),
-          action: MATERIAL_RETURN_PART_LINKED_ACTION,
-          note: JSON.stringify({ version: 1, declarationActionId: input.declarationActionId, routeDecisionActionId: declaration.routeDecisionActionId,
-            sourceDeliveryDocumentId: issue.note.deliveryDocumentId, returnId: result.returnId, returnNumber: result.returnNumber,
-            lotId: allocation.lotId, lotCode: result.lotCode, quantity: physicalTake,...(!declaration.physicalMode?{originalQuantity:take}: {}) } satisfies ReturnPartNote), performedById: actorUserId });
-        posted.push(result); remaining = roundQuantity(remaining - take);
-        returnedByDelivery.set(issue.note.deliveryDocumentId,roundQuantity(Number(returnedByDelivery.get(issue.note.deliveryDocumentId)||0)+physicalTake));
+    // The native writer reads source caps and stock after its locks. A task
+    // read must not pin an older snapshot for those later physical reads.
+    return db.transaction(async (tx: any) => {
+      await tx.execute(sql`SELECT id FROM pmv2_task_items WHERE id=${taskItemId} FOR UPDATE`);
+      await tx.execute(sql`SELECT id FROM pmv2_item_actions WHERE id=${input.declarationActionId} AND taskItemId=${taskItemId} AND action=${MATERIAL_CONSUMPTION_DECLARED_ACTION} FOR UPDATE`);
+      const [actor] = await tx.select({ id: users.id, role: users.role, isActive: users.isActive }).from(users)
+        .where(eq(users.id, actorUserId)).limit(1).for("update");
+      if (!actor || Number(actor.isActive) !== 1 || !["warehouse", "admin", "owner"].includes(actor.role)) {
+        throw new Pmv2TeamIssueHandoffError("تأكيد استلام المرتجع متاح للمستودع فقط");
       }
-      if (remaining > 0.0005) throw new Pmv2TeamIssueHandoffError("تعذر توزيع كامل كمية المرتجع على سندات الصرف الأصلية");
-    }
+      const [source] = await tx.select({ taskItemId: pmv2ItemActions.taskItemId, visitId: pmv2ItemActions.visitId, note: pmv2ItemActions.note, taskNumber: pmv2Tasks.taskNumber })
+        .from(pmv2ItemActions).innerJoin(pmv2TaskItems, eq(pmv2TaskItems.id, pmv2ItemActions.taskItemId))
+        .innerJoin(pmv2Tasks, eq(pmv2Tasks.id, pmv2TaskItems.taskId))
+        .where(and(eq(pmv2ItemActions.id, input.declarationActionId), eq(pmv2ItemActions.taskItemId, taskItemId), eq(pmv2ItemActions.action, MATERIAL_CONSUMPTION_DECLARED_ACTION))).limit(1);
+      const declaration = parseDeclarationNote(source?.note);
+      if (!source || !declaration || !(Number(source.visitId) > 0)) throw new Pmv2TeamIssueHandoffError("بيانات المرتجع غير صالحة");
 
-    const refreshed = (await this.listPendingReturns()).find((item) => item.declarationActionId === input.declarationActionId);
-    if (!refreshed) {
-      const finishDb = await requireDb();
-      await finishDb.transaction(async (tx: any) => {
-        await finalizeConsumptionWithDb(tx, input.declarationActionId, declaration);
-        const decl = await tx.select({ visitId: pmv2ItemActions.visitId }).from(pmv2ItemActions).where(eq(pmv2ItemActions.id, input.declarationActionId)).limit(1);
-        await tx.insert(pmv2ItemActions).values({ taskItemId, visitId: Number(decl[0]?.visitId), action: MATERIAL_RETURN_COMPLETED_ACTION,
-          note: JSON.stringify({ version: 1, declarationActionId: input.declarationActionId, returnedQuantity: declaration.toReturnQuantity,...(declaration.physicalMode?{physicalMode:true}: {}) }), performedById: actorUserId });
+      const issues = (await listIssueActions(tx, taskItemId)).filter((issue: any) => issue.note.routeDecisionActionId === declaration.routeDecisionActionId);
+      const declaredPhysical = declaration.physicalUsages ? new Map(declaration.physicalUsages.map(part => [part.deliveryDocumentId, part.usedQuantity])) : null;
+      const existingReturnRows = await tx.select({ note: pmv2ItemActions.note }).from(pmv2ItemActions)
+        .where(and(eq(pmv2ItemActions.taskItemId, taskItemId), eq(pmv2ItemActions.action, MATERIAL_RETURN_PART_LINKED_ACTION)));
+      const linked = existingReturnRows.map((row: any) => parseReturnPartNote(row.note))
+        .filter((note: ReturnPartNote | null): note is ReturnPartNote => note?.declarationActionId === input.declarationActionId);
+      const returnedByDelivery = new Map<number, number>();
+      for (const note of linked) returnedByDelivery.set(note.sourceDeliveryDocumentId,
+        roundQuantity((returnedByDelivery.get(note.sourceDeliveryDocumentId) || 0) + note.quantity));
+      const declaredReturn = declaration.physicalMode
+        ? roundQuantity(issues.reduce((sum: number, issue: any) => sum + issue.note.quantity - Number(declaredPhysical?.get(issue.note.deliveryDocumentId) || 0), 0))
+        : Number(declaration.toReturnQuantity);
+      const alreadyReturned = roundQuantity(linked.reduce((sum: number, note: ReturnPartNote) => sum + Number(declaration.physicalMode ? note.quantity : note.originalQuantity ?? note.quantity), 0));
+      const remainingReturnQuantity = roundQuantity(declaredReturn - alreadyReturned);
+      if (remainingReturnQuantity <= 0) throw new Pmv2TeamIssueHandoffError("المرتجع لم يعد معلقًا أو تم استلامه مسبقًا");
+
+      const lots = new Map<number, number>();
+      for (const issue of issues) {
+        const physicalAvailable = roundQuantity(issue.note.quantity - Number(declaredPhysical?.get(issue.note.deliveryDocumentId) || 0) - Number(returnedByDelivery.get(issue.note.deliveryDocumentId) || 0));
+        const available = declaration.physicalMode ? physicalAvailable : originalEquivalent(issue.note, physicalAvailable);
+        const lotId = Number(issue.note.inventoryLotId || 0);
+        if (lotId > 0 && available > 0) lots.set(lotId, roundQuantity((lots.get(lotId) || 0) + available));
+      }
+      const allocations = lots.size === 1 ? [{ lotId: Array.from(lots.keys())[0], quantity: remainingReturnQuantity }] : input.lotAllocations || [];
+      const normalized = allocations.map(item => ({ lotId: Number(item.lotId), quantity: roundQuantity(Number(item.quantity)) })).filter(item => item.quantity > 0);
+      const sum = roundQuantity(normalized.reduce((total, item) => total + item.quantity, 0));
+      if (Math.abs(sum - remainingReturnQuantity) > 0.0005) throw new Pmv2TeamIssueHandoffError(`مجموع توزيع المرتجع يجب أن يساوي ${remainingReturnQuantity}`);
+      for (const allocation of normalized) {
+        if (!lots.has(allocation.lotId) || allocation.quantity > lots.get(allocation.lotId)! + 0.0005) throw new Pmv2TeamIssueHandoffError("كمية المرتجع للـLot أكبر من الكمية المصروفة القابلة للإرجاع");
+      }
+
+      // The native writer keeps its delivery -> lot balance -> lot -> Inventory
+      // lock order. Prelock all source deliveries in one stable order first.
+      await readScopeChunks(issues.map((issue: any) => Number(issue.note.deliveryDocumentId)).sort((a: number, b: number) => a - b), async ids => {
+        const result = await tx.execute(sql`SELECT id FROM delivery_documents WHERE id IN (${sql.join(ids.map(id => sql`${id}`), sql`,`)}) ORDER BY id FOR UPDATE`);
+        return result[0];
       });
-    }
-    return { completed: !refreshed, posted, remainingReturnQuantity: refreshed?.remainingReturnQuantity || 0 };
+      const posted: any[] = [];
+      for (const allocation of normalized) {
+        let remaining = allocation.quantity;
+        for (const issue of issues.filter((row: any) => Number(row.note.inventoryLotId) === allocation.lotId)) {
+          if (remaining <= 0) break;
+          const physicalAvailable = roundQuantity(issue.note.quantity - Number(declaredPhysical?.get(issue.note.deliveryDocumentId) || 0) - Number(returnedByDelivery.get(issue.note.deliveryDocumentId) || 0));
+          const available = declaration.physicalMode ? physicalAvailable : originalEquivalent(issue.note, physicalAvailable);
+          const take = roundQuantity(Math.min(available, remaining));
+          if (take <= 0) continue;
+          const physicalTake = declaration.physicalMode ? take : physicalEquivalent(issue.note, take);
+          if (!Number.isInteger(physicalTake)) throw new Pmv2TeamIssueHandoffError("كمية المرتجع الفعلية يجب أن تكون صحيحة حسب مستند المرتجع الحالي");
+          const result = await currentRecipientReturnAdapter.createReturn({ sourceDeliveryDocumentId: issue.note.deliveryDocumentId, returnedQuantity: physicalTake,
+            reason: `مرتجع غير مستخدم من مهمة PM V2 ${source.taskNumber}`, returnedById: actorUserId }, tx);
+          if (result.lotId !== allocation.lotId || result.sourceDeliveryDocumentId !== issue.note.deliveryDocumentId || result.returnedQuantity !== physicalTake) {
+            throw new Pmv2TeamIssueHandoffError("سند المرتجع لا يطابق سند الصرف واللوت الأصليين");
+          }
+          await tx.insert(pmv2ItemActions).values({ taskItemId, visitId: Number(source.visitId), action: MATERIAL_RETURN_PART_LINKED_ACTION,
+            note: JSON.stringify({ version: 1, declarationActionId: input.declarationActionId, routeDecisionActionId: declaration.routeDecisionActionId,
+              sourceDeliveryDocumentId: issue.note.deliveryDocumentId, returnId: result.returnId, returnNumber: result.returnNumber,
+              lotId: allocation.lotId, lotCode: result.lotCode, quantity: physicalTake, ...(!declaration.physicalMode ? { originalQuantity: take } : {}) } satisfies ReturnPartNote), performedById: actorUserId });
+          posted.push(result);
+          remaining = roundQuantity(remaining - take);
+          returnedByDelivery.set(issue.note.deliveryDocumentId, roundQuantity(Number(returnedByDelivery.get(issue.note.deliveryDocumentId) || 0) + physicalTake));
+        }
+        if (remaining > 0.0005) throw new Pmv2TeamIssueHandoffError("تعذر توزيع كامل كمية المرتجع على سندات الصرف الأصلية");
+      }
+      await finalizeConsumptionWithDb(tx, input.declarationActionId, declaration);
+      await tx.insert(pmv2ItemActions).values({ taskItemId, visitId: Number(source.visitId), action: MATERIAL_RETURN_COMPLETED_ACTION,
+        note: JSON.stringify({ version: 1, declarationActionId: input.declarationActionId, returnedQuantity: declaration.toReturnQuantity, ...(declaration.physicalMode ? { physicalMode: true } : {}) }), performedById: actorUserId });
+      return { completed: true, posted, remainingReturnQuantity: 0 };
+    }, { isolationLevel: "read committed" });
   }
 }
 

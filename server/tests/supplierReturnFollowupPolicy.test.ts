@@ -6,6 +6,12 @@ const creator = { id: 3, role: "operations", active: true };
 const initial = (): Followup => ({ delegateId: 2, creatorId: 3, returnedQuantity: 2, revision: 1, handover: "awaiting_delegate", resolution: null, rejectionReason: null, creatorDecision: null });
 const noLinks = { verified: true, hasMaintenance: false, hasTask: false, hasMaterialNeed: false };
 describe("supplier return follow-up policy foundation (not live)", () => {
+  it("keeps delegate manager receipt and resolution limited to its assigned return",()=>{
+    const manager={...actor,role:"delegate_manager"};
+    const accepted=decideHandover(manager,initial(),1,true);
+    expect(chooseResolution(manager,accepted,2,"refund")).toMatchObject({resolution:"refund",creatorDecision:"pending"});
+    expect(()=>decideHandover({...manager,id:99},initial(),1,true)).toThrow("المسند");
+  });
   it("requires a rejection reason and preserves quantity through resend", () => {
     expect(() => decideHandover(actor,initial(),1,false,"  ")).toThrow("السبب إلزامي");
     const rejected = decideHandover(actor,initial(),1,false,"لم تصل القطع");

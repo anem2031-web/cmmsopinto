@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { isDelegateRole } from "../../../shared/roles";
 import { TRPCError } from "@trpc/server";
 import { executionRows as rows } from "../operational-issues/issue-reference";
 import { assertBundleItemEligible, canReadPricingBundles, PRICING_BUNDLE_LIMIT, type PricingBundleActor, type PricingBundleSnapshot, type PricingBundleRow } from "../../../shared/delegate-pricing-bundles";
@@ -25,17 +26,17 @@ export class PricingBundleService {
   private readonly pendingPdfs = new Map<number, Promise<Buffer>>();
   constructor(private ports: PricingBundlePorts) {}
   private read(actor: PricingBundleActor) { if (!canReadPricingBundles(actor)) fail("غير مخول بعرض حزم التسعير", "FORBIDDEN"); }
-  private write(actor: PricingBundleActor) { if (actor.isActive !== 1 || actor.role !== "delegate") fail("إدارة حزمة التسعير متاحة للمندوب فقط", "FORBIDDEN"); }
+  private write(actor: PricingBundleActor) { if (actor.isActive !== 1 || !isDelegateRole(actor.role)) fail("إدارة حزمة التسعير متاحة للمندوب فقط", "FORBIDDEN"); }
   private async actorLock(tx: any, actor: PricingBundleActor) {
     this.write(actor);
-    const [stored] = await rows(tx, sql`SELECT id FROM users WHERE id=${actor.id} AND isActive=1 AND role='delegate' FOR UPDATE`);
+    const [stored] = await rows(tx, sql`SELECT id FROM users WHERE id=${actor.id} AND isActive=1 AND role=${actor.role} FOR UPDATE`);
     if (!stored) fail("الحساب غير مخول", "FORBIDDEN");
   }
   private async header(tx: any, actor: PricingBundleActor, id: number, lock = false) {
     this.read(actor);
     const [bundle] = await rows(tx, sql`SELECT id,bundleNumber,delegateId,status,revision,createdAt,sentAt,effectsDone FROM delegate_pricing_bundles WHERE id=${id} ${lock ? sql`FOR UPDATE` : sql``}`);
     if (!bundle) fail("حزمة التسعير غير موجودة", "NOT_FOUND");
-    if (actor.role === "delegate" && Number(bundle.delegateId) !== actor.id) fail("الحزمة لا تخصك", "FORBIDDEN");
+    if (isDelegateRole(actor.role) && Number(bundle.delegateId) !== actor.id) fail("الحزمة لا تخصك", "FORBIDDEN");
     return bundle;
   }
   private async approvalRows(database: any, ids: number[]) {
@@ -101,14 +102,14 @@ export class PricingBundleService {
       (SELECT SUM(p.estimatedTotalCost) FROM delegate_pricing_bundle_items i INNER JOIN purchase_order_items p ON p.id=i.purchaseOrderItemId WHERE i.bundleId=b.id AND i.removedAt IS NULL) AS openTotal,
       JSON_EXTRACT(b.snapshotJson,'$.rows[*].estimatedTotalCost') AS sentTotals,
       JSON_EXTRACT(b.snapshotJson,'$.rows[*].purchaseOrderId') AS sentOrderIds,JSON_EXTRACT(b.snapshotJson,'$.rows[*].poNumber') AS sentOrderNumbers
-      FROM delegate_pricing_bundles b INNER JOIN users u ON u.id=b.delegateId WHERE ${actor.role === "delegate" ? sql`b.delegateId=${actor.id}` : isPurchasePdfApprover(actor) ? sql`b.status IN ('sent','archived')` : sql`1=1`} ORDER BY b.id DESC LIMIT 200`);
+      FROM delegate_pricing_bundles b INNER JOIN users u ON u.id=b.delegateId WHERE ${isDelegateRole(actor.role) ? sql`b.delegateId=${actor.id}` : isPurchasePdfApprover(actor) ? sql`b.status IN ('sent','archived')` : sql`1=1`} ORDER BY b.id DESC LIMIT 200`);
     return this.presentList(actor, bundles);
   }
   /** Document center only: sent archive, filters and pagination before approval hydration. */
   async listPage(actor: PricingBundleActor, input: DocumentListPageInput) {
     this.read(actor);
     const database = await this.ports.database();
-    const base = sql`b.status IN ('sent','archived') AND ${actor.role === "delegate" ? sql`b.delegateId=${actor.id}` : sql`1=1`} AND ${approvedBundleCondition()}`;
+    const base = sql`b.status IN ('sent','archived') AND ${isDelegateRole(actor.role) ? sql`b.delegateId=${actor.id}` : sql`1=1`} AND ${approvedBundleCondition()}`;
     const conditions = [base];
     if (input.delegateId != null) conditions.push(sql`b.delegateId=${input.delegateId}`);
     if (input.dateFrom) conditions.push(sql`COALESCE(b.sentAt,b.createdAt) >= ${documentDayBoundary(input.dateFrom)}`);
@@ -340,7 +341,7 @@ export class PricingBundleService {
       const permission = this.permission(actor, bundle, ids, await this.approvalRows(database, [id]));
       if (!permission.pdfAllowed) fail(permission.pdfBlockedReason!, "FORBIDDEN");
     }
-    if (approvedDocument && actor.role !== "delegate") {
+    if (approvedDocument && !isDelegateRole(actor.role)) {
       const [stored] = await rows(database, sql`SELECT snapshotJson FROM delegate_pricing_bundles WHERE id=${id}`);
       const snapshot = json(stored?.snapshotJson) as PricingBundleSnapshot;
       // Retain the historical approved-document shape; new routed snapshots

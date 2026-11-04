@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import type { OperationalLine, OperationalStock, OperationalLotChoice } from "../../../shared/operational-issues";
 import { allocateOperationalFifo } from "../../../shared/operational-dispatch";
 import { dispatchContext } from "../../../shared/operational-dispatch";
-import { exactOriginalAllocation, loadReplacementFulfillments, replacementAllocationQuantum, replacementOriginalToPhysical, replacementPhysicalToOriginal, representableReplacementAllocation, type ReplacementFulfillment } from "../../supplier-return-followup/fulfillment";
+import { exactOriginalAllocation, loadReplacementFulfillments, replacementCoverageLimit, replacementOriginalPerPhysical, replacementAllocationQuantum, replacementOriginalToPhysical, replacementPhysicalToOriginal, representableReplacementAllocation, type ReplacementFulfillment } from "../../supplier-return-followup/fulfillment";
 import { trialEnabled } from "../../supplier-return-followup/runtime";
 import { decimal4 } from "../../supplier-return-followup/amounts";
 async function rows(tx: any, query: any): Promise<any[]> {
@@ -111,15 +111,8 @@ export async function loadOperationalReplacements(tx: any, lines: OperationalLin
  * no rounding up of either stock or fulfillment. */
 export function assignableOperationalReplacement(plan: ReplacementFulfillment, unmet: number, availablePhysical: number): number {
   if (unmet <= 0 || availablePhysical <= 0) return 0;
-  const whole = BigInt(10000), total = decimal4(totalPhysical(plan).toFixed(3)), covered = decimal4(plan.quantityCovered);
-  const requested = decimal4(unmet.toFixed(3));
-  let a = total, b = whole * covered;
-  while (b !== BigInt(0)) { const next = a % b; a = b; b = next; }
-  const step = total / a;
-  const byNeed = requested * total / covered / whole;
-  const byStock = BigInt(Math.floor(availablePhysical));
-  const maximum = byNeed < byStock ? byNeed : byStock;
-  return Number(maximum / step * step);
+  return Number(representableReplacementAllocation(plan, { availablePhysical: Math.floor(availablePhysical).toFixed(3),
+    maxOriginal: unmet.toFixed(3), originalStep: "0.001", physicalStep: "1" }).physicalQuantity);
 }
 
 export function replacementStockLines(replacements: OperationalReplacements): OperationalLine[] {
@@ -165,7 +158,7 @@ export function applyOperationalReplacementStock(stocks: OperationalStock[], phy
       if (remaining <= 0 || unmet <= 0) continue;
       const choices = (physical?.lots || []).filter(lot => plan.lots.some(allowed => allowed.lotId === lot.lotId && allowed.trackingToken === lot.trackingToken && allowed.unit === lot.unit))
         .map(lot => ({ ...lot, quantity: Math.min(lot.quantity, assignableOperationalReplacement(plan, unmet, remaining)), replacementName: plan.itemName,
-          originalPerUnit:Number(plan.originalQuantityCovered)/totalPhysical(plan),coverageKey:String(plan.planId),coverageLimit:Math.min(unmet,Number(plan.originalQuantityCovered)-Number(replacementPhysicalToOriginal(plan,String(target.physicalIssued.get(plan.planId)||0)))) }));
+          originalPerUnit:replacementOriginalPerPhysical(plan),coverageKey:String(plan.planId),coverageLimit:Math.min(unmet,Number(replacementCoverageLimit(plan))-Number(replacementPhysicalToOriginal(plan,String(target.physicalIssued.get(plan.planId)||0)))) }));
       lots.push(...choices);
       const count = choices.reduce((sum, lot) => sum + lot.quantity, 0);
       const availablePhysical = assignableOperationalReplacement(plan, unmet, Math.min(count, remaining));

@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import ar from "../../client/src/i18n/ar";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as review from "../../shared/purchase-item-review";
+import { isDelegateRole } from "../../shared/roles";
+import { defaultDelegateManagerId, reviewDelegateId, reviewBulkDelegateValue } from "../../client/src/lib/delegateReviewDefaults";
 
 function read(file: string) {
   const source = readFileSync(file, "utf8"), ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -19,12 +21,13 @@ function read(file: string) {
 }
 const detail = read("client/src/pages/purchase/PurchaseOrderDetail.tsx"), listing = read("client/src/pages/purchase/PurchaseOrders.tsx");
 function evaluate(code: string, scope: any) {
-  return vm.runInNewContext(ts.transpileModule(`(${code})`, { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 } }).outputText, { React, ...review, ...scope });
+  return vm.runInNewContext(ts.transpileModule(`(${code})`, { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 } }).outputText, { React, ...review, isDelegateRole, defaultDelegateManagerId, reviewDelegateId, reviewBulkDelegateValue, ...scope });
 }
 const actor = { id: 8, role: "general_maintenance_manager", isActive: 1 };
 const item = (id: number, extra = {}) => ({ id, status: "pending_review", reviewRole: actor.role, itemName: `صنف ${id}`, quantity: 1, unit: "قطعة", ...extra });
 function scope(items = [item(1), item(2), item(3, { reviewRole: "senior_management" })], overrides: any = {}) {
   const h: any = { user: actor, po: { id: 10, status: "pending_accounting", items }, selectedReviewItemIds: [], reviewDecisions: {}, bulkDelegateId: undefined,
+    users: [{ id: 20, role: "delegate", name: "المندوب", isActive: 1 }],
     useMemo: (callback: any) => callback(), setReviewDecisions: (value: any) => { h.reviewDecisions = typeof value === "function" ? value(h.reviewDecisions) : value; },
     setSelectedReviewItemIds: (value: any) => { h.selectedReviewItemIds = typeof value === "function" ? value(h.selectedReviewItemIds) : value; },
     setBulkDelegateId: (value: any) => { h.bulkDelegateId = value; }, ...overrides };
@@ -33,6 +36,8 @@ function scope(items = [item(1), item(2), item(3, { reviewRole: "senior_manageme
     h.routedReviewParentOpen = evaluate(detail.values.get("routedReviewParentOpen")!, h);
     h.reviewableItems = evaluate(detail.values.get("reviewableItems")!, h);
     h.selectedReviewItems = evaluate(detail.values.get("selectedReviewItems")!, h);
+    h.suggestedDelegateId = evaluate(detail.values.get("suggestedDelegateId")!, h);
+    h.reviewFallbackDelegateId = evaluate(detail.values.get("reviewFallbackDelegateId")!, h);
   };
   for (const name of ["handleBulkApprove", "handleBulkAssignDelegate"]) h[name] = (...args: any[]) => { h.refresh(); return evaluate(detail.values.get(name)!, h)(...args); };
   h.refresh(); return h;

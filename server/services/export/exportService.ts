@@ -735,7 +735,7 @@ export async function generatePurchaseRequestPDF(
   // بنسخته من المستند — هذي أقسام داخلية خاصة بدورة الاعتماد المحاسبي فقط
   const approvedBundleApprovals = bundleSnapshot?.financialApprovals || [];
   const isApprovedBundle = approvedBundleApprovals.length > 0;
-  const isDelegateViewer = requestingUser?.role === "delegate" && !isApprovedBundle;
+  const isDelegateViewer = ["delegate", "delegate_manager"].includes(requestingUser?.role || "") && !isApprovedBundle;
 
   // تقليل ارتفاع صفوف الجداول بنسبة 10% للنسخة الكاملة (دور الحسابات وما بعده) —
   // نسخة المندوب تبقى بالارتفاع الأصلي.

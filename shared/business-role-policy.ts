@@ -124,7 +124,7 @@ const warehouseMutations = [
   ...paths("inventory", "create update delete addTransaction resolveLotSearch resolveDeliveryLot deliverToRequester"),
   ...paths("inventoryCount", "createOperation scanItem scanLot addItem addNewItem openingBalanceTemplate openingBalanceImportPreview openingBalanceImportCommit openingBalanceExport deleteOperation recordItem completeOperation"),
   "warehouseReceipts.incrementPrint", "warehouseReceipts.scanBarcode",
-  ...paths("warehouseReceiptsV2", "analyzeInvoice receiveStandaloneV2 receiveFromPurchaseV2 generateItemBarcodes generateItemBarcode"),
+  ...paths("warehouseReceiptsV2", "analyzeInvoice receiveFromPurchaseV2 generateItemBarcodes generateItemBarcode"),
   ...paths("warehouseReturns", "resolveRecipientReturnSource createRecipientReturn resolveReturnLot create"),
   ...paths("warehouseIssueBatches", "resolveLot create"),
   ...paths("warehouse", "create confirmDeliveryToWarehouse confirmDeliveryToRequester"),
@@ -189,7 +189,7 @@ export function businessRpcAllowed(user: BusinessIdentity | null | undefined, ty
 
 const commonPages = new Set(["/", "/notifications", "/improvement-ideas", "/purchase-orders", "/purchase-orders/new", "/documents", "/inventory/reports", "/inventory/reconciliation",
   "/inventory/reports/stock-balance", "/inventory/reports/movements", "/inventory/reports/valuation", "/inventory/reports/analytics"]);
-const warehousePages = new Set(["/inventory", "/inventory-operations", "/inventory/receive", "/warehouse/receive-v2", "/warehouse/return", "/warehouse/returns", "/warehouse/transfer", "/warehouse/issue", "/warehouses", "/purchase-cycle", "/external-maintenance", "/item-tracker", "/users", "/catalog", "/operational-issues", "/maintenance-team-tickets", "/scheduled-maintenance/warehouse-requests"]);
+const warehousePages = new Set(["/inventory", "/inventory-operations", "/warehouse/receive-v2", "/warehouse/return", "/warehouse/returns", "/warehouse/transfer", "/warehouse/issue", "/warehouses", "/purchase-cycle", "/external-maintenance", "/item-tracker", "/users", "/catalog", "/operational-issues", "/maintenance-team-tickets", "/scheduled-maintenance/warehouse-requests"]);
 const warehouseOversightPages = new Set(["/inventory", "/inventory-operations", "/warehouse/returns", "/warehouse/transfer", "/warehouse/issue", "/warehouses", "/item-tracker"]);
 const managementPages = new Set(["/tickets", "/tickets/inbox", "/tickets/new", "/reports", "/reports/technicians", "/reports/purchase-cycle", "/reports/maintenance-cycle", "/reports/section-report", "/reports/preventive", "/inspection-dashboard", "/ai-assistant"]);
 export function businessPageAllowed(role: BusinessRole, rawPath: string): boolean {

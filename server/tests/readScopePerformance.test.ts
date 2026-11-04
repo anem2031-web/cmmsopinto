@@ -17,7 +17,7 @@ import { getPurchaseOrdersByIds, getPurchaseOrdersForPackages, getFullPOItemsFor
 import { assertCanViewPurchaseOrder, createPurchaseOrderReadGuard, createPurchaseOrderReadScope, filterVisiblePurchaseOrders } from "../_core/authz/guard";
 import { assertBusinessTranslationAccess } from "../_core/authz/business-resources";
 import { assertTechnicianTranslationAccess } from "../_core/authz/technician-resources";
-import { APP_ROLE } from "../../shared/roles";
+import { APP_ROLE, isDelegateRole } from "../../shared/roles";
 import { router, protectedProcedure } from "../_core/trpc";
 
 const state = vi.hoisted(() => ({ database: null as any, delegates: vi.fn(), assistants: vi.fn() }));
@@ -51,7 +51,7 @@ function handler(file: string, name: string, scope: any) {
     ts.forEachChild(node, visit);
   }
   visit(ast); if (!code) throw Error(`Missing handler ${name}`);
-  return vm.runInNewContext(ts.transpileModule(`(${code})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, scope);
+  return vm.runInNewContext(ts.transpileModule(`(${code})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, { isDelegateRole, ...scope });
 }
 
 describe("Request-local visibility and bounded scope readers", () => {

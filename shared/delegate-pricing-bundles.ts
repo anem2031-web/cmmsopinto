@@ -1,5 +1,6 @@
 import { isRoutedPurchaseItem } from "./purchase-item-review";
 import { hasCommittedPurchaseItemReview } from "./purchaseItemReviewWorkflow";
+import { isDelegateRole } from "./delegate-role";
 
 export const PRICING_BUNDLE_LIMIT = 20;
 export function pricingBundleApprovalNotificationPath(eventKey:unknown):string|null {
@@ -53,7 +54,7 @@ export type PricingBundleSnapshot = {
   }>;
 };
 export function canReadPricingBundles(actor: PricingBundleActor) {
-  return actor.isActive === 1 && ["delegate", "owner", "admin", "accountant", "senior_management", "observer"].includes(actor.role);
+  return actor.isActive === 1 && (isDelegateRole(actor.role) || ["owner", "admin", "accountant", "senior_management", "observer"].includes(actor.role));
 }
 export function assertBundleItemEligible(item: any, actorId: number) {
   const routed = isRoutedPurchaseItem(item);

@@ -13,11 +13,17 @@ files.push("server/tests/supplierReturnPathBReplacement.test.ts");
 files.push("server/tests/pathBPurchaseWorkflow.test.ts");
 files.push("server/tests/supplierReturnFeature.test.ts");
 files.push("server/tests/supplierReturnFulfillment.test.ts", "server/tests/teamReplacementFulfillment.test.ts");
+files.push("server/tests/supplierReturnSequentialFulfillment.test.ts");
+files.push("server/tests/supplierReturnLineage.test.ts");
+files.push("server/tests/supplierReturnActiveCases.test.ts");
+files.push("server/tests/supplierReturnSequentialCreator.test.ts");
 files.push("server/tests/pmv2ReplacementCoverage.test.ts");
 files.push("server/tests/pmv2ReplacementUi.test.ts");
 files.push("server/tests/pmv2SourceFixture.test.ts");
 files.push("server/tests/pmv2CompletionFixture.test.ts");
 files.push("server/tests/teamCompensationFixture.test.ts");
+files.push("server/tests/supplierReturnCompletion.test.ts", "server/tests/supplierReturnStandalone.test.ts",
+  "server/tests/supplierReturnFollowupList.test.ts", "server/tests/supplierReturnFollowupUi.test.tsx");
 const config = { ...base, test: { ...base.test, include: files } };
 const runner = await startVitest("test", files, { config: false, watch: false }, config);
 if (!runner) process.exitCode = 1;

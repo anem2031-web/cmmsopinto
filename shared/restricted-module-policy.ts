@@ -1,9 +1,9 @@
 /**
- * Owner/admin-only legacy modules.
+ * Owner/admin-only modules and independent invoice receipt.
  *
  * This policy intentionally does not include PM V2 (/scheduled-maintenance or
- * pmv2.*). It protects only the standalone Construction module and the legacy
- * Preventive Maintenance module requested by the product owner.
+ * pmv2.*). The independent receipt entry is distinct from purchase-order
+ * receiving, which retains its existing warehouse permissions.
  */
 export function isOwnerOrAdminRole(role?: string | null): boolean {
   return role === "owner" || role === "admin";
@@ -14,11 +14,13 @@ export function isOwnerAdminOnlyPage(rawPath: string): boolean {
   return path === "/construction" || path.startsWith("/construction/")
     || path === "/preventive" || path.startsWith("/preventive/")
     || path === "/predictive" || path.startsWith("/predictive/")
-    || path === "/reports/preventive" || path.startsWith("/reports/preventive/");
+    || path === "/reports/preventive" || path.startsWith("/reports/preventive/")
+    || path === "/inventory/receive" || path === "/inventory/receive/";
 }
 
 export function isOwnerAdminOnlyRpc(path: string): boolean {
-  return path === "construction" || path.startsWith("construction.")
+  return path === "warehouseReceiptsV2.receiveStandaloneV2"
+    || path === "construction" || path.startsWith("construction.")
     || path === "preventive" || path.startsWith("preventive.");
 }
 

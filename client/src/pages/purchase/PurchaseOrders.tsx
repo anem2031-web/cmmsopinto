@@ -1,6 +1,9 @@
+import { isDelegateRole } from "@shared/roles";
+import { canManagerAssignOwnItem, DelegateManagerAssignmentDialog } from "@/components/purchase/DelegateManagerAssignment";
 import { PricingBundleLink, PricingBundleAddButton } from "@/components/purchase/PricingBundleActions";
 import { DelegateSupplyRows } from "@/components/purchase/DelegateSupplyRows";
 import { DelegateCompletedItems, completedLabels } from "@/components/purchase/DelegateCompletedItems";
+import { DelegateExternalMaintenanceCards } from "@/components/purchase/DelegateExternalMaintenanceCards";
 import { SupplierReturns } from "@/components/purchase/SupplierReturns";
 import { SpecificationReviewList } from "@/components/purchase/PurchaseSpecifications";
 import { BundleApprovalCards } from "@/components/purchase/UnifiedBundleApproval";
@@ -64,7 +67,7 @@ type PurchaseOrdersHistoryState = {
   requestedById: string;
   searchQuery: string;
   currentPage: number;
-  view: "actionable" | "items" | "tracking" | "supply" | "completed" | "returns" | "specifications" | "all";
+  view: "actionable" | "items" | "tracking" | "supply" | "completed" | "returns" | "specifications" | "external" | "all";
 };
 
 type DelegateActionFilter = "all" | "estimate" | "purchase";
@@ -79,8 +82,9 @@ export default function PurchaseOrders() {
   const [, setLocation] = useLocation();
   const { t, language, dir } = useTranslation();
   const { getPOStatusLabel, getPOItemStatusLabel } = useStaticLabels();
-  const { user } = useAuth();
+  const { user, authenticatedUser } = useAuth();
   const utils = trpc.useUtils();
+  const [managerAssignmentItem, setManagerAssignmentItem] = useState<any>(null);
   const { data: catalogUnits = [] } = trpc.catalog.units.list.useQuery();
   const displayUnit = (value: string | null | undefined) =>
     getLocalizedCatalogUnitName(value, catalogUnits as any[], language);
@@ -106,7 +110,7 @@ export default function PurchaseOrders() {
   const [delegateDateTo, setDelegateDateTo] = useState("");
   const [delegateClock, setDelegateClock] = useState(() => new Date());
   useEffect(() => {
-    if (user?.role !== "delegate") return;
+    if (!isDelegateRole(user?.role)) return;
     const timer = window.setInterval(() => setDelegateClock(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, [user?.role]);
@@ -127,7 +131,7 @@ export default function PurchaseOrders() {
   // ── عرض "بانتظار إجرائي" مقابل "جميع الطلبات" ──
   // مدير الصيانة دوره إشرافي ويتابع جميع الطلبات بغض النظر عن منشئها، لذلك
   // يبدأ من العرض الكامل. المندوب يبدأ بأصنافه، وبقية الأدوار تبدأ بانتظار إجرائها.
-  const [selectedView, setView] = useState<"actionable" | "items" | "tracking" | "supply" | "completed" | "returns" | "specifications" | "all">(savedHistoryState?.view ?? "actionable");
+  const [selectedView, setView] = useState<"actionable" | "items" | "tracking" | "supply" | "completed" | "returns" | "specifications" | "external" | "all">(savedHistoryState?.view ?? "actionable");
   const canReviewSpecifications = ["construction_procurement_manager", "admin", "owner"].includes(user?.role || "");
   const [specificationPage, setSpecificationPage] = useState(1);
   const specifications = trpc.purchaseSpecifications.list.useQuery({ page: specificationPage, pageSize: PAGE_SIZE }, { enabled: canReviewSpecifications, retry: false, ...independentReadOptions });
@@ -137,9 +141,11 @@ export default function PurchaseOrders() {
     if (specificationPage > lastPage) setSpecificationPage(lastPage);
   }, [specifications.data?.total, specificationPage]);
   // Old saved views remain valid for other roles; delegates enter their existing item queue.
-  const canViewReturns = ["delegate", "admin", "owner", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "it_manager", "purchase_manager", "accountant", "senior_management", "executive_director", "user", "operator", "technician", "it_member", "supervisor", "purchase_requester", "food_warehouse_manager", "food_warehouse_assistant"].includes(user?.role || "");
+  const canViewReturns = ["delegate", "delegate_manager", "admin", "owner", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "it_manager", "purchase_manager", "accountant", "senior_management", "executive_director", "user", "operator", "technician", "it_member", "supervisor", "purchase_requester", "food_warehouse_manager", "food_warehouse_assistant"].includes(user?.role || "");
   const returnStatus = trpc.supplierReturns.status.useQuery(undefined, { enabled: canViewReturns });
-  const view = user?.role === "delegate" && selectedView !== "items" && selectedView !== "supply" && selectedView !== "completed" && selectedView !== "returns" ? "items" : selectedView;
+  const canViewDelegateExternal = isDelegateRole(authenticatedUser?.role) && Number(authenticatedUser?.isActive) === 1;
+  const view = selectedView === "external" && !canViewDelegateExternal ? (isDelegateRole(user?.role) ? "items" : "actionable")
+    : isDelegateRole(user?.role) && selectedView !== "items" && selectedView !== "supply" && selectedView !== "completed" && selectedView !== "returns" && selectedView !== "external" ? "items" : selectedView;
   useEffect(() => {
     if (view === "specifications" && user?.role && !canReviewSpecifications) setView("actionable");
   }, [view, user?.role, canReviewSpecifications]);
@@ -149,7 +155,7 @@ export default function PurchaseOrders() {
     }
   }, [user?.role]);
   useEffect(() => {
-    if (user?.role && user.role !== "delegate" && (view === "items" || view === "completed" || (view === "returns" && !canViewReturns))) {
+    if (user?.role && !isDelegateRole(user.role) && (view === "items" || view === "completed" || (view === "returns" && !canViewReturns))) {
       setView("actionable");
     }
   }, [user?.role, view, canViewReturns]);
@@ -170,7 +176,7 @@ export default function PurchaseOrders() {
   }, [view, user?.role, canAccessMyItemsTracking, canAccessSupplyTracking]);
 
   const { data: actionable, isLoading: actionableLoading } =
-    trpc.purchaseOrders.actionableForMe.useQuery(undefined, { enabled: !!user && user.role !== "delegate", ...independentReadOptions });
+    trpc.purchaseOrders.actionableForMe.useQuery(undefined, { enabled: !!user && !isDelegateRole(user.role), ...independentReadOptions });
   const actionableItems = actionable?.items ?? [];
 
   // [PB-ACTIONABLE 2026-08-31] الحسابات والإدارة العليا تعملان على مستوى
@@ -208,7 +214,7 @@ export default function PurchaseOrders() {
 
   // Legacy package-pricing view retained, but its query stays disabled while
   // delegates use only the existing item queue and supply-tracking view.
-  const isDelegatePricingActionRole = user?.role === "delegate";
+  const isDelegatePricingActionRole = isDelegateRole(user?.role);
   const { data: delegatePendingEstimateItems = [], isLoading: delegatePendingEstimateItemsLoading } =
     trpc.purchaseOrders.pendingEstimateItems.useQuery(undefined, {
       enabled: isDelegatePricingActionRole && view === "actionable",
@@ -300,12 +306,12 @@ export default function PurchaseOrders() {
   // Creator follow-up stays with the other roles. Delegate follow-up uses the
   // existing supply query, already scoped by the server to the assigned delegate.
   const { data: myRequestedItemsData, isLoading: myRequestedItemsLoading } =
-    trpc.purchaseOrders.myRequestedItems.useQuery(undefined, { enabled: !!user && canAccessMyItemsTracking && user.role !== "delegate" });
+    trpc.purchaseOrders.myRequestedItems.useQuery(undefined, { enabled: !!user && canAccessMyItemsTracking && !isDelegateRole(user.role) });
   const myRequestedItems = myRequestedItemsData?.items ?? [];
   const myRequestedItemsCount = myRequestedItemsData?.total ?? 0;
 
   const { data: supplyTrackingData, isLoading: supplyTrackingLoading } =
-    trpc.purchaseOrders.supplyTracking.useQuery(undefined, { enabled: !!user && canAccessSupplyTracking, refetchInterval: user?.role === "delegate" && view === "supply" ? 30_000 : false });
+    trpc.purchaseOrders.supplyTracking.useQuery(undefined, { enabled: !!user && canAccessSupplyTracking, refetchInterval: isDelegateRole(user?.role) && view === "supply" ? 30_000 : false });
   const supplyTrackingItems = supplyTrackingData?.items ?? [];
   const supplyTrackingCount = supplyTrackingData?.total ?? 0;
 
@@ -486,7 +492,7 @@ export default function PurchaseOrders() {
 
   const { data: pos, isLoading } = trpc.purchaseOrders.list.useQuery(
     Object.keys(queryInput).length > 0 ? queryInput : undefined,
-    { enabled: !!user && user.role !== "delegate", ...independentReadOptions },
+    { enabled: !!user && !isDelegateRole(user.role), ...independentReadOptions },
   );
 
   const deleteMutation = trpc.purchaseOrders.delete.useMutation({
@@ -521,7 +527,7 @@ export default function PurchaseOrders() {
     const normalized = supplySearch.trim().toLowerCase();
     const normalizedAmount = normalized.replace(/[,\s]/g, "");
     const completedStatuses = new Set(["delivered_to_warehouse", "delivered_to_requester", "rejected", "cancelled", "needs_item_revision", "purchase_cancelled"]);
-    const threshold = user?.role === "delegate" || supplyDelayFilter === "all"
+    const threshold = isDelegateRole(user?.role) || supplyDelayFilter === "all"
       ? null
       : supplyDelayFilter === "custom"
         ? Math.max(1, Number.parseInt(supplyCustomDays || "1", 10) || 1)
@@ -656,7 +662,7 @@ export default function PurchaseOrders() {
       // الإدارة فتبقى PB مجمّعة حتى يظل الإرسال المتكرر للحسابات على مستوى
       // الحزمة كما هو، دون أي تغيير في الـWorkflow أو البيانات.
       const showAsIndividualDelegateOrder =
-        user?.role === "delegate" && delegateIndividualStatuses.has(po.status);
+        isDelegateRole(user?.role) && delegateIndividualStatuses.has(po.status);
 
       if (!po.packageId || showAsIndividualDelegateOrder) {
         cards.push({ cardType: "order", key: `po:${po.id}`, id: po.id, order: po });
@@ -736,7 +742,9 @@ export default function PurchaseOrders() {
 
       <PricingBundleLink />
       {/* ── ملخص + تبويبات العرض ─────────────────────────────────── */}
-      {view === "specifications" && canReviewSpecifications ? (
+      {view === "external" && canViewDelegateExternal ? (
+        <p className="text-base font-medium">{t.workflow.purchase.delegateExternalMaintenanceTab}</p>
+      ) : view === "specifications" && canReviewSpecifications ? (
         <p className="text-base font-medium">مطابقة المواصفات ({specifications.data?.total || 0})</p>
       ) : view === "items" && isDelegatePricingActionRole ? (
         delegateActionableItemsLoading ? (
@@ -756,7 +764,7 @@ export default function PurchaseOrders() {
             {t.workflow.purchase.supplyTrackingCount.replace("{count}", String(filteredSupplyTrackingItems.length))}
           </p>
         )
-      ) : view === "completed" && user?.role === "delegate" ? (
+      ) : view === "completed" && isDelegateRole(user?.role) ? (
         <p className="text-base font-medium">{completedLabels[language].title}</p>
       ) : view === "tracking" && canAccessMyItemsTracking ? (
         myRequestedItemsLoading ? (
@@ -781,7 +789,7 @@ export default function PurchaseOrders() {
       )}
 
       <div className="flex gap-2 flex-wrap">
-        {user?.role !== "delegate" && (
+        {!isDelegateRole(user?.role) && (
         <Button
           variant={view === "actionable" ? "default" : "outline"}
           size="sm"
@@ -799,7 +807,7 @@ export default function PurchaseOrders() {
             {t.workflow.purchase.delegateItemsTab} {delegateActionableItemsCount > 0 && `(${delegateActionableItemsCount})`}
           </Button>
         )}
-        {canAccessMyItemsTracking && user?.role !== "delegate" && (
+        {canAccessMyItemsTracking && !isDelegateRole(user?.role) && (
           <Button
             variant={view === "tracking" ? "default" : "outline"}
             size="sm"
@@ -818,13 +826,14 @@ export default function PurchaseOrders() {
             className="gap-1.5"
           >
             <Truck className="w-4 h-4" />
-            {user?.role === "delegate" ? t.workflow.purchase.myItemsFollowupTab : t.workflow.purchase.supplyTrackingTab} {supplyTrackingCount > 0 && `(${supplyTrackingCount})`}
+            {isDelegateRole(user?.role) ? t.workflow.purchase.myItemsFollowupTab : t.workflow.purchase.supplyTrackingTab} {supplyTrackingCount > 0 && `(${supplyTrackingCount})`}
           </Button>
         )}
-        {user?.role === "delegate" && <Button variant={view === "completed" ? "default" : "outline"} size="sm" onClick={() => setView("completed")}>{completedLabels[language].title}</Button>}
-        {canViewReturns && returnStatus.data?.enabled && <Button variant={view === "returns" ? "default" : "outline"} size="sm" onClick={() => setView("returns")}>المرتجعات</Button>}
+        {isDelegateRole(user?.role) && <Button variant={view === "completed" ? "default" : "outline"} size="sm" onClick={() => setView("completed")}>{completedLabels[language].title}</Button>}
+        {canViewDelegateExternal && <Button variant={view === "external" ? "default" : "outline"} size="sm" onClick={() => setView("external")}>{t.workflow.purchase.delegateExternalMaintenanceTab}</Button>}
+        {canViewReturns && returnStatus.data?.enabled && <Button variant={view === "returns" ? "default" : "outline"} size="sm" onClick={() => setView("returns")}>{isDelegateRole(user?.role) ? "مرتجعات المستودع" : "المرتجعات"}</Button>}
         {canReviewSpecifications && <Button variant={view === "specifications" ? "default" : "outline"} size="sm" onClick={() => setView("specifications")}>مطابقة المواصفات ({specifications.data?.total || 0})</Button>}
-        {user?.role !== "delegate" && <Button
+        {!isDelegateRole(user?.role) && <Button
           variant={view === "all" ? "default" : "outline"}
           size="sm"
           onClick={() => setView("all")}
@@ -960,7 +969,7 @@ export default function PurchaseOrders() {
                     <Button
                       size="sm"
                       onClick={() => {
-                        const delegateActionQuery = user?.role !== "delegate"
+                        const delegateActionQuery = !isDelegateRole(user?.role)
                           ? ""
                           : it.actionMode === "purchase"
                             ? "?action=purchase"
@@ -1084,6 +1093,7 @@ export default function PurchaseOrders() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    {canManagerAssignOwnItem(authenticatedUser, item) && <Button size="sm" variant="outline" onClick={event => { event.stopPropagation(); setManagerAssignmentItem(item); }}>{t.purchaseOrders.managerAssignToDelegate}</Button>}
                     {item.status === "estimated" && !item.batchId && !item.delegateChangeRequestedAt && <PricingBundleAddButton itemId={item.id} />}
                     <Badge variant={item.actionMode === "purchase" ? "default" : "outline"}>
                       {item.actionMode === "purchase"
@@ -1183,7 +1193,14 @@ export default function PurchaseOrders() {
       )}
 
       {/* ── متابعة التوريد: صف بطاقة واضح لكل صنف ───────────────── */}
-      {view === "completed" && user?.role === "delegate" && <DelegateCompletedItems />}
+      {view === "completed" && isDelegateRole(user?.role) && <DelegateCompletedItems />}
+      <DelegateManagerAssignmentDialog key={managerAssignmentItem?.id || "none"} item={managerAssignmentItem} onClose={() => setManagerAssignmentItem(null)} onAssigned={() => {
+        void utils.purchaseOrders.actionableItemsForMe.invalidate();
+        void utils.purchaseOrders.pendingEstimateItems.invalidate();
+        void utils.purchaseOrders.supplyTracking.invalidate();
+        if (managerAssignmentItem?.purchaseOrderId) void utils.purchaseOrders.getById.invalidate({ id: managerAssignmentItem.purchaseOrderId });
+      }} />
+      {view === "external" && canViewDelegateExternal && <DelegateExternalMaintenanceCards />}
       {view === "returns" && canViewReturns && <SupplierReturns />}
       {view === "supply" && canAccessSupplyTracking && (
         <div className="space-y-4">
@@ -1241,7 +1258,7 @@ export default function PurchaseOrders() {
                 </div>
               )}
 
-              {user?.role !== "delegate" && <div className="flex flex-wrap items-center gap-2">
+              {!isDelegateRole(user?.role) && <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-medium text-muted-foreground me-1">{t.workflow.purchase.supplyDelayFilter}</span>
                 {([
                   ["all", t.workflow.purchase.supplyDelayAll],
@@ -1290,7 +1307,7 @@ export default function PurchaseOrders() {
                 {t.workflow.purchase.supplyNoResults}
               </CardContent>
             </Card>
-          ) : user?.role === "delegate" ? <DelegateSupplyRows items={filteredSupplyTrackingItems} /> : (
+          ) : isDelegateRole(user?.role) ? <DelegateSupplyRows items={filteredSupplyTrackingItems} /> : (
             <div className="space-y-2">
               {filteredSupplyTrackingItems.map((item: any) => {
                 const availableDays = getAvailableCalendarDays(item.requiredDate, item.delegateAssignedAt);

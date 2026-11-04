@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { isDelegateRole } from "../../../shared/delegate-role";
 import { mediaReferenceUnavailable, resolveMediaReferenceSources } from "./media-reference-sources";
 import { assertGateSecurityMediaReference } from "./gate-security-guard";
 import { authorizePurchaseAttachment, isPurchaseDocumentAttachment, isPurchasePdfApprover } from "./purchase-document";
@@ -124,7 +125,7 @@ export const mediaAccessPort: MediaAccessPort = {
       if (isPurchaseDocumentAttachment(type)) {
         // Preserve the delegate's existing frozen archive access, independent of
         // a later PO reassignment. The new approval prerequisite is financial-role only.
-        if (user.role === "delegate" && ["delegate_pricing_batch", "delegate_package_submission_pricing"].includes(type)) {
+        if (isDelegateRole(user.role) && ["delegate_pricing_batch", "delegate_package_submission_pricing"].includes(type)) {
           if (ref.ownerId !== user.id) throw denied();
           return;
         }
@@ -145,7 +146,7 @@ export const mediaAccessPort: MediaAccessPort = {
     if (ref.kind === "reference") return;
     if (ref.kind === "warehouse" || ref.kind === "receipt") { if (user.role !== "warehouse") throw denied(); return; }
     if (ref.kind === "inventory" || ref.kind === "delivery") {
-      if (!["delegate", "warehouse", "senior_management", "executive_director", "maintenance_manager", "purchase_requester", "food_warehouse_manager", "food_warehouse_assistant"].includes(user.role)) throw denied();
+      if (!isDelegateRole(user.role) && !["warehouse", "senior_management", "executive_director", "maintenance_manager", "purchase_requester", "food_warehouse_manager", "food_warehouse_assistant"].includes(user.role)) throw denied();
       return;
     }
     if (ref.kind === "pm") {
@@ -158,6 +159,15 @@ export const mediaAccessPort: MediaAccessPort = {
     }
     const db = await import("../db");
     if (ref.kind === "external" && user.role === "warehouse") return;
+    if (ref.kind === "external" && isDelegateRole(user.role)) {
+      const { loadExternalDelegateScopes, isPrepurchaseExternalJob, isExternalDelegateJob } = await import("./external-delegate-access");
+      const scope = (await loadExternalDelegateScopes([ref.id])).get(ref.id);
+      if (!scope || Number(scope.ticketId) !== Number(ref.parentId)) throw denied();
+      if (isPrepurchaseExternalJob(scope)) {
+        if (!isExternalDelegateJob(user, scope) || !key || mediaKeyFromValue(scope.assetBeforePhotoUrl) !== key) throw denied();
+        return;
+      }
+    }
     if (ref.kind === "ticket" || ref.kind === "external") {
       const ticket = await db.getTicketById(ref.parentId!);
       if (!ticket) throw denied();

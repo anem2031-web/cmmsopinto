@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import { z } from "zod";
-import { APP_ROLE } from "../../shared/roles";
+import { APP_ROLE, isDelegateRole } from "../../shared/roles";
 import { mediaKeyFromValue } from "../_core/authz/media-access";
 import { purchaseDocumentPort } from "../_core/authz/purchase-document";
 import { protectedProcedure } from "../routers/_shared/procedures";
@@ -202,7 +202,7 @@ describe("Known /api/media financial PDF keys", () => {
 
 describe("Actual document-center list route, without exposing preapproval file keys", () => {
   const sourceFile = ts.createSourceFile("attachments.router.ts", readFileSync("server/routers/uploads/attachments.router.ts", "utf8"), ts.ScriptTarget.Latest, true);
-  const compile = (text: string, scope: any) => vm.runInNewContext(ts.transpileModule(`(${text.replace(/^export /, "")})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, scope);
+  const compile = (text: string, scope: any) => vm.runInNewContext(ts.transpileModule(`(${text.replace(/^export /, "")})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, { isDelegateRole, ...scope });
   const helper = sourceFile.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "documentRows")!;
   const documentRows = compile(helper.getText(sourceFile), { decorateDocumentRows, loadDocumentListPort: async () => purchaseDocumentPort });
   let listCode = "";

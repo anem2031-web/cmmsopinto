@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { isDelegateRole } from "@shared/roles";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ const replacementStatus: Record<string, string> = {
 export function SupplierReturns() {
   const { user } = useAuth();
   const [page, setPage] = useState(1);
+  const [returnStatus, setReturnStatus] = useState<"active" | "completed">("active");
   const [reason, setReason] = useState<Record<number, string>>({});
   const [refundReference, setRefundReference] = useState<Record<number, string>>({});
   const [refundMethod, setRefundMethod] = useState<Record<number, "cash" | "transfer">>({});
@@ -25,7 +27,10 @@ export function SupplierReturns() {
   // Retain the key for an uncertain retry of the SAME payload, not for a new action.
   const [keys] = useState(() => new Map<string, string>());
   const status = trpc.supplierReturns.status.useQuery();
-  const list = trpc.supplierReturns.list.useQuery({ page, pageSize: 20 }, { enabled: status.data?.enabled === true });
+  const list = trpc.supplierReturns.list.useQuery({ page, pageSize: 20, status: returnStatus }, { enabled: status.data?.enabled === true });
+  useEffect(() => {
+    if (list.data && page > Math.max(1, Math.ceil(list.data.total / 20))) setPage(Math.max(1, Math.ceil(list.data.total / 20)));
+  }, [list.data?.total, page]);
   const change = trpc.supplierReturns.command.useMutation({
     onSuccess: () => { toast.success("تم حفظ الإجراء"); void list.refetch(); },
     onError: error => toast.error(error.message),
@@ -70,30 +75,36 @@ export function SupplierReturns() {
       setPickerCaseId(null);
     }} />
     <div className="flex items-center justify-between"><h2 className="font-bold">متابعة مرتجعات المورد</h2><Button variant="outline" onClick={() => void list.refetch()}>تحديث</Button></div>
+    <div className="flex gap-2" role="tablist" aria-label="حالة متابعة المرتجع">
+      <Button role="tab" aria-selected={returnStatus === "active"} variant={returnStatus === "active" ? "default" : "outline"} onClick={() => { setReturnStatus("active"); setPage(1); }}>قيد المتابعة</Button>
+      <Button role="tab" aria-selected={returnStatus === "completed"} variant={returnStatus === "completed" ? "default" : "outline"} onClick={() => { setReturnStatus("completed"); setPage(1); }}>مكتملة</Button>
+    </div>
     {list.isLoading && <p>جارٍ التحميل…</p>}
     {list.error && <p role="alert">{list.error.message}</p>}
-    {list.data?.items.length === 0 && <p>لا توجد مرتجعات للمتابعة.</p>}
+    {list.data?.items.length === 0 && <p>{returnStatus === "completed" ? "لا توجد متابعات مرتجع مكتملة." : "لا توجد مرتجعات قيد المتابعة."}</p>}
     {list.data?.items.map(row => <Card key={row.id}><CardContent className="p-4 space-y-3">
       <h3 className="font-semibold">{row.itemName || "صنف المرتجع"} — {row.returnNumber}</h3>
       <p>{row.poNumber || "بدون طلب شراء"} · {row.returnedQuantity} {row.returnedUnit}</p>
+      {row.originalReceiptNumber && !row.poNumber && <p>سند الاستلام المستقل: {row.originalReceiptNumber}</p>}
+      {row.parentReturnNumber && <p className="text-sm text-muted-foreground">تعويض متتابع للمرتجع: {row.parentReturnNumber}</p>}
       {row.originalPurchaseValue != null && <p>قيمة الكمية المرتجعة من الفاتورة: <strong>{Number(row.originalPurchaseValue).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ر.س</strong></p>}
       {row.supplierCreditAmount != null && <p>رصيد التعويض بعد تأكيد المندوب: <strong>{Number(row.supplierCreditAmount).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ر.س</strong></p>}
       <p>سبب المرتجع: {row.returnReason}</p>
       <p>{row.handoverStatus === "accepted" ? "استلم المندوب المرتجع" : row.handoverStatus === "rejected" ? "أُعيد للمستودع لمراجعة التسليم" : "بانتظار تأكيد استلام المندوب"}</p>
       {row.rejectionReason && <p>سبب عدم الاستلام: {row.rejectionReason}</p>}
-      {!row.closedAt && user?.role === "delegate" && row.handoverStatus === "awaiting_delegate" && <div className="space-y-2">
+      {!row.closedAt && isDelegateRole(user?.role) && row.handoverStatus === "awaiting_delegate" && <div className="space-y-2">
         <Button disabled={change.isPending} onClick={() => act(row, "accept")}>استلمت المرتجع</Button>
         <Input aria-label="سبب عدم استلام المرتجع" placeholder="سبب عدم الاستلام (إلزامي عند الرفض)" value={reason[row.id] ?? ""} onChange={event => setReason({ ...reason, [row.id]: event.target.value })} />
         <Button variant="outline" disabled={change.isPending} onClick={() => act(row, "reject")}>لم أستلم المرتجع</Button>
       </div>}
       {!row.closedAt && ["warehouse", "admin", "owner"].includes(user?.role ?? "") && row.handoverStatus === "rejected" && <Button disabled={change.isPending} onClick={() => act(row, "resend")}>إعادة التسليم للمندوب</Button>}
-      {!row.closedAt && user?.role === "delegate" && row.handoverStatus === "accepted" && !row.resolution && <div className="flex gap-2 flex-wrap">
+      {!row.closedAt && isDelegateRole(user?.role) && row.handoverStatus === "accepted" && !row.resolution && <div className="flex gap-2 flex-wrap">
         <Button disabled={change.isPending} onClick={() => act(row, "resolve", "same_item")}>استبدال بنفس الصنف</Button>
         <Button variant="outline" disabled={change.isPending} onClick={() => act(row, "resolve", "change_item")}>طلب صنف بديل من منشئ الطلب</Button>
         <Button variant="outline" disabled={change.isPending} onClick={() => act(row, "resolve", "refund")}>استرداد المبلغ</Button>
       </div>}
       {row.resolution && <p>الإجراء المختار: {row.resolution === "same_item" ? "استبدال بنفس الصنف" : row.resolution === "change_item" ? "طلب صنف بديل" : "استرداد المبلغ"}</p>}
-      {!row.closedAt && row.resolution === "refund" && !row.confirmedRefundId && user?.role === "delegate" && Number(row.delegateId) === user.id && <div className="space-y-2 rounded-md border p-3">
+      {!row.closedAt && row.resolution === "refund" && !row.confirmedRefundId && isDelegateRole(user?.role) && Number(row.delegateId) === user?.id && <div className="space-y-2 rounded-md border p-3">
         <p>أكد استلام مبلغ المرتجع من المورد بعد وصول النقد أو التحويل فعليًا.</p>
         <select aria-label="طريقة استلام المبلغ" value={refundMethod[row.id] || "cash"} onChange={event => setRefundMethod(prev => ({...prev,[row.id]:event.target.value as "cash" | "transfer"}))}>
           <option value="cash">نقدًا</option><option value="transfer">تحويل</option>
@@ -117,7 +128,7 @@ export function SupplierReturns() {
           <Button disabled={chooseReplacement.isPending} onClick={() => selectReplacement(row)}>حفظ اختيار البديل</Button></div>}
       </div>}
       {row.confirmedRefundId && <p className="text-emerald-800">تم تأكيد استرداد المبلغ: {Number(row.confirmedRefundAmount ?? row.originalPurchaseValue).toFixed(2)} ر.س — المرجع: {row.refundReference || "—"}</p>}
-      {row.closedAt && <p className="text-emerald-800">أُغلقت متابعة المرتجع بعد قرار منشئ الطلب.</p>}
+      {row.closedAt && <p className="text-emerald-800">{row.replacementPlanStatus === "received" ? "اكتملت متابعة المرتجع باستلام البديل." : "أُغلقت متابعة التعويض بعد استرداد المبلغ وقرار منشئ الطلب."}</p>}
       {!row.closedAt && row.resolution === "refund" && !row.confirmedRefundId && row.creatorDecision === "pending" && Number(row.creatorId) === user?.id
         && <p className="text-amber-800">بانتظار توثيق استرداد المبلغ قبل اتخاذ قرار الصنف الأصلي.</p>}
       {!row.closedAt && row.resolution === "refund" && row.confirmedRefundId && row.creatorDecision === "pending" && Number(row.creatorId) === user?.id
@@ -128,13 +139,14 @@ export function SupplierReturns() {
           cancelAfterRefund.mutate({ ...command, operationKey: keys.get(identity)! });
         }}>إلغاء الصنف غير المرتبط بعد الاسترداد</Button>}
       {row.replacementPlanId && <div className="rounded-md border p-3 space-y-1">
-        <p>الاحتياج الأصلي: {row.itemName || "صنف المرتجع"} — {row.returnedQuantity} {row.returnedUnit}</p>
+        <p>{row.parentReplacementPlanId ? "الصنف المرتجع في هذه الجولة" : "الاحتياج الأصلي"}: {row.itemName || "صنف المرتجع"} — {row.returnedQuantity} {row.returnedUnit}</p>
         <p>البديل المرتبط: {row.replacementItemName || "بانتظار تحديد الصنف"} — {row.replacementQuantity} {row.replacementUnit}</p>
         <p>خطة البديل #{row.replacementPlanId} · {row.replacementPurchaseOrderId
           ? <a className="text-primary underline" href={`/purchase-orders/${row.replacementPurchaseOrderId}`}>طلب الشراء {row.replacementPoNumber || `#${row.replacementPurchaseOrderId}`}</a>
           : "بانتظار إنشاء طلب الشراء التعويضي"}</p>
         {row.replacementPlanStatus && <p>مرحلة التعويض: {replacementStatus[row.replacementPlanStatus] || row.replacementPlanStatus}</p>}
         {row.replacementQuotedTotal != null && <p>سعر البديل: {Number(row.replacementQuotedTotal).toFixed(2)} ر.س · رصيد المرتجع المستخدم: {Number(row.replacementCreditAllocated ?? 0).toFixed(2)} ر.س · فرق العهدة: {Number(row.replacementAdditionalFunding ?? 0).toFixed(2)} ر.س</p>}
+        {row.residualCustodyAmount != null && Number(row.residualCustodyAmount) > 0 && <p className="font-semibold text-amber-800">متبقٍ بعهدة المندوب: {Number(row.residualCustodyAmount).toFixed(2)} ر.س</p>}
       </div>}
       {row.replacementPlanId && !row.replacementPurchaseOrderId && row.replacementPlanStatus === "pending_review"
         && (Number(row.creatorId) === user?.id || ["admin", "owner"].includes(user?.role || ""))

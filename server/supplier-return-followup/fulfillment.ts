@@ -33,6 +33,13 @@ export interface ReplacementFulfillment {
   replacementQuantity: string;
   orderQuantity: string;
   lots: ReplacementLot[];
+  /** Exact physical -> original-need ratio across received replacement rounds. */
+  coverageRatio?: { numerator: string; denominator: string };
+  /** Coverage left after actual supplier returns; does not change lot identity. */
+  maximumOriginalQuantity?: string;
+  parentReplacementPlanId?: number | null;
+  hasSuccessor?: boolean;
+  supplierReturnedQuantity?: string;
 }
 
 const positiveId = (value: unknown) => Number.isSafeInteger(Number(value)) && Number(value) > 0;
@@ -55,12 +62,33 @@ function exactRatio(value: bigint, numerator: bigint, denominator: bigint) {
   if (result % BigInt(10)) invalid("كمية التعويض الناتجة تتجاوز دقة ثلاث منازل عشرية");
   return format4(result).slice(0, -1);
 }
+const gcd = (a: bigint, b: bigint): bigint => { while (b) { const rest = a % b; a = b; b = rest; } return a; };
+function ratio(plan: ReplacementFulfillment) {
+  const physical = physicalTotal(plan);
+  const numerator = plan.coverageRatio ? BigInt(plan.coverageRatio.numerator) : quantity3(plan.originalQuantityCovered);
+  const denominator = plan.coverageRatio ? BigInt(plan.coverageRatio.denominator) : physical;
+  if (numerator <= BigInt(0) || denominator <= BigInt(0)) invalid("نسبة جولات التعويض غير صالحة");
+  return { numerator, denominator };
+}
+const floorQuantity = (value: bigint) => format4(value / BigInt(10) * BigInt(10)).slice(0, -1);
+export function replacementCoverageLimit(plan: ReplacementFulfillment): string {
+  if (plan.maximumOriginalQuantity != null) return plan.maximumOriginalQuantity;
+  const r = ratio(plan);
+  return floorQuantity(physicalTotal(plan) * r.numerator / r.denominator);
+}
+/** Display/planner metadata only. Actual movement conversion stays exact. */
+export function replacementOriginalPerPhysical(plan: ReplacementFulfillment): number {
+  const r = ratio(plan), scale = BigInt("1000000000000");
+  return Number(r.numerator * scale / r.denominator) / Number(scale);
+}
 /** Physical delivery rows retain their actual unit; only need progress is converted. */
 export function replacementPhysicalToOriginal(plan: ReplacementFulfillment, physical: string): string {
-  return exactRatio(quantity3(physical), quantity3(plan.originalQuantityCovered), physicalTotal(plan));
+  const r = ratio(plan);
+  return exactRatio(quantity3(physical), r.numerator, r.denominator);
 }
 export function replacementOriginalToPhysical(plan: ReplacementFulfillment, original: string): string {
-  return exactRatio(quantity3(original), physicalTotal(plan), quantity3(plan.originalQuantityCovered));
+  const r = ratio(plan);
+  return exactRatio(quantity3(original), r.denominator, r.numerator);
 }
 
 /** A source PO may include warehouse extras beyond its assigned need link.
@@ -68,7 +96,7 @@ export function replacementOriginalToPhysical(plan: ReplacementFulfillment, orig
 export function limitReplacementSourceCoverage(plans: ReplacementFulfillment[], sourceLinkedQuantity: string) {
   let remaining = quantity3(sourceLinkedQuantity);
   return plans.slice().sort((a, b) => a.planId - b.planId).map(plan => {
-    const declared = quantity3(plan.originalQuantityCovered), eligible = remaining < declared ? remaining : declared;
+    const declared = quantity3(replacementCoverageLimit(plan)), eligible = remaining < declared ? remaining : declared;
     remaining -= eligible;
     return { ...plan, maximumOriginalQuantity: format4(eligible).slice(0, -1) };
   });
@@ -80,32 +108,32 @@ export function limitReplacementSourceCoverage(plans: ReplacementFulfillment[], 
 export function representableReplacementAllocation(plan: ReplacementFulfillment, input: {
   availablePhysical: string; maxOriginal: string; originalStep?: string; physicalStep?: string;
 }): { physicalQuantity: string; originalQuantity: string } {
-  const physical = physicalTotal(plan), original = quantity3(plan.originalQuantityCovered);
+  const physical = physicalTotal(plan), { numerator, denominator } = ratio(plan);
   const requestedAvailable = quantity3(input.availablePhysical), requestedCap = quantity3(input.maxOriginal);
   const available = requestedAvailable < physical ? requestedAvailable : physical;
-  const cap = requestedCap < original ? requestedCap : original;
+  const original = quantity3(replacementCoverageLimit(plan)), cap = requestedCap < original ? requestedCap : original;
   const physicalStep = quantity3(input.physicalStep ?? "1"), originalStep = quantity3(input.originalStep ?? "0.001");
   if (physicalStep <= BigInt(0) || originalStep <= BigInt(0)) invalid("خطوة الكمية غير صالحة");
   const gcd = (a: bigint, b: bigint): bigint => {
     while (b !== BigInt(0)) { const remainder = a % b; a = b; b = remainder; }
     return a;
   };
-  const lattice = physicalStep * (physical * originalStep / gcd(physicalStep * original, physical * originalStep));
-  const byOriginal = cap * physical / original;
+  const lattice = physicalStep * (denominator * originalStep / gcd(physicalStep * numerator, denominator * originalStep));
+  const byOriginal = cap * denominator / numerator;
   const bound = available < byOriginal ? available : byOriginal;
   const selected = bound / lattice * lattice;
-  return { physicalQuantity: format4(selected).slice(0, -1), originalQuantity: format4(selected * original / physical).slice(0, -1) };
+  return { physicalQuantity: format4(selected).slice(0, -1), originalQuantity: format4(selected * numerator / denominator).slice(0, -1) };
 }
 
 export function replacementAllocationQuantum(plan: ReplacementFulfillment, input: { originalStep?: string; physicalStep?: string } = {}) {
   const selected = representableReplacementAllocation(plan, { availablePhysical: format4(physicalTotal(plan)),
-    maxOriginal: plan.originalQuantityCovered, ...input });
-  const fullPhysical = physicalTotal(plan), fullOriginal = quantity3(plan.originalQuantityCovered);
+    maxOriginal: replacementCoverageLimit(plan), ...input });
+  const { numerator, denominator } = ratio(plan);
   const p = quantity3(input.physicalStep ?? "1"), o = quantity3(input.originalStep ?? "0.001");
-  let a = p * fullOriginal, b = fullPhysical * o;
+  let a = p * numerator, b = denominator * o;
   while (b) { const r = a % b; a = b; b = r; }
-  const quantum = p * (fullPhysical * o / a);
-  return { physicalQuantity: format4(quantum).slice(0, -1), originalQuantity: format4(quantum * fullOriginal / fullPhysical).slice(0, -1),
+  const quantum = p * (denominator * o / a);
+  return { physicalQuantity: format4(quantum).slice(0, -1), originalQuantity: format4(quantum * numerator / denominator).slice(0, -1),
     feasible: quantity3(selected.physicalQuantity) > BigInt(0) };
 }
 
@@ -162,20 +190,30 @@ export function exactOriginalAllocation(target: string, candidates: Array<{ maxi
 
 /** Provenance-only lookup. Actor/resource permission must be checked by the caller;
  * no identity or authorization snapshot is cached across operations. */
-export async function loadReplacementFulfillments(tx: FollowupTx, sourceItemIds: number[]): Promise<Map<number, ReplacementFulfillment[]>> {
+async function loadDirectReplacementFulfillments(tx: FollowupTx, sourceItemIds: number[]): Promise<Map<number, ReplacementFulfillment[]>> {
   const result = new Map<number, ReplacementFulfillment[]>();
   const ids = Array.from(new Set(sourceItemIds));
   if (!ids.length) return result;
   if (ids.some(id => !positiveId(id))) invalid("مرجع بند الشراء غير صالح");
-  if (!await trialEnabled(tx)) return result;
   for (let offset = 0; offset < ids.length; offset += 500) {
     const included = new Set(ids.slice(offset, offset + 500));
-    const rows = await readRows(tx, sql`SELECT p.id AS planId,p.caseId,c.purchaseOrderItemId AS sourceItemId,c.purchaseOrderId AS sourcePurchaseOrderId,
+    const rows = await readRows(tx, sql`SELECT p.id AS planId,p.caseId,c.parentReplacementPlanId,c.purchaseOrderItemId AS sourceItemId,c.purchaseOrderId AS sourcePurchaseOrderId,
         source.catalogItemId AS sourceCatalogItemId,sourceOrder.ticketId AS sourceTicketId,sourceOrder.ticketItemId AS sourceTicketItemId,c.returnedUnit AS sourceUnit,p.originalQuantityCovered,
         p.purchaseOrderItemId AS replacementItemId,p.purchaseOrderId AS replacementPurchaseOrderId,
         p.catalogItemId,p.itemName,p.replacementUnit,p.replacementQuantity,
         link.id AS receiptLinkId,link.receivedQuantity,link.receivedUnit,link.compensatedOriginalQuantity,link.originalUnit,
-        l.id AS lotId,l.trackingToken,l.issueUnit,l.originalQuantity AS lotQuantity
+        l.id AS lotId,l.trackingToken,l.issueUnit,l.originalQuantity AS lotQuantity,
+        EXISTS(SELECT 1 FROM supplier_return_cases child WHERE child.parentReplacementPlanId=p.id) AS hasSuccessor,
+        (SELECT COALESCE(SUM(r.returnedQuantity),0) FROM warehouse_returns r WHERE r.lotId=l.id AND r.sourceDeliveryDocumentId IS NULL) AS supplierReturnedQuantity,
+        CASE WHEN c.parentReplacementPlanId IS NULL THEN 1 ELSE EXISTS(
+          SELECT 1 FROM supplier_return_replacement_plans previous
+          INNER JOIN supplier_return_cases previousCase ON previousCase.id=previous.caseId AND previousCase.handoverStatus='accepted'
+          INNER JOIN supplier_return_replacement_links previousLink ON previousLink.caseId=previous.caseId
+            AND previousLink.purchaseOrderId=previous.purchaseOrderId AND previousLink.purchaseOrderItemId=previous.purchaseOrderItemId
+          WHERE previous.id=c.parentReplacementPlanId AND previous.status='received'
+            AND previous.purchaseOrderId=c.purchaseOrderId AND previous.purchaseOrderItemId=c.purchaseOrderItemId
+            AND previousLink.lotId=c.lotId AND previousLink.receiptId=c.receiptId AND previousLink.receiptItemId=c.receiptItemId
+        ) END AS parentSourceValid
       FROM supplier_return_cases c
       INNER JOIN purchase_order_items source ON source.id=c.purchaseOrderItemId AND source.purchaseOrderId=c.purchaseOrderId
       INNER JOIN purchase_orders sourceOrder ON sourceOrder.id=source.purchaseOrderId
@@ -192,6 +230,7 @@ export async function loadReplacementFulfillments(tx: FollowupTx, sourceItemIds:
     for (const row of rows) {
       if (!included.has(Number(row.sourceItemId))) invalid("مصدر البديل خارج نطاق الاحتياج المطلوب");
       if (![row.planId, row.caseId, row.sourceItemId, row.replacementItemId, row.catalogItemId, row.lotId, row.receiptLinkId].every(positiveId)) invalid("رابط الاستلام غير صالح");
+      if (row.parentReplacementPlanId != null && Number(row.parentSourceValid) !== 1) invalid("مرجع الجولة السابقة لا يطابق لوت المرتجع وفاتورته");
       let entry = byPlan.get(Number(row.planId));
       if (!entry) {
         const plan: ReplacementFulfillment = {
@@ -204,6 +243,8 @@ export async function loadReplacementFulfillments(tx: FollowupTx, sourceItemIds:
           catalogItemId: Number(row.catalogItemId), itemName: String(row.itemName),
           replacementUnit: String(row.replacementUnit).trim(), orderUnit: String(row.replacementUnit).trim(),
           replacementQuantity: String(row.replacementQuantity), orderQuantity: String(row.replacementQuantity), lots: [],
+          parentReplacementPlanId: row.parentReplacementPlanId == null ? null : Number(row.parentReplacementPlanId),
+          hasSuccessor: Number(row.hasSuccessor) === 1, supplierReturnedQuantity: "0",
         };
         if (!plan.sourceUnit || !plan.replacementUnit) invalid("وحدة التعويض غير محددة");
         entry = { plan, received: BigInt(0), covered: BigInt(0), links: new Set(), lots: new Set() };
@@ -213,6 +254,9 @@ export async function loadReplacementFulfillments(tx: FollowupTx, sourceItemIds:
       if (String(row.receivedUnit).trim() !== entry.plan.orderUnit || String(row.originalUnit).trim() !== entry.plan.originalUnit || !String(row.issueUnit ?? "").trim() || !row.trackingToken) invalid("وحدة استلام البديل لا تطابق الخطة");
       entry.links.add(Number(row.receiptLinkId)); entry.lots.add(Number(row.lotId));
       entry.received += quantity3(String(row.receivedQuantity)); entry.covered += quantity3(String(row.compensatedOriginalQuantity));
+      const returned = quantity3(String(row.supplierReturnedQuantity ?? "0"));
+      if (returned > quantity3(String(row.lotQuantity))) invalid("مرتجع المورد يتجاوز لوت البديل الأصلي");
+      entry.plan.supplierReturnedQuantity = format4(quantity3(entry.plan.supplierReturnedQuantity ?? "0") + returned).slice(0, -1);
       entry.plan.lots.push({ lotId: Number(row.lotId), trackingToken: String(row.trackingToken), unit: String(row.issueUnit).trim(), issueUnit: String(row.issueUnit).trim(), quantity: String(row.lotQuantity), originalQuantity: String(row.lotQuantity) });
     }
     for (const { plan, received, covered } of Array.from(byPlan.values())) {
@@ -220,6 +264,57 @@ export async function loadReplacementFulfillments(tx: FollowupTx, sourceItemIds:
       physicalTotal(plan);
       const values = result.get(plan.sourceItemId) ?? []; values.push(plan); result.set(plan.sourceItemId, values);
     }
+  }
+  return result;
+}
+
+/** Load each generation by distinct source IDs, then project descendants onto
+ * each requested original need. No recursive database feature or row-wise read. */
+export async function loadReplacementFulfillments(tx: FollowupTx, sourceItemIds: number[]): Promise<Map<number, ReplacementFulfillment[]>> {
+  const ids = Array.from(new Set(sourceItemIds));
+  const result = new Map<number, ReplacementFulfillment[]>();
+  if (!ids.length) return result;
+  if (ids.some(id => !positiveId(id))) invalid("مرجع بند الشراء غير صالح");
+  if (!await trialEnabled(tx)) return result;
+  const graph = new Map<number, ReplacementFulfillment[]>(), loaded = new Set<number>();
+  let frontier = ids;
+  for (let depth = 0; frontier.length; depth++) {
+    if (depth >= 64) invalid("عدد جولات التعويض يحتاج مراجعة الروابط");
+    const direct = await loadDirectReplacementFulfillments(tx, frontier);
+    frontier.forEach(id => loaded.add(id));
+    const next = new Set<number>();
+    for (const [sourceId, plans] of Array.from(direct.entries())) {
+      graph.set(sourceId, plans);
+      for (const plan of plans) if (plan.hasSuccessor && !loaded.has(plan.replacementItemId)) next.add(plan.replacementItemId);
+    }
+    frontier = Array.from(next);
+  }
+  for (const sourceId of ids) {
+    const projected: ReplacementFulfillment[] = [];
+    const visit = (plan: ReplacementFulfillment, root: ReplacementFulfillment, parentRatio: { numerator: bigint; denominator: bigint } | null, path: Set<number>) => {
+      if (path.has(plan.planId)) invalid("دورة غير صالحة في روابط جولات التعويض");
+      const r = ratio(plan);
+      let numerator = r.numerator * (parentRatio?.numerator ?? BigInt(1)), denominator = r.denominator * (parentRatio?.denominator ?? BigInt(1));
+      const divisor = gcd(numerator, denominator); numerator /= divisor; denominator /= divisor;
+      const physical = physicalTotal(plan), returned = quantity3(plan.supplierReturnedQuantity ?? "0");
+      if (returned > physical) invalid("إجمالي مرتجعات الجولة يتجاوز كمية البديل");
+      const maximumOriginalQuantity = floorQuantity((physical - returned) * numerator / denominator);
+      projected.push({ ...plan, sourceItemId: sourceId, sourcePurchaseOrderId: root.sourcePurchaseOrderId,
+        sourceCatalogItemId: root.sourceCatalogItemId, sourceTicketId: root.sourceTicketId, sourceTicketItemId: root.sourceTicketItemId,
+        sourceUnit: root.sourceUnit, originalUnit: root.originalUnit, quantityCovered: maximumOriginalQuantity, maximumOriginalQuantity,
+        coverageRatio: { numerator: String(numerator), denominator: String(denominator) } });
+      if (plan.hasSuccessor) {
+        const nextPath = new Set(path); nextPath.add(plan.planId);
+        for (const child of graph.get(plan.replacementItemId) ?? []) {
+          if (child.parentReplacementPlanId !== plan.planId) continue;
+          if (child.sourcePurchaseOrderId !== plan.replacementPurchaseOrderId || child.sourceCatalogItemId !== plan.catalogItemId
+            || child.sourceUnit !== plan.lots[0].unit) invalid("هوية أو وحدة الجولة الجديدة لا تطابق البديل المرتجع");
+          visit(child, root, { numerator, denominator }, nextPath);
+        }
+      }
+    };
+    for (const plan of graph.get(sourceId) ?? []) visit(plan, plan, null, new Set());
+    if (projected.length) result.set(sourceId, projected);
   }
   return result;
 }

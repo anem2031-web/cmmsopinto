@@ -9,7 +9,8 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { catalogAuditLogs, catalogItems, catalogUnits, catalogSuppliers, catalogSupplierAliases, catalogSupplierItemAliases, catalogSupplierCandidates, warehouseReceipts, warehouses } from "../../../drizzle/schema";
 import { INVALID_CONVERSION_MESSAGE, receiptInOrderUnits } from "../../../shared/receipt-conversion";
 import { getActiveCatalogUnitCanonicalName } from "../../_core/catalog-unit-governance";
-import { router, inventoryReadProcedure, warehouseProcedure } from "../_shared/procedures";
+import { router, inventoryReadProcedure, warehouseProcedure, adminOwnerProcedure } from "../_shared/procedures";
+import { assertReceiptAnalysisAccess, assertStandaloneReceiptActor } from "../../_core/authz/standalone-receipt";
 import * as db from "../../_core/db";
 import { analyzeInvoiceFromUrl, analyzeInvoiceFromBase64 } from "../../services/ocr/invoiceOcr.service";
 import {
@@ -75,9 +76,10 @@ export const receiptsV2Router = router({
       imageUrl:        z.string().optional(),
       base64Image:     z.string().optional(),
       mimeType:        z.string().default("image/jpeg"),
-      purchaseOrderId: z.number().optional(),
+      purchaseOrderId: z.number().int().positive().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      await assertReceiptAnalysisAccess(ctx.authenticatedUser ?? ctx.user, input.purchaseOrderId, db.getPurchaseOrderById);
       if (!input.imageUrl && !input.base64Image) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "يجب توفير صورة الفاتورة" });
       }
@@ -188,7 +190,11 @@ export const receiptsV2Router = router({
   // ── استلام مستقل بلا طلب شراء — لدعم فاتورة شراء عامة/مصاريف نثرية من
   //   شاشة المخزون مباشرة، بلا أي دورة طلب شراء وراءها. كل الأصناف هنا
   //   بالتعريف بلا purchaseOrderItemId (لا يوجد بند طلب لتربطها به).
-  receiveStandaloneV2: warehouseProcedure
+  receiveStandaloneV2: adminOwnerProcedure.use(({ ctx, next }) => {
+    const actor = ctx.authenticatedUser ?? ctx.user;
+    assertStandaloneReceiptActor(actor);
+    return next({ ctx: { ...ctx, user: actor } });
+  })
     .input(z.object({
       vendorName:       z.string().optional(),
       vendorNameEn:     z.string().optional(),

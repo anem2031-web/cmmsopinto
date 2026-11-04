@@ -1,4 +1,4 @@
-import { isItTeamRole } from "@shared/roles";
+import { isItTeamRole, isDelegateRole } from "@shared/roles";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { APP_ROLE, MAINTENANCE_RESPONSIBLE_DEPARTMENT } from "@shared/roles";
@@ -7,6 +7,7 @@ import {
   canGateApproveExternalExit,
   canWarehouseHandOverExternalAsset,
   canWarehouseReceiveExternalAsset,
+  hasCurrentExternalDelegateReceipt,
 } from "@shared/externalMaintenanceWorkflow";
 import {
   gateSecurityProcedure,
@@ -19,6 +20,7 @@ import { assertTicketReadable } from "../tickets/tickets.access";
 import { queueTranslation } from "../../services/translation/translationEngine";
 import { detectLanguage } from "../../services/translation/translation";
 import { returnExternalRoute, readExternalRouteReviews, decideExternalRoute } from "../../services/external-route-review";
+import { isExternalDelegateJob, loadExternalDelegateScopes, requireExternalDelegateJobs } from "../../_core/authz/external-delegate-access";
 
 function translateExternalDbError(error: unknown): never {
   const code = error instanceof Error ? error.message : String(error);
@@ -30,11 +32,19 @@ function translateExternalDbError(error: unknown): never {
     EXTERNAL_JOB_INVALID_RECEIPT_STAGE: "لا يمكن للمستودع استلام الأصل قبل موافقة الحراسة على الدخول",
     EXTERNAL_JOB_INVALID_HANDOVER_STAGE: "لا يمكن تسليم الأصل للفني قبل تسجيل استلامه في المستودع",
     EXTERNAL_JOB_DELEGATE_REQUIRED: "يجب تحديد المندوب المسؤول قبل خروج الأصل",
+    EXTERNAL_PURCHASE_TITLE_REQUIRED: "عنوان طلب الشراء مطلوب",
+    EXTERNAL_PREPARATION_INVALID: "أكمل بيانات تجهيز الأصل",
+    EXTERNAL_PREPARATION_CONFLICT: "تغير تجهيز الأصل؛ حدّث الصفحة قبل إعادة الإرسال",
+    EXTERNAL_ACTOR_FORBIDDEN: "الحساب غير نشط أو لا يملك صلاحية الإجراء",
+    EXTERNAL_DELEGATE_RECEIPT_FORBIDDEN: "المهمة الخارجية مسندة إلى مندوب آخر",
+    EXTERNAL_DELEGATE_RECEIPT_CONFLICT: "تغيرت المهمة أو سبق اتخاذ القرار؛ حدّث الصفحة",
+    EXTERNAL_DELEGATE_REJECTION_REASON_REQUIRED: "سبب رفض استلام الأصل إلزامي",
+    EXTERNAL_DELEGATE_RECEIPT_REQUIRED: "يلزم تأكيد المندوب استلام أحدث تجهيز قبل موافقة الخروج",
     EXTERNAL_TICKET_INVALID_EXIT_STAGE: "البلاغ ليس جاهزًا لخروج الأصل في المسار C",
     EXTERNAL_TICKET_ASSIGNED_TECHNICIAN_REQUIRED: "يجب وجود فني مسند للبلاغ قبل تسليم الأصل لإعادة التركيب",
   };
   throw new TRPCError({
-    code: code.includes("EXISTS") ? "CONFLICT" : "BAD_REQUEST",
+    code: code.includes("FORBIDDEN") ? "FORBIDDEN" : code.includes("EXISTS") || code.includes("CONFLICT") ? "CONFLICT" : "BAD_REQUEST",
     message: messages[code] || "تعذر تنفيذ إجراء الصيانة الخارجية",
   });
 }
@@ -61,10 +71,18 @@ async function queueExternalJobTranslation(
 
 async function assertActiveUserWithRole(userId: number, allowedRoles: string[], message: string) {
   const user = await db.getUserById(userId);
-  if (!user || user.isActive === 0 || !allowedRoles.includes(user.role)) {
+  if (!user || user.isActive === 0 || (!allowedRoles.includes(user.role)&&!(allowedRoles.includes(APP_ROLE.DELEGATE)&&isDelegateRole(user.role)))) {
     throw new TRPCError({ code: "BAD_REQUEST", message });
   }
   return user;
+}
+
+async function currentExternalActor(context: {user:any;authenticatedUser?:any}, roles: string[]) {
+  const identity=context.authenticatedUser??context.user;
+  if(!identity || identity.isActive!==1 || (!roles.includes(identity.role)&&!(roles.includes(APP_ROLE.DELEGATE)&&isDelegateRole(identity.role)))) throw new TRPCError({code:"FORBIDDEN",message:"ليس لديك صلاحية لهذا الإجراء"});
+  const actor=await db.getUserById(identity.id);
+  if(!actor || actor.role!==identity.role || actor.isActive!==1) throw new TRPCError({code:"FORBIDDEN",message:"الحساب غير متاح"});
+  return actor;
 }
 
 export const externalMaintenanceRouter = router({
@@ -85,6 +103,8 @@ export const externalMaintenanceRouter = router({
     const [waitingPreparation, jobs] = await Promise.all([
       db.listPathCTicketsWaitingWarehousePreparation(),
       db.listExternalMaintenanceJobs([
+        "waiting_delegate_receipt",
+        "waiting_warehouse_preparation",
         "waiting_gate_exit",
         "purchase_cycle",
         "waiting_gate_entry",
@@ -99,8 +119,45 @@ export const externalMaintenanceRouter = router({
     return { waitingPreparation, jobs };
   }),
 
+  listForDelegate: protectedProcedure.query(async ({ctx}) => {
+    const actor=await currentExternalActor(ctx,[APP_ROLE.DELEGATE]);
+    const rows=await db.listExternalMaintenanceJobsForDelegate(actor.id);
+    const scope=await loadExternalDelegateScopes(Array.from(new Set(rows.map(row=>Number(row.job.id)))));
+    return rows.filter(row=>{
+      const job=scope.get(Number(row.job.id));
+      return job && Number(row.job.delegateId)===actor.id && isExternalDelegateJob(actor,job);
+    });
+  }),
+
+  decideDelegateReceipt: protectedProcedure.input(z.object({
+    jobId:z.number().int().positive(),expectedRevision:z.number().int().positive(),decision:z.enum(["accept","reject"]),reason:z.string().trim().max(4000).optional(),
+  }).strict().superRefine((input,context)=>{
+    if(input.decision==="reject"&&!input.reason?.trim()) context.addIssue({code:"custom",path:["reason"],message:"سبب رفض استلام الأصل إلزامي"});
+  })).mutation(async ({ctx,input})=>{
+    const actor=await currentExternalActor(ctx,[APP_ROLE.DELEGATE]);
+    await requireExternalDelegateJobs(actor,[input.jobId]);
+    try {
+      const result=await db.decideExternalMaintenanceDelegateReceipt({...input,delegateId:actor.id});
+      // Core has committed the current preparation decision before any alert.
+      const recipients=input.decision==="accept" ? await db.getUsersByRole(APP_ROLE.GATE_SECURITY) : await db.getUsersByRole(APP_ROLE.WAREHOUSE);
+      const targetIds=new Set<number>(recipients.filter(user=>user.isActive===1).map(user=>user.id));
+      if(input.decision==="reject"&&result.warehousePreparedById) targetIds.add(result.warehousePreparedById);
+      for(const userId of Array.from(targetIds)) await db.createNotification({userId,
+        title:input.decision==="accept"?"🚪 أصل بانتظار موافقة الخروج":"رفض المندوب استلام الأصل",
+        message:input.decision==="accept"?`أكد المندوب استلام الأصل. وثيقة الخروج ${result.exitDocumentNumber} بانتظار موافقة الحراسة.`:`لم يستلم المندوب الأصل: ${input.reason}`,
+        type:input.decision==="accept"?"warning":"info",relatedTicketId:result.ticketId});
+      await db.createAuditLog({userId:actor.id,action:"external_delegate_receipt_decided",entityType:"external_maintenance_job",entityId:input.jobId,
+        newValues:{decision:input.decision,reason:input.reason,preparationRevision:result.preparationRevision}});
+      return result;
+    } catch(error) {
+      if(error instanceof TRPCError) throw error;
+      if(error instanceof Error&&error.message.startsWith("EXTERNAL_")) translateExternalDbError(error);
+      throw error;
+    }
+  }),
+
   listForGate: gateSecurityProcedure.query(async () => {
-    return db.listExternalMaintenanceJobs([
+    const rows=await db.listExternalMaintenanceJobs([
       "waiting_gate_exit",
       "purchase_cycle",
       "waiting_gate_entry",
@@ -111,20 +168,25 @@ export const externalMaintenanceRouter = router({
       "ready_for_closure",
       "closed",
     ]);
+    return rows.filter(row=>row.job.status!=="waiting_gate_exit" || (row.job.purchaseOrderId==null&&!row.job.gateExitApprovedAt&&hasCurrentExternalDelegateReceipt(row.job)));
   }),
 
   prepareByWarehouse: warehouseProcedure.input(z.object({
     ticketId: z.number(),
+    jobId:z.number().int().positive().optional(),
+    expectedRevision:z.number().int().nonnegative().optional(),
     // بند البلاغ المستهدف — الخطوة 5 (2026-08-08). اختياري: إن أُغفل، يُستخدم
     // البند الأول تلقائيًا (البلاغ أحادي البند — الأغلبية الساحقة — لا يحتاج
     // الواجهة القديمة تمرير هذا الحقل إطلاقًا، فيسلك نفس السلوك القديم حرفيًا).
     ticketItemId: z.number().optional(),
     assetName: z.string().trim().min(1, "اسم الأصل مطلوب"),
+    purchaseTitle:z.string().trim().min(1,"عنوان طلب الشراء مطلوب").max(300),
     assetBeforePhotoUrl: z.string().trim().min(1, "صورة الأصل قبل الخروج مطلوبة"),
     assetBeforeCondition: z.string().trim().min(1, "وصف حالة الأصل قبل الخروج مطلوب"),
     delegateId: z.number(),
     warehouseNotes: z.string().trim().optional(),
   })).mutation(async ({ input, ctx }) => {
+    const actor=await currentExternalActor(ctx,[APP_ROLE.WAREHOUSE,APP_ROLE.ADMIN,APP_ROLE.OWNER]);
     const ticket = await db.getTicketById(input.ticketId);
     if (!ticket) throw new TRPCError({ code: "NOT_FOUND", message: "البلاغ غير موجود" });
 
@@ -142,47 +204,41 @@ export const externalMaintenanceRouter = router({
     if (item.maintenancePath !== "C" || item.status !== "work_approved") {
       throw new TRPCError({ code: "BAD_REQUEST", message: "البند ليس في مرحلة تجهيز أصل المسار C" });
     }
-    await assertActiveUserWithRole(input.delegateId, [APP_ROLE.DELEGATE], "يجب اختيار مندوب صالح");
+    const selectedDelegate=await assertActiveUserWithRole(input.delegateId, [APP_ROLE.DELEGATE], "يجب اختيار مندوب صالح");
+    if(selectedDelegate.isActive!==1) throw new TRPCError({code:"BAD_REQUEST",message:"يجب اختيار مندوب نشط"});
 
     try {
       const result = await db.prepareExternalMaintenanceJob({
         ticketId: input.ticketId,
         ticketItemId,
         assetName: input.assetName,
+        purchaseTitle:input.purchaseTitle,
+        jobId:input.jobId,
+        expectedRevision:input.expectedRevision,
         assetBeforePhotoUrl: input.assetBeforePhotoUrl,
         assetBeforeCondition: input.assetBeforeCondition,
         delegateId: input.delegateId,
         warehouseNotes: input.warehouseNotes,
-        warehousePreparedById: ctx.user.id,
+        warehousePreparedById: actor.id,
       });
       await queueExternalJobTranslation(result.jobId, [
         { fieldName: "assetName", text: input.assetName },
         { fieldName: "assetBeforeCondition", text: input.assetBeforeCondition },
         { fieldName: "warehouseNotes", text: input.warehouseNotes },
       ], ctx.user.id);
-      const gateUsers = await db.getUsersByRole(APP_ROLE.GATE_SECURITY);
-      for (const gateUser of gateUsers) {
-        await db.createNotification({
-          userId: gateUser.id,
-          title: "🚪 أصل بانتظار موافقة الخروج",
-          message: `تم تجهيز الأصل للبلاغ ${ticket.ticketNumber}. وثيقة الخروج ${result.exitDocumentNumber} بانتظار موافقة الحراسة.`,
-          type: "warning",
-          relatedTicketId: ticket.id,
-        });
-      }
       await db.createNotification({
         userId: input.delegateId,
         title: "تم اختيارك لمهمة صيانة خارجية",
-        message: `تم اختيارك لمتابعة الأصل المرتبط بالبلاغ ${ticket.ticketNumber}. ستظهر المهمة بعد موافقة الحراسة على الخروج.`,
+        message: `تم تجهيز الأصل للبلاغ ${ticket.ticketNumber}. راجع مهمة الصيانة الخارجية وأكد استلام الأصل أو ارفضه مع السبب.`,
         type: "info",
         relatedTicketId: ticket.id,
       });
       await db.createAuditLog({
-        userId: ctx.user.id,
+        userId: actor.id,
         action: "prepare_external_maintenance_asset",
         entityType: "ticket",
         entityId: ticket.id,
-        newValues: { delegateId: input.delegateId, exitDocumentNumber: result.exitDocumentNumber },
+        newValues: { delegateId: input.delegateId, exitDocumentNumber: result.exitDocumentNumber,purchaseTitle:input.purchaseTitle,preparationRevision:result.preparationRevision },
       });
       return result;
     } catch (error) {
@@ -197,7 +253,7 @@ export const externalMaintenanceRouter = router({
   })).mutation(async ({ input, ctx }) => {
     const job = await db.getExternalMaintenanceJobById(input.jobId);
     if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "سجل الصيانة الخارجية غير موجود" });
-    if (!canGateApproveExternalExit(job.status)) {
+    if (!canGateApproveExternalExit(job.status) || !hasCurrentExternalDelegateReceipt(job) || job.purchaseOrderId!=null || job.gateExitApprovedAt) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن اعتماد الخروج في المرحلة الحالية" });
     }
     try {

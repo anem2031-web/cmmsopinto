@@ -84,7 +84,8 @@ describe("PMV2 replacement physical/original allocation",()=>{
     const tx:any={execute:async(query:any)=>{
       const {sql:statement}=new MySqlDialect().sqlToQuery(query);
       if(statement.includes("SELECT DATABASE()")) return [[{databaseName:"copycmms2"}]];
-      if(statement.includes("FROM pmv2_material_purchase_links")) return [[{id:2,returnedQuantity:"2",returnedUnit:"قطعة",linkedQuantity:"2",unitSnapshot:"قطعة",planId:1,planStatus:"pending_management"}]];
+      if(statement.includes("FROM pmv2_material_purchase_links")) return [[{purchaseOrderItemId:3,linkedQuantity:"2",unitSnapshot:"قطعة"}]];
+      if(statement.includes("FROM supplier_return_cases c")) return [[{id:2,sourceItemId:3,sourcePurchaseOrderId:4,sourceItemExists:3,sourceOrderExists:4,returnedQuantity:"2",returnedUnit:"قطعة",closedAt:null,planId:1,planStatus:"pending_management"}]];
       if(statement.includes("FROM pmv2_item_actions")) return [[]];
       throw Error(statement);
     }};

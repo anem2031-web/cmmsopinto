@@ -8,6 +8,7 @@ import * as review from "../../shared/purchase-item-review";
 import { requirePurchaseReviewSelection, purchaseReviewRecipients, assertNoWholeOrderRevisionOfRoutedItems, assertRoutedPurchaseItemReady } from "../services/purchase-review-routing";
 import { purchaseItemNeedTimingShape, validatePurchaseItemNeedTiming } from "../routers/purchase/item-need-timing";
 import { MAX_TICKET_PURCHASE_QUANTITY } from "../../shared/maintenance-team-tickets/purchase-quantities";
+import { isDelegateRole } from "../../shared/roles";
 
 const source = readFileSync("server/routers/purchase/purchase-orders.router.ts", "utf8");
 const ast = ts.createSourceFile("purchase.ts", source, ts.ScriptTarget.Latest, true);
@@ -24,7 +25,7 @@ function visit(node: ts.Node) {
 }
 visit(ast);
 function evaluate(code: string, scope: any) {
-  return vm.runInNewContext(ts.transpileModule(`(${code})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, scope);
+  return vm.runInNewContext(ts.transpileModule(`(${code})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, { isDelegateRole, ...scope });
 }
 const role = "general_maintenance_manager";
 const item = { id: 2, purchaseOrderId: 1, reviewRole: role, status: "pending_review", updatedAt: "2026-11-03 10:00:00", reviewedById: null, itemName: "A" };
