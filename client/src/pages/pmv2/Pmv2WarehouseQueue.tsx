@@ -14,6 +14,7 @@ import { useTranslation } from "@/contexts/LanguageContext";
 import { localizeApiError } from "@/i18n/apiError";
 import { getPmv2MaterialQuantityValidationMessage, pmv2MaterialUnitRequiresWholeQuantity } from "@shared/pmv2MaterialQuantity";
 import { matchesReturnSearch } from "@/lib/returnSearch";
+import { MaterialRequestMeta } from "@/components/inventory/MaterialRequestMeta";
 
 function buildStatusView(t: any): Record<string, { label: string; className: string }> {
   return {
@@ -319,6 +320,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
                       <Badge variant="outline" className={statusView.className}>{statusView.label}</Badge>
                     </div>
                   </CardHeader>
+                  <div className="px-6 py-3"><MaterialRequestMeta creatorName={item.requestCreatorName} sentAt={item.requestCreatedAt} language={language} /></div>
                   <details className="group">
                     <summary className="cursor-pointer list-none border-b px-6 py-3 text-sm font-medium text-primary hover:bg-muted/40 [&::-webkit-details-marker]:hidden">
                       <span className="group-open:hidden">{t.workflow.pmv2.showDetailsAction}</span>
@@ -511,6 +513,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
                       </Badge>
                     </div>
                   </CardHeader>
+                  <div className="px-6 py-3"><MaterialRequestMeta creatorName={item.requestCreatorName} sentAt={item.requestCreatedAt} language={language} /></div>
                   <details className="group">
                     <summary className="cursor-pointer list-none border-b px-6 py-3 text-sm font-medium text-primary hover:bg-muted/40 [&::-webkit-details-marker]:hidden">
                       <span className="group-open:hidden">{t.workflow.pmv2.showDetailsIssue}</span>

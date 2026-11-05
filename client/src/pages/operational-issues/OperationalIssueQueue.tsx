@@ -13,6 +13,7 @@ import { operationalIssueText } from "@/i18n/operationalIssues";
 import { OperationalStockPanel } from "./OperationalStockPanel";
 import { PreparedDispatchPanel } from "./PreparedDispatchPanel";
 import { matchesReturnSearch } from "@/lib/returnSearch";
+import { MaterialRequestMeta } from "@/components/inventory/MaterialRequestMeta";
 
 export function OperationalIssueQueue({ process = false, returnsOnly = false, search = "" }: {
   process?: boolean; returnsOnly?: boolean; search?: string;
@@ -41,7 +42,9 @@ export function OperationalIssueQueue({ process = false, returnsOnly = false, se
     {!orders.length && <p className="text-muted-foreground">{text.empty}</p>}
     <div className="space-y-2">{orders.map(order => <Card key={order.id}>
       <CardContent className="py-3 flex flex-wrap justify-between items-center gap-3">
-        <div><p className="font-semibold">{order.orderNumber}</p><p className="text-sm text-muted-foreground">{order.siteName} / {order.sectionName} · {text.collector}: {order.collectorName}</p></div>
+        <div><p className="font-semibold">{order.orderNumber}</p><p className="text-sm text-muted-foreground">{order.siteName} / {order.sectionName} · {text.collector}: {order.collectorName}</p>
+          {process && <MaterialRequestMeta creatorName={order.creatorName} sentAt={order.createdAt} language={language} />}
+        </div>
         <div className="flex gap-2 items-center"><Badge variant="outline">{text[order.status]}</Badge><Button variant="outline" onClick={() => setId(order.id)}>{text.details}</Button></div>
       </CardContent>
     </Card>)}</div>

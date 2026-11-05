@@ -8,6 +8,7 @@ import {
   pmv2TaskItems,
   pmv2Tasks,
   pmv2Teams,
+  users,
 } from "../../../drizzle/schema";
 import { getDb } from "../../_core/db/client";
 import {
@@ -110,6 +111,7 @@ export class Pmv2WarehouseQueueService {
         requestItemId: pmv2MaterialRequestItems.id,
         requestCreatedAt: pmv2MaterialRequests.createdAt,
         requestedById: pmv2MaterialRequests.requestedById,
+        requestCreatorName: users.name,
         taskItemId: pmv2MaterialRequests.taskItemId,
         taskItemTitle: pmv2TaskItems.titleSnapshot,
         taskId: pmv2Tasks.id,
@@ -139,6 +141,7 @@ export class Pmv2WarehouseQueueService {
       )
       .innerJoin(pmv2Tasks, eq(pmv2Tasks.id, pmv2TaskItems.taskId))
       .innerJoin(pmv2Teams, eq(pmv2Teams.id, pmv2MaterialRequests.teamId))
+      .leftJoin(users, eq(users.id, pmv2MaterialRequests.requestedById))
       .where(eq(pmv2MaterialRequestItems.status, "waiting_warehouse"))
       .orderBy(
         asc(pmv2MaterialRequestItems.createdAt),

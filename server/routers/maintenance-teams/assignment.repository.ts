@@ -290,11 +290,13 @@ export class SqlTicketTeamAssignmentRepository implements TeamAssignmentReposito
     }
     const needs = rows(
       await db.execute(sql`SELECT n.id,n.assignmentId,n.materialRound,n.catalogItemId,n.itemNameSnapshot,n.originalItemName,n.unitSnapshot,n.requestedQuantity,n.usedQuantity,
+      n.createdAt AS requestCreatedAt,u.name AS requestCreatorName,
       COALESCE(d.issued,0) AS issued,COALESCE(d.returned,0) AS returned,
       CASE WHEN (SELECT COUNT(*) FROM inventory v WHERE v.warehouseId=n.warehouseId AND v.linkedItemId=n.catalogItemId)=1
       THEN COALESCE((SELECT LEAST(FLOOR(v.quantity),COALESCE((SELECT SUM(FLOOR(b.quantity)) FROM inventory_lot_balances b INNER JOIN inventory_lots l ON l.id=b.lotId WHERE b.inventoryId=v.id AND b.quantity>0 AND l.catalogItemId=n.catalogItemId AND (l.specificationStatus IS NULL OR l.specificationStatus='approved') AND COALESCE(NULLIF(l.issueUnit,''),NULLIF(v.issueUnit,''),v.unit)=n.unitSnapshot),0)) FROM inventory v INNER JOIN warehouses w ON w.id=v.warehouseId AND w.isActive=1 WHERE v.warehouseId=n.warehouseId AND v.linkedItemId=n.catalogItemId AND COALESCE(v.isFrozen,0)=0 AND COALESCE(NULLIF(v.issueUnit,''),v.unit)=n.unitSnapshot),0) ELSE 0 END AS available,
       a.materialRound AS currentRound
       FROM ticket_team_material_needs n INNER JOIN ticket_team_assignments a ON a.id=n.assignmentId
+      LEFT JOIN users u ON u.id=n.requestedById
       LEFT JOIN (SELECT needId,SUM(issuedQuantity) AS issued,SUM(returnedQuantity) AS returned FROM ticket_team_delivery_links GROUP BY needId) d ON d.needId=n.id
       WHERE n.assignmentId IN (${sql.join(
         tickets.map(t => sql`${t.assignmentId}`),
@@ -334,6 +336,8 @@ export class SqlTicketTeamAssignmentRepository implements TeamAssignmentReposito
               name: String(n.itemNameSnapshot ?? ""),
               unit: String(n.unitSnapshot ?? ""),
               section,
+              requestCreatorName: n.requestCreatorName == null ? null : String(n.requestCreatorName),
+              requestCreatedAt: n.requestCreatedAt instanceof Date ? n.requestCreatedAt.toISOString() : n.requestCreatedAt == null ? null : String(n.requestCreatedAt),
             },
           ];
           const left = Number(n.requestedQuantity) - Number(n.issued);

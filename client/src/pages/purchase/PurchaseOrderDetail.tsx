@@ -333,14 +333,6 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
     onError: (e: any) => toast.error(localizeApiError(e.message)),
   });
 
-  const resubmitItemRevisionMut = trpc.purchaseOrders.resubmitItemRevision.useMutation({
-  onSuccess: () => {
-    toast.success(t.purchaseOrders.itemResubmitted);
-    refetch();
-  },
-  onError: (e: any) => toast.error(localizeApiError(e.message))
-});
-
   const resubmitCancelledPurchaseMut = trpc.purchaseOrders.resubmitCancelledPurchase.useMutation({
     onSuccess: () => { toast.success(t.purchaseOrders.itemResubmittedToDelegate); refetch(); },
     onError: (e: any) => toast.error(localizeApiError(e.message)),
@@ -593,6 +585,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   const isEditingReturnedItem = !!editingItem &&
     canResolveReturnedItem &&
     ["needs_item_revision", "purchase_cancelled"].includes(editingItem.status);
+  const isEditingRevisionItem = isEditingReturnedItem && editingItem.status === "needs_item_revision";
 
   // ⚠️ 2026-08-13: كانت تُحوّل السلسلة الخام إلى Date ثم .toISOString() قبل
   // الإرسال. purchaseOrderItems.updatedAt معرَّف بـ`mode: 'string'` بالمخطط —
@@ -1404,15 +1397,6 @@ const visibleItems = useMemo(() => {
 
         {canResolveReturnedItem && (
           <>
-            <Button
-              size="sm"
-              onClick={() => resubmitItemRevisionMut.mutate({ itemId: item.id })}
-              disabled={resubmitItemRevisionMut.isPending}
-            >
-              {resubmitItemRevisionMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-              {t.workflow.purchase.resubmitItem}
-            </Button>
-
             <Button
               size="sm"
               variant="destructive"
@@ -2415,7 +2399,7 @@ const visibleItems = useMemo(() => {
           </div>
           <DialogFooter className="flex-wrap gap-2">
             <Button variant="outline" onClick={() => setEditingItem(null)}>{t.common.cancel}</Button>
-            <Button
+            {!isEditingRevisionItem && <Button
               variant={isEditingReturnedItem ? "outline" : "default"}
               onClick={() => {
                 if (!editingItem) return;
@@ -2443,7 +2427,7 @@ const visibleItems = useMemo(() => {
               {editItemMut.isPending
                 ? <Loader2 className="w-4 h-4 animate-spin" />
                 : (isEditingReturnedItem ? t.purchaseOrders.saveOnly : t.common.save)}
-            </Button>
+            </Button>}
 
             {isEditingReturnedItem && (
               <Button

@@ -8,6 +8,7 @@ import { useState, useEffect, useRef } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import type { WarehouseSection } from "@shared/maintenance-team-tickets/warehouse-materials";
 import { matchesReturnSearch } from "@/lib/returnSearch";
+import { MaterialRequestMeta } from "@/components/inventory/MaterialRequestMeta";
 
 export default function TicketWarehouseRequests({
   ticketId,
@@ -149,6 +150,9 @@ export default function TicketWarehouseRequests({
                       : undefined
                   }
                 >
+                  <div className="rounded-t-xl border border-b-0 bg-muted/20 p-3">
+                    <MaterialRequestMeta creatorName={need.requestCreatorName} sentAt={need.requestCreatedAt} language={language} />
+                  </div>
                   <ExecutionPanel
                     assignmentId={ticket.assignmentId}
                     warehouseNeedId={need.needId}

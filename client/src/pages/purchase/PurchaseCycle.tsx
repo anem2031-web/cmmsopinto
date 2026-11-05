@@ -450,11 +450,9 @@ export default function PurchaseCycle() {
   const [deliveryPrintData, setDeliveryPrintData] = useState<any>(null);
 
   // Delivery documents tab
-  const deliveryDocsQuery = trpc.deliveryDocuments.list.useQuery();
   const incrementDocPrintMut = trpc.deliveryDocuments.incrementPrint.useMutation();
 
   // Return documents (نفس تبويب "التوثيق" — تُنشأ تلقائياً بالخادم مع كل مرتجع)
-  const returnDocsQuery = trpc.returnDocuments.list.useQuery();
   const incrementReturnDocPrintMut = trpc.returnDocuments.incrementPrint.useMutation();
 
   // Upload states
@@ -519,6 +517,9 @@ export default function PurchaseCycle() {
   const isAdminOrOwner = role === "admin" || role === "owner";
   const isDelegate = isDelegateRole(role) || isAdminOrOwner;
   const isWarehouse = role === "warehouse" || isAdminOrOwner;
+  const showDeliveryDocuments = isWarehouse && role !== "warehouse";
+  const deliveryDocsQuery = trpc.deliveryDocuments.list.useQuery(undefined, { enabled: showDeliveryDocuments });
+  const returnDocsQuery = trpc.returnDocuments.list.useQuery(undefined, { enabled: showDeliveryDocuments });
 
   // Determine active tab based on role
   const defaultTab = isAdminOrOwner ? "purchase" : isDelegate ? "purchase" : isWarehouse ? "warehouse" : "purchase";
@@ -530,7 +531,7 @@ export default function PurchaseCycle() {
   const { data: pendingWarehouse = [], refetch: refetchWarehouse } = trpc.purchaseOrders.pendingWarehouseItems.useQuery(undefined, { enabled: isWarehouse || isAdminOrOwner, ...independentReadOptions });
   const { data: pendingDelivery = [], refetch: refetchDelivery } = trpc.purchaseOrders.pendingDeliveryItems.useQuery(undefined, { enabled: isWarehouse || isAdminOrOwner, ...independentReadOptions });
   // أصناف المخزون الجاهزة للتسليم (من OCR الفعلي)
-  const { data: inventoryItems = [], refetch: refetchInventory } = trpc.purchaseOrders.inventoryReadyForDelivery.useQuery(undefined, { enabled: isWarehouse || isAdminOrOwner });
+  const { data: inventoryItems = [], refetch: refetchInventory } = trpc.purchaseOrders.inventoryReadyForDelivery.useQuery(undefined, { enabled: showDeliveryDocuments });
   const { data: lotTrackingStatus } = trpc.inventoryCount.lotTrackingStatus.useQuery(undefined, { enabled: isWarehouse || isAdminOrOwner });
   const lotsEnabled = !!lotTrackingStatus?.enabled;
   // إدخال المخزون — أصناف وصلت للمستودع وبانتظار إدخال المخزون
@@ -861,8 +862,8 @@ export default function PurchaseCycle() {
       </div>
 
       {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className={`grid w-full ${isAdminOrOwner ? "grid-cols-6" : isDelegate ? "grid-cols-2" : "grid-cols-4"}`}>
+      <Tabs value={role === "warehouse" && ["delivery", "documents"].includes(activeTab) ? "warehouse" : activeTab} onValueChange={setActiveTab}>
+        <TabsList className={`grid w-full ${isAdminOrOwner ? "grid-cols-6" : isDelegate || role === "warehouse" ? "grid-cols-2" : "grid-cols-4"}`}>
           {isDelegate && (
             <>
               <TabsTrigger value="estimate" className="gap-1.5">
@@ -889,7 +890,7 @@ export default function PurchaseCycle() {
                 <span className="hidden sm:inline">{t.workflow.purchase.inventoryEntry}</span>
                 {Object.keys(groupedByInvoiceNumber).length > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">{pendingDelivery.length}</Badge>}
               </TabsTrigger>
-              <TabsTrigger value="delivery" className="gap-1.5">
+              {showDeliveryDocuments && <><TabsTrigger value="delivery" className="gap-1.5">
                 <Truck className="w-4 h-4" />
                 <span className="hidden sm:inline">{t.purchaseOrders.step3Delivery}</span>
                 {(inventoryItems as any[]).length > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">{(inventoryItems as any[]).length}</Badge>}
@@ -898,6 +899,7 @@ export default function PurchaseCycle() {
                 <FileText className="w-4 h-4" />
                 <span className="hidden sm:inline">{t.workflow.purchase.documents}</span>
               </TabsTrigger>
+              </>}
             </>
           )}
         </TabsList>
@@ -1158,7 +1160,7 @@ export default function PurchaseCycle() {
         </TabsContent>
 
         {/* ==================== TAB 3: Delivery to Assigned Technician ==================== */}
-        <TabsContent value="delivery" className="mt-4 space-y-4">
+        {showDeliveryDocuments && <TabsContent value="delivery" className="mt-4 space-y-4">
           <StepIndicator currentStep={3} />
 
           {/* ── خانة البحث الذكية ── */}
@@ -1288,12 +1290,12 @@ export default function PurchaseCycle() {
 
             </div>
             <Pagination total={filterDeliveryItems(newestInventoryItems, searchDelivery).length} page={pageDelivery} setPage={setPageDelivery} /></>)}
-        </TabsContent>
+        </TabsContent>}
 
         {/* ==================== TAB 5: Delivery Documents ==================== */}
-        <TabsContent value="documents" className="mt-4">
+        {showDeliveryDocuments && <TabsContent value="documents" className="mt-4">
           <DeliveryDocumentsTab deliveryDocsQuery={deliveryDocsQuery} returnDocsQuery={returnDocsQuery} searchDocs={searchDocs} setSearchDocs={setSearchDocs} docRecipient={docRecipient} setDocRecipient={setDocRecipient} docDateFrom={docDateFrom} setDocDateFrom={setDocDateFrom} docDateTo={docDateTo} setDocDateTo={setDocDateTo} pageDocs={pageDocs} setPageDocs={setPageDocs} incrementDocPrintMut={incrementDocPrintMut} incrementReturnDocPrintMut={incrementReturnDocPrintMut} />
-        </TabsContent>
+        </TabsContent>}
       </Tabs>
 
       {/* ==================== DIALOG 1: Purchase Confirmation ==================== */}
@@ -1528,7 +1530,7 @@ export default function PurchaseCycle() {
 
       {/* ==================== DIALOG 3: Delivery to Assigned Technician ==================== */}
       <Dialog
-        open={!!deliveryDialog}
+        open={showDeliveryDocuments && !!deliveryDialog}
         onOpenChange={(open) => {
           if (!open) {
             setDeliveryDialog(null);

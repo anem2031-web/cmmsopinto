@@ -63,6 +63,8 @@ export interface AssignedTeamTicket {
     name: string;
     unit: string;
     section: "waiting" | "ready" | "returns";
+    requestCreatorName?: string | null;
+    requestCreatedAt?: string | null;
   }>;
 }
 export interface AssignmentResult {

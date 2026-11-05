@@ -5,6 +5,7 @@ import { replacementOriginalPerPhysical } from "../../supplier-return-followup/f
 import {
   pmv2ItemActions,
   pmv2MaterialRequestItems,
+  pmv2MaterialRequests,
   pmv2MaterialUsages,
   pmv2ProgramTargets,
   pmv2TaskItems,
@@ -62,6 +63,8 @@ type MaterialRouteDecisionSnapshot = {
 };
 
 type RequirementContext = MaterialRouteDecisionSnapshot & {
+  requestCreatedAt?: Date | string | null;
+  requestCreatorName?: string | null;
   routeDecisionActionId: number;
   requesterUserId: number;
   visitId: number;
@@ -586,6 +589,7 @@ export class Pmv2TeamIssueHandoffService {
   async listReadyToIssueQueue() {
     const db = await requireDb();
     const routeRows = await db.select({
+      requestCreatedAt: pmv2ItemActions.createdAt, requestCreatorName: users.name,
       actionId: pmv2ItemActions.id, requesterUserId: pmv2ItemActions.performedById, visitId: pmv2ItemActions.visitId, note: pmv2ItemActions.note,
       taskId: pmv2Tasks.id, taskNumber: pmv2Tasks.taskNumber, taskStatus: pmv2Tasks.status, programTargetId: pmv2Tasks.programTargetId,
       taskItemId: pmv2TaskItems.id, taskItemTitle: pmv2TaskItems.titleSnapshot, itemStatus: pmv2TaskItems.status, itemResult: pmv2TaskItems.result,
@@ -594,6 +598,7 @@ export class Pmv2TeamIssueHandoffService {
       .innerJoin(pmv2TaskItems, eq(pmv2TaskItems.id, pmv2ItemActions.taskItemId))
       .innerJoin(pmv2Tasks, eq(pmv2Tasks.id, pmv2TaskItems.taskId))
       .innerJoin(pmv2Teams, eq(pmv2Teams.id, pmv2Tasks.teamId))
+      .leftJoin(users, eq(users.id, pmv2ItemActions.performedById))
       .where(and(
         eq(pmv2ItemActions.action, MATERIAL_ROUTE_DECISION_ACTION),
         eq(pmv2TaskItems.status, "waiting_material"), eq(pmv2TaskItems.result, "needs_material"), ne(pmv2Tasks.status, "cancelled"),
@@ -606,6 +611,7 @@ export class Pmv2TeamIssueHandoffService {
       const key = `${row.taskItemId}:${snapshot.catalogItemId}`;
       if (latest.has(key)) continue;
       latest.set(key, {
+        requestCreatedAt: row.requestCreatedAt, requestCreatorName: row.requestCreatorName,
         ...snapshot, routeDecisionActionId: Number(row.actionId), requesterUserId: Number(row.requesterUserId), visitId: Number(row.visitId),
         taskId: Number(row.taskId), taskNumber: String(row.taskNumber), taskStatus: String(row.taskStatus), programTargetId: Number(row.programTargetId),
         taskItemId: Number(row.taskItemId), taskItemTitle: String(row.taskItemTitle), itemStatus: String(row.itemStatus), itemResult: String(row.itemResult),
@@ -621,11 +627,15 @@ export class Pmv2TeamIssueHandoffService {
       ? await db
           .select({
             id: pmv2MaterialRequestItems.id,
+            requestCreatedAt: pmv2MaterialRequests.createdAt,
+            requestCreatorName: users.name,
             status: pmv2MaterialRequestItems.status,
             requestedQuantity: pmv2MaterialRequestItems.requestedQuantity,
             issuedToTeamQuantity: pmv2MaterialRequestItems.issuedToTeamQuantity,
           })
           .from(pmv2MaterialRequestItems)
+          .leftJoin(pmv2MaterialRequests, eq(pmv2MaterialRequests.id, pmv2MaterialRequestItems.requestId))
+          .leftJoin(users, eq(users.id, pmv2MaterialRequests.requestedById))
           .where(inArray(pmv2MaterialRequestItems.id, materialRequestItemIds))
       : [];
     const materialRequestById = new Map(materialRequestRows.map((row) => [Number(row.id), row]));
@@ -703,6 +713,8 @@ export class Pmv2TeamIssueHandoffService {
 
       const catalog = catalogById.get(Number(requirement.catalogItemId));
       result.push({
+        requestCreatedAt: requirement.materialRequestItemId ? materialRequestById.get(requirement.materialRequestItemId)?.requestCreatedAt ?? null : requirement.requestCreatedAt ?? null,
+        requestCreatorName: requirement.materialRequestItemId ? materialRequestById.get(requirement.materialRequestItemId)?.requestCreatorName ?? null : requirement.requestCreatorName ?? null,
         routeDecisionActionId: requirement.routeDecisionActionId,
         materialRequestItemId: requirement.materialRequestItemId,
         taskId: requirement.taskId, taskNumber: requirement.taskNumber, taskItemId: requirement.taskItemId, taskItemTitle: requirement.taskItemTitle,
