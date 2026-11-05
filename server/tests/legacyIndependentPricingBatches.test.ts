@@ -7,13 +7,14 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { purchaseOrders, purchaseOrderItems, users, procurementComments } from "../../drizzle/schema";
 import { buildItemRevisionComment } from "../routers/purchase/item-revision-comment";
+import { assertCatalogItemNameUnchanged } from "../routers/purchase/catalog-item-name";
 import { summarizePurchasePricingStage } from "../../shared/purchasePricingStage";
 import { getDelegateItemActionMode } from "../routers/purchase/actionable";
 import { isDelegateRole } from "../../shared/delegate-role";
 import { isRoutedPurchaseItem } from "../../shared/purchase-item-review";
 import { purchaseSpecificationsDatabase } from "./fixtures/purchaseSpecificationsDatabase";
 vi.mock("../_core/db", () => ({}));
-import { assertPOItemAssignedToDelegate, assertCanResolveReturnedPOItem } from "../_core/authz/guard";
+import { assertPOItemAssignedToDelegate, assertCanResolveReturnedPOItem, assertCanPerformPurchaseItemReviewAction } from "../_core/authz/guard";
 
 const routerPath = "server/routers/purchase/purchase-orders.router.ts";
 const current = readFileSync(routerPath, "utf8");
@@ -87,8 +88,8 @@ beforeEach(() => {
     getNextBatchNumber: async () => all("po_pricing_batches").length + 1,
     createPOPricingBatch: async (values: any) => { f.insert("po_pricing_batches", { id: 44, ...values }); return 44; },
   };
-  context = { z, TRPCError, sql, eq, purchaseOrders, purchaseOrderItems, users, procurementComments, buildItemRevisionComment, delegateProcedure: procedure, protectedProcedure: procedure, managementProcedure: procedure,
-    db: database, summarizePurchasePricingStage, assertPOItemAssignedToDelegate, assertCanResolveReturnedPOItem, isDelegateRole, isRoutedPurchaseItem,
+  context = { z, TRPCError, sql, eq, purchaseOrders, purchaseOrderItems, users, procurementComments, buildItemRevisionComment, assertCatalogItemNameUnchanged, delegateProcedure: procedure, protectedProcedure: procedure, managementProcedure: procedure,
+    db: database, summarizePurchasePricingStage, assertPOItemAssignedToDelegate, assertCanResolveReturnedPOItem, assertCanPerformPurchaseItemReviewAction, isDelegateRole, isRoutedPurchaseItem,
     assertRoutedPurchaseItemReady: () => {}, assertItemOutsidePricingBundle: vi.fn(), pricingBundlesEnabled: () => false, reservedPricingItemIds: async () => new Set(), isItemAssignedToPODelegate: (actor: any, item: any) => actor.id === item.delegateId,
     queuePurchaseTranslation: vi.fn(), createTranslatedProcurementComment: vi.fn(), syncPathBTicketFromPurchaseOrder: vi.fn(),
     externalWorkshopInput: z.object({}), withExternalWorkshopPricing: async ({ write }: any) => write(),
@@ -101,8 +102,49 @@ beforeEach(() => {
   };
   context.syncIndependentPurchasePricingStage = vm.runInNewContext(extract("syncIndependentPurchasePricingStage", current, true), context);
   context.withPurchaseItemReturnWrite = vm.runInNewContext(extract("withPurchaseItemReturnWrite", current, true), context);
+  context.withPendingReviewItemWrite = vm.runInNewContext(extract("withPendingReviewItemWrite", current, true), context);
 });
 afterEach(() => f.close());
+
+describe.each(["editItem", "editAndResubmitReturnedItem"])("catalog item name protection through %s", endpoint => {
+  async function source(catalogItemId: number | null = 3) {
+    await update("purchase_order_items", 22, { status: "needs_item_revision", catalogItemId });
+    return get("purchase_order_items", 22);
+  }
+  it.each([creator, { id: 11, role: "admin", isActive: 1, name: "Admin" }, { id: 12, role: "owner", isActive: 1, name: "Owner" }])("rejects a direct catalog rename by $role", async actor => {
+    if (actor.id !== creator.id) f.insert("users", actor);
+    const original = await source();
+    await expect(call(endpoint, { id: 22, purchaseOrderId: 10, itemName: "Forbidden rename", description: "Also must not save" }, actor)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(get("purchase_order_items", 22)).toEqual(original); expect(all("procurement_comments")).toHaveLength(0);
+  });
+  it("allows specifications and quantity while keeping the stored catalog name", async () => {
+    const original = await source(), batch = get("po_pricing_batches", 43);
+    await call(endpoint, { id: 22, purchaseOrderId: 10, itemName: original.itemName, description: "Clarified size", quantity: 2 }, creator);
+    expect(get("purchase_order_items", 22)).toMatchObject({ catalogItemId: 3, itemName: original.itemName, description: "Clarified size", quantity: 2 });
+    expect(get("po_pricing_batches", 43)).toEqual(batch);
+  });
+  it("allows renaming a free-text item", async () => {
+    await source(null);
+    await call(endpoint, { id: 22, purchaseOrderId: 10, itemName: "Corrected free-text name" }, creator);
+    expect(get("purchase_order_items", 22).itemName).toBe("Corrected free-text name");
+  });
+  it("allows omitted names without rewriting a stored historical name", async () => {
+    const original = await source();
+    await call(endpoint, { id: 22, purchaseOrderId: 10, notes: "Extra specification" }, creator);
+    expect(get("purchase_order_items", 22)).toMatchObject({ itemName: original.itemName, catalogItemId: 3, notes: "Extra specification" });
+  });
+  it("rechecks a newly linked catalog identity at the write boundary", async () => {
+    const original = await source(null);
+    database.getPOItemById = async (id: number) => {
+      const snapshot = get("purchase_order_items", id);
+      await update("purchase_order_items", id, { catalogItemId: 3 });
+      return snapshot;
+    };
+    await expect(call(endpoint, { id: 22, purchaseOrderId: 10, itemName: "Old dialog rename" }, creator)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(get("purchase_order_items", 22)).toMatchObject({ itemName: original.itemName, catalogItemId: 3, status: "needs_item_revision" });
+    expect(all("procurement_comments")).toHaveLength(0);
+  });
+});
 
 describe("revision conversation from the actual combined save handler", () => {
   async function returned(values: Record<string, unknown> = {}) {

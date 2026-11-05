@@ -2356,7 +2356,7 @@ const visibleItems = useMemo(() => {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>{t.purchaseOrders.itemName}</Label>
-              <Input value={editForm.itemName} onChange={e => setEditForm(p => ({ ...p, itemName: e.target.value }))} />
+              <Input readOnly={editingItem?.catalogItemId != null} value={editForm.itemName} onChange={e => setEditForm(p => ({ ...p, itemName: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label>{t.purchaseOrders.details}</Label>

@@ -3,6 +3,7 @@ import { sql, eq, inArray, and, isNull } from "drizzle-orm";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { purchaseOrders, purchaseOrderItems, users, tickets, ticketItems, externalMaintenanceJobs, procurementComments } from "../../drizzle/schema";
 import { buildItemRevisionComment } from "../routers/purchase/item-revision-comment";
+import { assertCatalogItemNameUnchanged } from "../routers/purchase/catalog-item-name";
 import { readScopeChunks } from "../_core/authz/read-batch";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
@@ -242,7 +243,7 @@ describe("actual pricing API handlers cannot bypass workshop validation", () => 
       externalWorkshopInput, withExternalWorkshopPricing, isDelegateRole, isRoutedPurchaseItem, assertRoutedPurchaseItemReady,
       assertPOItemAssignedToDelegate, assertCanPerformPurchaseItemReviewAction, assertCanResolveReturnedPOItem,
       summarizePurchasePricingStage, assertItemOutsidePricingBundle: async () => {},
-      purchaseOrders, purchaseOrderItems, users, procurementComments, buildItemRevisionComment, eq, queuePurchaseTranslation: vi.fn(), createTranslatedProcurementComment: vi.fn(), syncPathBTicketFromPurchaseOrder: vi.fn() };
+      purchaseOrders, purchaseOrderItems, users, procurementComments, buildItemRevisionComment, assertCatalogItemNameUnchanged, eq, queuePurchaseTranslation: vi.fn(), createTranslatedProcurementComment: vi.fn(), syncPathBTicketFromPurchaseOrder: vi.fn() };
     context.withPendingReviewItemWrite = vm.runInNewContext(expression("withPendingReviewItemWrite", true), context);
     context.syncIndependentPurchasePricingStage = vm.runInNewContext(expression("syncIndependentPurchasePricingStage", true), context);
     context.withPurchaseItemReturnWrite = vm.runInNewContext(expression("withPurchaseItemReturnWrite", true), context);

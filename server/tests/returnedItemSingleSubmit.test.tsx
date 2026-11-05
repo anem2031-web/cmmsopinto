@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
+import { Input } from "../../client/src/components/ui/input";
 
 const text = readFileSync("client/src/pages/purchase/PurchaseOrderDetail.tsx", "utf8");
 const source = ts.createSourceFile("detail.tsx", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -63,5 +64,19 @@ describe("one save-and-resubmit action for items returned for revision", () => {
   it("removes the card's independent revision resubmission call", () => {
     expect(text).not.toContain("resubmitItemRevisionMut");
     expect(text).toContain("resubmitCancelledPurchaseMut.mutate");
+  });
+});
+
+describe("catalog-linked name in the actual item edit form", () => {
+  let nameInput = "";
+  function find(node: ts.Node) {
+    if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(source) === "Input" && node.getText(source).includes("value={editForm.itemName}")) nameInput = node.getText(source);
+    ts.forEachChild(node, find);
+  }
+  find(source);
+  it.each([3, null, undefined])("locks only the linked name for catalogItemId=%s", catalogItemId => {
+    const html = renderToStaticMarkup(evaluate(nameInput, { React, Input, editingItem: { catalogItemId }, editForm: { itemName: "Stored item name" }, setEditForm: vi.fn() }));
+    expect(html).toContain("Stored item name");
+    expect(html.toLowerCase().includes('readonly=""')).toBe(catalogItemId != null);
   });
 });

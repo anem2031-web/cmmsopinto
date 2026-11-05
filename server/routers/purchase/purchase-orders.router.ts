@@ -56,6 +56,7 @@ import { issueCostAllocationsSchema } from "../inventory/issue-cost-allocation.s
 import { APP_ROLE, MAINTENANCE_RESPONSIBLE_DEPARTMENT, canRoleViewAllPurchaseSupplyTracking } from "@shared/roles";
 import { createTranslatedProcurementComment, queuePurchaseTranslation } from "./translation-queue";
 import { buildItemRevisionComment } from "./item-revision-comment";
+import { assertCatalogItemNameUnchanged } from "./catalog-item-name";
 import { isPurchasePdfApprover, purchaseDocumentPermission, withPurchaseDocumentPermissions } from "../../_core/authz/purchase-document";
 import { loadDocumentListPort } from "../../_core/db/document-list";
 import { groupReadRows } from "../../_core/authz/read-batch";
@@ -2087,6 +2088,7 @@ export const purchaseOrdersRouter = router({
 
     // ✅ الحارس المركزي (مستوى الصنف) — نفس منطق deleteItem بالضبط (موحَّد بـpolicy.ts)
     assertCanPerformPurchaseItemReviewAction("editItem", ctx.user, po, oldItem);
+    assertCatalogItemNameUnchanged(oldItem, input.itemName);
 
     if (
       oldItem.updatedAt &&
@@ -2119,7 +2121,14 @@ export const purchaseOrdersRouter = router({
       updates.estimatedTotalCost = String(parseFloat(oldItem.estimatedUnitCost) * input.quantity);
     }
     await withPendingReviewItemWrite(ctx.user, po, oldItem, "editItem", async tx => {
-    const saveItem = async (writeTx?: any) => {
+    const saveItem = async (writeTx?: any): Promise<void> => {
+    if (input.itemName !== undefined) {
+      if (!writeTx) return db.withTransaction(currentTx => saveItem(currentTx));
+      const [nameSource] = await writeTx.select({ itemName: purchaseOrderItems.itemName, catalogItemId: purchaseOrderItems.catalogItemId })
+        .from(purchaseOrderItems).where(eq(purchaseOrderItems.id, oldItem.id)).for("update");
+      if (!nameSource) throw new TRPCError({ code: "NOT_FOUND", message: "الصنف غير موجود" });
+      assertCatalogItemNameUnchanged(nameSource, input.itemName);
+    }
     if (input.estimatedUnitCost !== undefined) {
       const updated = await db.updatePOItemIfDelegateChangeUnlocked(input.id, updates, undefined, undefined, writeTx, oldItem.batchId,isDelegateRole(ctx.user.role)?ctx.user.id:undefined);
       if (!updated) {
@@ -2213,6 +2222,7 @@ export const purchaseOrdersRouter = router({
     }
 
     const wasRevisionRequest = oldItem.status === 'needs_item_revision';
+    assertCatalogItemNameUnchanged(oldItem, input.itemName);
     const updates: any = {
       status: wasRevisionRequest ? 'pending' : 'approved',
     };
@@ -2248,6 +2258,7 @@ export const purchaseOrdersRouter = router({
     let revisionComment: { id: number; note: string } | undefined;
     const saveReturnedItem = async (tx?: any) => withPurchaseItemReturnWrite(ctx.user, po, oldItem, "resubmit",
       async (currentTx, currentItem) => {
+        assertCatalogItemNameUnchanged(currentItem, input.itemName);
         const note = wasRevisionRequest ? buildItemRevisionComment(currentItem, updates) : undefined;
         await db.updatePOItem(oldItem.id, updates, currentTx);
         if (note !== undefined) {
