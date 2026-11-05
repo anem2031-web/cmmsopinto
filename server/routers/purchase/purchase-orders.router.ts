@@ -17,7 +17,7 @@ import { withPurchaseSubmissionTime } from "../../../shared/purchaseSubmissionTi
 import { comparePurchaseRequiredDates, resolvePurchaseItemNeedTiming } from "../../../shared/purchaseItemNeedDate";
 import { purchaseItemNeedTimingShape, validatePurchaseItemNeedTiming } from "./item-need-timing";
 import { and, eq, sql } from "drizzle-orm";
-import { itPurchaseNeeds, purchaseOrderItems, purchaseOrders, users } from "../../../drizzle/schema";
+import { itPurchaseNeeds, purchaseOrderItems, purchaseOrders, users, procurementComments } from "../../../drizzle/schema";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure, managerProcedure, warehouseProcedure, delegateProcedure, inventoryReadProcedure } from "../_shared/procedures";
@@ -55,6 +55,7 @@ import { resolveInventoryLotForIssue, isInventoryLotsEnabled } from "../../_core
 import { issueCostAllocationsSchema } from "../inventory/issue-cost-allocation.schema";
 import { APP_ROLE, MAINTENANCE_RESPONSIBLE_DEPARTMENT, canRoleViewAllPurchaseSupplyTracking } from "@shared/roles";
 import { createTranslatedProcurementComment, queuePurchaseTranslation } from "./translation-queue";
+import { buildItemRevisionComment } from "./item-revision-comment";
 import { isPurchasePdfApprover, purchaseDocumentPermission, withPurchaseDocumentPermissions } from "../../_core/authz/purchase-document";
 import { loadDocumentListPort } from "../../_core/db/document-list";
 import { groupReadRows } from "../../_core/authz/read-batch";
@@ -2244,8 +2245,21 @@ export const purchaseOrdersRouter = router({
       updates.purchaseCancelledAt = null;
     }
 
+    let revisionComment: { id: number; note: string } | undefined;
     const saveReturnedItem = async (tx?: any) => withPurchaseItemReturnWrite(ctx.user, po, oldItem, "resubmit",
-      currentTx => db.updatePOItem(oldItem.id, updates, currentTx), tx);
+      async (currentTx, currentItem) => {
+        const note = wasRevisionRequest ? buildItemRevisionComment(currentItem, updates) : undefined;
+        await db.updatePOItem(oldItem.id, updates, currentTx);
+        if (note !== undefined) {
+          const [result] = await currentTx.insert(procurementComments).values({
+            purchaseOrderId: po.id, purchaseOrderItemId: oldItem.id,
+            userId: ctx.user.id, userName: ctx.user.name || "User", userRole: ctx.user.role,
+            actionType: "item_revision_edited_and_resubmitted", note,
+          });
+          if (!result?.insertId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر تسجيل تغييرات الصنف؛ لم تتم إعادة إرساله" });
+          revisionComment = { id: Number(result.insertId), note };
+        }
+      }, tx);
     if (input.estimatedUnitCost !== undefined || input.quantity !== undefined && oldItem.estimatedUnitCost != null) {
       const workshopDatabase = await db.getDb();
       if (!workshopDatabase) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر الاتصال بقاعدة البيانات" });
@@ -2263,7 +2277,9 @@ export const purchaseOrdersRouter = router({
     ], ctx.user.id);
 
     const finalItemName = input.itemName ?? oldItem.itemName;
-    await createTranslatedProcurementComment(db, {
+    if (revisionComment) {
+      await queuePurchaseTranslation("PO_COMMENT", revisionComment.id, [{ fieldName: "note", text: revisionComment.note }], ctx.user.id);
+    } else await createTranslatedProcurementComment(db, {
       purchaseOrderId: po.id,
       purchaseOrderItemId: oldItem.id,
       userId: ctx.user.id,

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql, eq, inArray, and, isNull } from "drizzle-orm";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
-import { purchaseOrders, purchaseOrderItems, users, tickets, ticketItems, externalMaintenanceJobs } from "../../drizzle/schema";
+import { purchaseOrders, purchaseOrderItems, users, tickets, ticketItems, externalMaintenanceJobs, procurementComments } from "../../drizzle/schema";
+import { buildItemRevisionComment } from "../routers/purchase/item-revision-comment";
 import { readScopeChunks } from "../_core/authz/read-batch";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
@@ -31,6 +32,7 @@ beforeEach(() => {
     ALTER TABLE purchase_order_items ADD COLUMN estimatedUnitCost TEXT;
     ALTER TABLE purchase_order_items ADD COLUMN estimatedTotalCost TEXT;
     ALTER TABLE purchase_order_items ADD COLUMN updatedAt TEXT;
+    CREATE TABLE procurement_comments(id INTEGER PRIMARY KEY,purchaseOrderId INTEGER,purchaseOrderItemId INTEGER,userId INTEGER,userName TEXT,userRole TEXT,actionType TEXT,note TEXT,createdAt TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE tickets(id INTEGER PRIMARY KEY,maintenancePath TEXT);
     CREATE TABLE ticket_items(id INTEGER PRIMARY KEY,ticketId INTEGER,maintenancePath TEXT);
     CREATE TABLE external_maintenance_jobs(id INTEGER PRIMARY KEY,purchaseOrderId INTEGER,ticketId INTEGER,ticketItemId INTEGER,delegateId INTEGER,status TEXT,
@@ -240,7 +242,7 @@ describe("actual pricing API handlers cannot bypass workshop validation", () => 
       externalWorkshopInput, withExternalWorkshopPricing, isDelegateRole, isRoutedPurchaseItem, assertRoutedPurchaseItemReady,
       assertPOItemAssignedToDelegate, assertCanPerformPurchaseItemReviewAction, assertCanResolveReturnedPOItem,
       summarizePurchasePricingStage, assertItemOutsidePricingBundle: async () => {},
-      purchaseOrders, purchaseOrderItems, users, eq, queuePurchaseTranslation: vi.fn(), createTranslatedProcurementComment: vi.fn(), syncPathBTicketFromPurchaseOrder: vi.fn() };
+      purchaseOrders, purchaseOrderItems, users, procurementComments, buildItemRevisionComment, eq, queuePurchaseTranslation: vi.fn(), createTranslatedProcurementComment: vi.fn(), syncPathBTicketFromPurchaseOrder: vi.fn() };
     context.withPendingReviewItemWrite = vm.runInNewContext(expression("withPendingReviewItemWrite", true), context);
     context.syncIndependentPurchasePricingStage = vm.runInNewContext(expression("syncIndependentPurchasePricingStage", true), context);
     context.withPurchaseItemReturnWrite = vm.runInNewContext(expression("withPurchaseItemReturnWrite", true), context);

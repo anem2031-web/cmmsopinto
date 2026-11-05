@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql, eq } from "drizzle-orm";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { purchaseOrders, purchaseOrderItems, users } from "../../drizzle/schema";
+import { purchaseOrders, purchaseOrderItems, users, procurementComments } from "../../drizzle/schema";
+import { buildItemRevisionComment } from "../routers/purchase/item-revision-comment";
 import { summarizePurchasePricingStage } from "../../shared/purchasePricingStage";
 import { getDelegateItemActionMode } from "../routers/purchase/actionable";
 import { isDelegateRole } from "../../shared/delegate-role";
@@ -59,6 +60,14 @@ beforeEach(() => {
     ALTER TABLE purchase_order_items ADD COLUMN managementRejectionReason TEXT;
     ALTER TABLE purchase_order_items ADD COLUMN purchasedById INTEGER;
     ALTER TABLE purchase_order_items ADD COLUMN purchasedAt TEXT;
+    ALTER TABLE purchase_order_items ADD COLUMN description TEXT;
+    ALTER TABLE purchase_order_items ADD COLUMN photoUrl TEXT;
+    ALTER TABLE purchase_order_items ADD COLUMN notes TEXT;
+    ALTER TABLE purchase_order_items ADD COLUMN purchaseCancelReason TEXT;
+    ALTER TABLE purchase_order_items ADD COLUMN purchaseCancelledById INTEGER;
+    ALTER TABLE purchase_order_items ADD COLUMN purchaseCancelledByName TEXT;
+    ALTER TABLE purchase_order_items ADD COLUMN purchaseCancelledAt TEXT;
+    CREATE TABLE procurement_comments(id INTEGER PRIMARY KEY,purchaseOrderId INTEGER,purchaseOrderItemId INTEGER,userId INTEGER,userName TEXT,userRole TEXT,actionType TEXT,note TEXT,createdAt TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE po_pricing_batches(id INTEGER PRIMARY KEY,purchaseOrderId INTEGER,batchNumber INTEGER,submittedById INTEGER,status TEXT,itemCount INTEGER,totalEstimatedCost TEXT,purchasePackageSubmissionId INTEGER,scope TEXT,custodyAmount TEXT,accountingApprovedById INTEGER,accountingApprovedAt TEXT,managementApprovedById INTEGER,managementApprovedAt TEXT,managementNotes TEXT,rejectedById INTEGER,rejectedAt TEXT,rejectionReason TEXT,delegateSignatureSnapshot TEXT);
   `);
   for (const actor of [delegate, creator, manager]) f.insert("users", actor);
@@ -78,7 +87,7 @@ beforeEach(() => {
     getNextBatchNumber: async () => all("po_pricing_batches").length + 1,
     createPOPricingBatch: async (values: any) => { f.insert("po_pricing_batches", { id: 44, ...values }); return 44; },
   };
-  context = { z, TRPCError, sql, eq, purchaseOrders, purchaseOrderItems, users, delegateProcedure: procedure, protectedProcedure: procedure, managementProcedure: procedure,
+  context = { z, TRPCError, sql, eq, purchaseOrders, purchaseOrderItems, users, procurementComments, buildItemRevisionComment, delegateProcedure: procedure, protectedProcedure: procedure, managementProcedure: procedure,
     db: database, summarizePurchasePricingStage, assertPOItemAssignedToDelegate, assertCanResolveReturnedPOItem, isDelegateRole, isRoutedPurchaseItem,
     assertRoutedPurchaseItemReady: () => {}, assertItemOutsidePricingBundle: vi.fn(), pricingBundlesEnabled: () => false, reservedPricingItemIds: async () => new Set(), isItemAssignedToPODelegate: (actor: any, item: any) => actor.id === item.delegateId,
     queuePurchaseTranslation: vi.fn(), createTranslatedProcurementComment: vi.fn(), syncPathBTicketFromPurchaseOrder: vi.fn(),
@@ -94,6 +103,63 @@ beforeEach(() => {
   context.withPurchaseItemReturnWrite = vm.runInNewContext(extract("withPurchaseItemReturnWrite", current, true), context);
 });
 afterEach(() => f.close());
+
+describe("revision conversation from the actual combined save handler", () => {
+  async function returned(values: Record<string, unknown> = {}) {
+    await update("purchase_order_items", 22, { status: "needs_item_revision", description: "Old specification", notes: "Old note", photoUrl: "/old.jpg", ...values });
+  }
+  it("records every changed item field with the same actor/item and leaves sibling approvals intact", async () => {
+    await returned({ estimatedUnitCost: "10", estimatedTotalCost: "10" });
+    const batch = get("po_pricing_batches", 43), siblings = all("purchase_order_items").slice(0, 2);
+    await call("editAndResubmitReturnedItem", { id: 22, purchaseOrderId: 10, itemName: "New name", description: "New specification", quantity: 3, unit: "علبة", photoUrl: "/new.jpg", notes: "New note", estimatedUnitCost: "20", lastKnownUpdatedAt: "2026-11-05 08:00:00" }, creator);
+    const comment = all("procurement_comments")[0];
+    expect(comment).toMatchObject({ purchaseOrderId: 10, purchaseOrderItemId: 22, userId: 9, userName: "Creator", userRole: "warehouse", actionType: "item_revision_edited_and_resubmitted" });
+    expect(comment.createdAt).toBeTruthy();
+    for (const value of ["اسم الصنف", "المواصفات", "الكمية", "الوحدة", "الصورة", "الملاحظات", "السعر التقديري للوحدة", "الإجمالي التقديري", "Old specification", "New specification", "قبل: «1»", "بعد: «3»", "بعد: «60»"]) expect(comment.note).toContain(value);
+    expect(get("purchase_order_items", 22)).toMatchObject({ status: "pending", description: "New specification", quantity: 3 });
+    expect(get("po_pricing_batches", 43)).toEqual(batch); expect(all("purchase_order_items").slice(0, 2)).toEqual(siblings);
+    expect(context.createTranslatedProcurementComment).not.toHaveBeenCalled();
+    expect(context.queuePurchaseTranslation).toHaveBeenCalledWith("PO_COMMENT", comment.id, [{ fieldName: "note", text: comment.note }], 9);
+  });
+  it("truthfully records resubmission with no data changes and never adds a duplicate on retry", async () => {
+    await returned();
+    const input = { id: 22, purchaseOrderId: 10, itemName: get("purchase_order_items", 22).itemName, description: "Old specification", quantity: 1, unit: "قطعة" };
+    await call("editAndResubmitReturnedItem", input, creator);
+    expect(all("procurement_comments")).toHaveLength(1);
+    expect(all("procurement_comments")[0].note).toBe("أُعيد الإرسال دون تعديل بيانات الصنف.");
+    await expect(call("editAndResubmitReturnedItem", input, creator)).rejects.toThrow();
+    expect(all("procurement_comments")).toHaveLength(1);
+  });
+  it("rolls back item, header and comment together when comment insertion fails", async () => {
+    await returned();
+    const item = get("purchase_order_items", 22), po = get("purchase_orders", 10);
+    f.memory.exec("CREATE TRIGGER reject_comment BEFORE INSERT ON procurement_comments BEGIN SELECT RAISE(ABORT,'Comment failed'); END;");
+    await expect(call("editAndResubmitReturnedItem", { id: 22, purchaseOrderId: 10, description: "New spec" }, creator)).rejects.toThrow("Comment failed");
+    expect(get("purchase_order_items", 22)).toEqual(item); expect(get("purchase_orders", 10)).toEqual(po);
+    expect(all("procurement_comments")).toHaveLength(0); expect(database.createNotification).not.toHaveBeenCalled(); expect(context.queuePurchaseTranslation).not.toHaveBeenCalled();
+  });
+  it("denies foreign creators and stale forms before writing a conversation entry", async () => {
+    await returned();
+    await expect(call("editAndResubmitReturnedItem", { id: 22, purchaseOrderId: 10, quantity: 3 }, delegate)).rejects.toThrow();
+    await expect(call("editAndResubmitReturnedItem", { id: 22, purchaseOrderId: 10, quantity: 3, lastKnownUpdatedAt: "stale" }, creator)).rejects.toThrow();
+    expect(all("procurement_comments")).toHaveLength(0); expect(get("purchase_order_items", 22).status).toBe("needs_item_revision");
+  });
+  it("also removes the new comment if a later summary write fails", async () => {
+    await returned();
+    await update("purchase_orders", 10, { status: "pending_estimate" });
+    const item = get("purchase_order_items", 22), po = get("purchase_orders", 10);
+    database.updatePurchaseOrder.mockImplementationOnce(() => { throw Error("Summary failed"); });
+    await expect(call("editAndResubmitReturnedItem", { id: 22, purchaseOrderId: 10, quantity: 2 }, creator)).rejects.toThrow("Summary failed");
+    expect(get("purchase_order_items", 22)).toEqual(item); expect(get("purchase_orders", 10)).toEqual(po); expect(all("procurement_comments")).toHaveLength(0);
+    expect(context.queuePurchaseTranslation).not.toHaveBeenCalled();
+  });
+  it("preserves the existing cancelled-purchase conversation path", async () => {
+    await returned({ status: "purchase_cancelled" });
+    await call("editAndResubmitReturnedItem", { id: 22, purchaseOrderId: 10, description: "Corrected cancelled item" }, creator);
+    expect(get("purchase_order_items", 22).status).toBe("approved"); expect(all("procurement_comments")).toHaveLength(0);
+    expect(context.createTranslatedProcurementComment).toHaveBeenCalledWith(database, expect.objectContaining({ actionType: "cancelled_purchase_edited_and_resubmitted" }));
+  });
+});
 
 describe("actual legacy revision and independent pricing batch regression", () => {
   it("reproduces immutable HEAD resetting the433 batch header, then the same fixture succeeds after the fix", async () => {
