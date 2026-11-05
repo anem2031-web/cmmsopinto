@@ -15,6 +15,7 @@ import { gateSecurityPageAllowed } from "./gate-security-policy";
 import { delegateDirectoryPageAllowed } from "./delegate-directory-policy";
 import { isOwnerAdminOnlyPage, isOwnerOrAdminRole } from "./restricted-module-policy";
 import { isDelegateRole } from "./delegate-role";
+import { canAccessReturnsCenter, RETURNS_CENTER_PATH } from "./returns-center";
 export { isDelegateRole } from "./delegate-role";
 
 export const APP_ROLE = {
@@ -294,6 +295,7 @@ function matchesPrefix(path: string, prefix: string): boolean {
 export function canRoleAccessPath(role: string | null | undefined, path: string): boolean {
   if (!role) return false;
   const normalizedPath = path.split(/[?#]/, 1)[0] || "/";
+  if (normalizedPath === RETURNS_CENTER_PATH) return canAccessReturnsCenter(role);
   // Construction and legacy preventive maintenance are explicitly restricted
   // to the authenticated owner/admin identity. Observer projection must not
   // turn an observer into an admin for these modules.

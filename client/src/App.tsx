@@ -79,6 +79,7 @@ import WarehouseTransfer from "@/pages/inventory/WarehouseTransfer";
 import WarehouseIssue from "@/pages/inventory/WarehouseIssue";
 import WarehouseReturnsList from "@/pages/inventory/WarehouseReturnsList";
 import WarehouseReturnFollowup from "@/pages/purchase/WarehouseReturnFollowup";
+import ReturnsCenter from "@/pages/returns/ReturnsCenter";
 import ConstructionDashboard from "@/pages/construction/ConstructionDashboard";
 import ProjectsList from "@/pages/construction/ProjectsList";
 import ProjectDetail from "@/pages/construction/ProjectDetail";
@@ -177,6 +178,7 @@ function Router() {
             <Route path="/warehouse/issue" component={WarehouseIssue} />
             <Route path="/warehouse/returns" component={WarehouseReturnsList} />
             <Route path="/warehouse-returns-followup" component={WarehouseReturnFollowup} />
+            <Route path="/returns-center" component={ReturnsCenter} />
             <Route path="/inspection-dashboard" component={Dashboard} />
             <Route path="/catalog" component={CatalogDashboard} />
             {/* Construction Module */}

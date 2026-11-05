@@ -1,0 +1,134 @@
+[
+  {
+    "panel": "suppliers",
+    "width": 1365,
+    "viewport": 1365,
+    "body": 1365,
+    "height": 1000,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  },
+  {
+    "panel": "materials",
+    "width": 1365,
+    "viewport": 1365,
+    "body": 1365,
+    "height": 1000,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  },
+  {
+    "panel": "specifications",
+    "width": 1365,
+    "viewport": 1365,
+    "body": 1365,
+    "height": 1000,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  },
+  {
+    "panel": "documents",
+    "width": 1365,
+    "viewport": 1365,
+    "body": 1365,
+    "height": 1000,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  },
+  {
+    "panel": "suppliers",
+    "width": 390,
+    "viewport": 390,
+    "body": 390,
+    "height": 1178,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  },
+  {
+    "panel": "materials",
+    "width": 390,
+    "viewport": 390,
+    "body": 390,
+    "height": 1178,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  },
+  {
+    "panel": "specifications",
+    "width": 390,
+    "viewport": 390,
+    "body": 390,
+    "height": 1178,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  },
+  {
+    "panel": "documents",
+    "width": 390,
+    "viewport": 390,
+    "body": 390,
+    "height": 1178,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  },
+  {
+    "panel": "suppliers",
+    "width": 320,
+    "viewport": 320,
+    "body": 320,
+    "height": 1178,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  },
+  {
+    "panel": "materials",
+    "width": 320,
+    "viewport": 320,
+    "body": 320,
+    "height": 1067,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  },
+  {
+    "panel": "specifications",
+    "width": 320,
+    "viewport": 320,
+    "body": 320,
+    "height": 1000,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  },
+  {
+    "panel": "documents",
+    "width": 320,
+    "viewport": 320,
+    "body": 320,
+    "height": 1000,
+    "tabs": 4,
+    "activeTabs": 1,
+    "contentSources": 1,
+    "clippedTabs": false
+  }
+]

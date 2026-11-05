@@ -45,6 +45,33 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 
 beforeEach(() => { fixture.rejected = { rows: [], total: 0, page: 1, pageSize: 10 }; fixture.error = null; fixture.loading = false; fixture.queryCalls = []; });
 
+describe("rejected specification presentation inside Returns Center", () => {
+  it("filters only the loaded page in either language while retaining the exact source links and server paging", () => {
+    fixture.rejected = { rows: [row, { ...row, id: 82, itemName: "PIPE", poNumber: "PR-OTHER", supplierName: "Different" }], total: 24, page: 1, pageSize: 10 };
+    const html = renderToStaticMarkup(<RejectedSpecificationReturns centerMode search="إنش" />);
+    expect(html).toContain(row.itemName); expect(html).not.toContain("PIPE");
+    expect(html).toContain('href="/warehouse/return?specificationId=81&amp;returnTo=returns-center&amp;returnTab=specifications"');
+    const english = renderToStaticMarkup(<RejectedSpecificationReturns centerMode search="pIpe" />);
+    expect(english).toContain("PIPE"); expect(english).not.toContain(row.itemName);
+    expect(fixture.queryCalls.map(call => call.input)).toEqual([{ page: 1, pageSize: 10 }, { page: 1, pageSize: 10 }]);
+  });
+  it("does not mistake a current-page filter miss for absence of all rejected material", () => {
+    fixture.rejected = { rows: [row], total: 24, page: 1, pageSize: 10 };
+    const html = renderToStaticMarkup(<RejectedSpecificationReturns centerMode search="unmatched" />);
+    expect(html).toContain("البحث في الصفحة الحالية فقط");
+    expect(html).toContain("إجمالي المرفوضات: 24");
+    expect(html).toContain("لا توجد نتائج مطابقة في الصفحة الحالية");
+    expect(html).not.toContain("لا توجد كميات مرفوضة تنتظر الإرجاع");
+    expect(html).toContain("التالي");
+  });
+  it("keeps the original screen presentation and query defaults intact", () => {
+    fixture.rejected = { rows: [row], total: 1, page: 1, pageSize: 10 };
+    const html = renderToStaticMarkup(<RejectedSpecificationReturns search="unmatched" />);
+    expect(html).toContain(row.itemName); expect(html).not.toContain("البحث في الصفحة الحالية فقط");
+    expect(fixture.queryCalls[0].input).toEqual({ page: 1, pageSize: 10 });
+  });
+});
+
 describe("specification review UI", () => {
   it("shows received item context, scoped item media, explicit decisions and bounded pagination", () => {
     const html = renderToStaticMarkup(<SpecificationReviewList data={{ rows: [row], total: 21, page: 1, pageSize: 10 }} isLoading={false} page={1} onPageChange={() => {}} onDecisionSaved={() => {}} />);

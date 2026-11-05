@@ -1,4 +1,5 @@
 import { isDelegateRole } from "@shared/roles";
+import { canAccessReturnsCenter, RETURNS_CENTER_PATH, RETURNS_CENTER_SUPPLIER_ROLES } from "@shared/returns-center";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { businessHomePath, isBusinessGuardedRole } from "@shared/business-role-policy";
 import { ticketTeamNotificationPath } from "@shared/maintenance-team-tickets/warehouse-navigation";
@@ -134,14 +135,14 @@ const NAV_SECTIONS: NavSection[] = [
     id: "purchasing",
     labelKey: "nav.sections.purchasing",
     icon: ShoppingCart,
-    roles: ["delegate", "delegate_manager","warehouse","accountant","senior_management","executive_director","maintenance_manager","general_maintenance_manager","construction_procurement_manager","it_manager","purchase_requester","food_warehouse_manager","food_warehouse_assistant","owner","admin"],
+    roles: [...RETURNS_CENTER_SUPPLIER_ROLES],
     items: [
       { icon: ShoppingCart, labelKey: "nav.purchaseOrders", path: "/purchase-orders",
         roles: ["delegate", "delegate_manager","warehouse","accountant","senior_management","executive_director","maintenance_manager","general_maintenance_manager","construction_procurement_manager","it_manager","purchase_requester","food_warehouse_manager","food_warehouse_assistant","owner","admin"] },
       { icon: ShoppingBag, labelKey: "nav.delegatePricingBundles", path: "/delegate-pricing-bundles",
         roles: ["delegate", "delegate_manager","accountant","senior_management","owner","admin"] },
-      { icon: RotateCcw, labelKey: "nav.delegateWarehouseReturns", path: "/warehouse-returns-followup",
-        roles: ["delegate", "delegate_manager","owner","admin"] },
+      { icon: RotateCcw, labelKey: "nav.returnsCenter", path: "/returns-center",
+        roles: [...RETURNS_CENTER_SUPPLIER_ROLES] },
       { icon: Truck, labelKey: "nav.purchaseCycle", path: "/purchase-cycle", roles: ["delegate", "delegate_manager","warehouse","owner","admin"] },
       { icon: FileStack, labelKey: "nav.documentsCenter", path: "/documents",
         roles: ["delegate", "delegate_manager","warehouse","accountant","senior_management","executive_director","maintenance_manager","purchase_requester","food_warehouse_manager","food_warehouse_assistant","owner","admin"] },
@@ -164,10 +165,6 @@ const NAV_SECTIONS: NavSection[] = [
         roles: ["warehouse","senior_management","maintenance_manager","owner","admin"] },
       { icon: BarChart3, labelKey: "nav.inventoryReportsCenter", path: "/inventory/reports",
         roles: ["warehouse","accountant","senior_management","executive_director","maintenance_manager","food_warehouse_manager","food_warehouse_assistant","owner","admin"] },
-      { icon: RotateCcw,    labelKey: "nav.warehouseReturn",  path: "/warehouse/return",
-        roles: ["warehouse","owner","admin"] },
-      { icon: FileText,     labelKey: "nav.warehouseReturnsList", path: "/warehouse/returns",
-        roles: ["warehouse","senior_management","owner","admin"] },
       { icon: Warehouse,      labelKey: "nav.warehouses",         path: "/warehouses",
         roles: ["warehouse","senior_management","owner","admin"] },
       { icon: ArrowLeftRight, labelKey: "nav.warehouseTransfer",  path: "/warehouse/transfer",
@@ -588,11 +585,13 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
   };
 
   const role = user?.role || "user";
+  const returnsCenterAccess = canAccessReturnsCenter(authenticatedUser?.role ?? role);
 
   // Prevent direct-URL access to modules explicitly removed from the derived roles.
   const approvedDocumentsAccess = canReadApprovedPricingDocuments(user);
-  const canAccessCurrentPath = !authLoading && (canRoleAccessPath(role, location)
-    || approvedPricingDocumentPageAllowed(user, location));
+  const canAccessCurrentPath = !authLoading && (location.split(/[?#]/, 1)[0] === RETURNS_CENTER_PATH
+    ? returnsCenterAccess
+    : canRoleAccessPath(role, location) || approvedPricingDocumentPageAllowed(user, location));
   useEffect(() => {
     if (authLoading || canAccessCurrentPath) return;
     const fallback = role === "technician"
@@ -614,12 +613,12 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
         ...s,
         label: getNestedValue(t, s.labelKey),
         items: s.items
-          .filter(item => canSeeItem(item, role) && canRoleAccessPath(role, item.path)
+          .filter(item => canSeeItem(item, role) && canRoleAccessPath(role, item.path) && (item.path !== RETURNS_CENTER_PATH || returnsCenterAccess)
             || approvedDocumentsAccess && item.path === "/documents")
           .map(item => ({ ...item, label: getNestedValue(t, item.labelKey) })),
       }))
       .filter(s => s.items.length > 0);
-  }, [t, role, approvedDocumentsAccess]);
+  }, [t, role, approvedDocumentsAccess, returnsCenterAccess]);
 
   const permittedItemsByPath = useMemo(() => new Map(
     permittedSections.flatMap(section => section.items).map(item => [item.path, item]),

@@ -1,4 +1,5 @@
 import { isDelegateRole } from "@shared/roles";
+import { canAccessReturnsCenter, returnsCenterLink } from "@shared/returns-center";
 import { canManagerAssignOwnItem, DelegateManagerAssignmentDialog } from "@/components/purchase/DelegateManagerAssignment";
 import { PricingBundleLink, PricingBundleAddButton } from "@/components/purchase/PricingBundleActions";
 import { DelegateSupplyRows } from "@/components/purchase/DelegateSupplyRows";
@@ -843,7 +844,7 @@ export default function PurchaseOrders() {
         {isDelegateRole(user?.role) && <Button variant={view === "completed" ? "default" : "outline"} size="sm" onClick={() => setView("completed")}>{completedLabels[language].title}</Button>}
         {canViewDelegateExternal && <Button variant={view === "external" ? "default" : "outline"} size="sm" onClick={() => setView("external")}>{t.workflow.purchase.delegateExternalMaintenanceTab}</Button>}
         {canViewFollowup && <Button variant={view === "external_followup" ? "default" : "outline"} size="sm" onClick={() => setView("external_followup")}>{externalMaintenanceLabels(language).tab}</Button>}
-        {canViewReturns && returnStatus.data?.enabled && <Button variant={view === "returns" ? "default" : "outline"} size="sm" onClick={() => setView("returns")}>{isDelegateRole(user?.role) ? "مرتجعات المستودع" : "المرتجعات"}</Button>}
+        {canViewReturns && returnStatus.data?.enabled && <Button variant={view === "returns" ? "default" : "outline"} size="sm" onClick={() => canAccessReturnsCenter(user?.role) ? setLocation(returnsCenterLink()) : setView("returns")}>{isDelegateRole(user?.role) ? "مرتجعات المستودع" : "المرتجعات"}</Button>}
         {canReviewSpecifications && <Button variant={view === "specifications" ? "default" : "outline"} size="sm" onClick={() => setView("specifications")}>مطابقة المواصفات ({specifications.data?.total || 0})</Button>}
         {(!isDelegateRole(user?.role) || canViewFollowup) && <Button
           variant={view === "all" ? "default" : "outline"}

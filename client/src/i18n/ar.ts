@@ -22,6 +22,7 @@ const ar = {
     warehouseReceive: "استلام المستودع",
     warehouseReturn: "مرتجع المستودع",
     warehouseReturnsList: "المرتجعات",
+    returnsCenter: "مركز المرتجعات",
     warehouses: "المخازن",
     warehouseIssue: "الصرف المخزني المتعدد",
     warehouseTransfer: "تحويل بين المخازن",

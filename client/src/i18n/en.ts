@@ -22,6 +22,7 @@ const en: TranslationKeys = {
     warehouseReceive: "Warehouse Receive",
     warehouseReturn: "Warehouse Return",
     warehouseReturnsList: "Returns",
+    returnsCenter: "Returns Center",
     warehouses: "Warehouses",
     warehouseIssue: "Warehouse Issue",
     warehouseTransfer: "Warehouse Transfer",

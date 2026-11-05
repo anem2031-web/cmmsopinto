@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { localizeApiError } from "@/i18n/apiError";
 import { getPmv2MaterialQuantityValidationMessage, pmv2MaterialUnitRequiresWholeQuantity } from "@shared/pmv2MaterialQuantity";
+import { matchesReturnSearch } from "@/lib/returnSearch";
 
 function buildStatusView(t: any): Record<string, { label: string; className: string }> {
   return {
@@ -48,7 +49,10 @@ function quantityLabel(value: number | null | undefined, unit: string | null | u
   return `${Number(value).toLocaleString(locale, { maximumFractionDigits: 3 })}${unit ? ` ${unit}` : ""}`;
 }
 
-export default function Pmv2WarehouseQueue() {
+export default function Pmv2WarehouseQueue({ section, embedded = false, search = "" }: {
+  section?: "returns"; embedded?: boolean; search?: string;
+} = {}) {
+  const returnsOnly = embedded && section === "returns";
   const { t, language, dir } = useTranslation();
   const locale = language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-US";
   const STATUS_VIEW = buildStatusView(t);
@@ -56,8 +60,8 @@ export default function Pmv2WarehouseQueue() {
   const fmt = (template: string, values: Record<string, string | number>) => Object.entries(values).reduce((out, [key, value]) => out.replaceAll(`{${key}}`, String(value)), template);
   const localizedName = (value: any) => language === "ar" ? (value?.nameAr || value?.nameEn || "—") : (value?.nameEn || value?.nameAr || "—");
   const [, navigate] = useLocation();
-  const queue = trpc.pmv2.warehouse.waitingMaterialQueue.useQuery(undefined, { refetchOnWindowFocus: false });
-  const readyIssue = trpc.pmv2.warehouse.readyToIssueQueue.useQuery(undefined, { refetchOnWindowFocus: false });
+  const queue = trpc.pmv2.warehouse.waitingMaterialQueue.useQuery(undefined, { enabled: !returnsOnly, refetchOnWindowFocus: false });
+  const readyIssue = trpc.pmv2.warehouse.readyToIssueQueue.useQuery(undefined, { enabled: !returnsOnly, refetchOnWindowFocus: false });
   const pendingReturns = trpc.pmv2.warehouse.pendingReturns.useQuery(undefined, { refetchOnWindowFocus: false });
   const prepareTransfer = trpc.pmv2.warehouse.prepareTransferHandoff.useMutation();
   const preparePurchase = trpc.pmv2.warehouse.preparePurchaseHandoff.useMutation();
@@ -67,7 +71,8 @@ export default function Pmv2WarehouseQueue() {
   const [identitySearch, setIdentitySearch] = useState("");
   const [approvedIdentityQuantity, setApprovedIdentityQuantity] = useState("");
   const [selectedIdentityCatalogId, setSelectedIdentityCatalogId] = useState<number | null>(null);
-  const [activeSection, setActiveSection] = useState<"waiting" | "ready" | "returns">("waiting");
+  const [sectionState, setActiveSection] = useState<"waiting" | "ready" | "returns">(section ?? "waiting");
+  const activeSection = returnsOnly ? "returns" : sectionState;
   const [lotSelections,setLotSelections]=useState<Record<number,LotSelection>>({});
 
   const identityCandidates = trpc.pmv2.warehouse.searchMaterialIdentityCandidates.useQuery(
@@ -76,7 +81,7 @@ export default function Pmv2WarehouseQueue() {
   );
 
   const refreshOperationalQueues = async () => {
-    await Promise.all([queue.refetch(), readyIssue.refetch(), pendingReturns.refetch()]);
+    await Promise.all([...(returnsOnly ? [] : [queue.refetch(), readyIssue.refetch()]), pendingReturns.refetch()]);
   };
 
   const resolveMaterialIdentity = trpc.pmv2.warehouse.resolveMaterialIdentity.useMutation({
@@ -179,9 +184,14 @@ export default function Pmv2WarehouseQueue() {
 
   const readyIssueCount = Array.isArray(readyIssue.data) ? readyIssue.data.length : 0;
   const pendingReturnsCount = Array.isArray(pendingReturns.data) ? pendingReturns.data.length : 0;
+  const visibleReturns = (Array.isArray(pendingReturns.data) ? pendingReturns.data : []).filter((item: any) => matchesReturnSearch(
+    search, item.itemName, item.taskNumber, item.taskItemTitle, item.previousRecipientName,
+    ...(item.lots || []).map((lot: any) => lot.lotCode), ...(item.physicalUsages || []).map((part: any) => part.itemName),
+  ));
 
   return (
     <div className="space-y-6" dir={dir}>
+      {!returnsOnly && <>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{t.workflow.pmv2.warehouseQueueTitle}</h1>
@@ -259,6 +269,8 @@ export default function Pmv2WarehouseQueue() {
         </button>
       </div>
 
+      </>}
+      {returnsOnly && <Button variant="outline" disabled={pendingReturns.isFetching} onClick={() => void refreshOperationalQueues()}>{t.common.refresh}</Button>}
       {activeSection === "waiting" && (
       <section className="space-y-3" role="tabpanel">
         <div className="flex flex-col gap-1 border-b pb-3 sm:flex-row sm:items-end sm:justify-between">
@@ -566,15 +578,17 @@ export default function Pmv2WarehouseQueue() {
             <h2 className="text-lg font-semibold">{t.workflow.pmv2.returnsSectionTitle}</h2>
             <p className="text-sm text-muted-foreground">{t.workflow.pmv2.returnsHelp}</p>
           </div>
-          {!pendingReturns.isLoading && <Badge variant="secondary">{fmt(t.workflow.pmv2.returnCount, { count: pendingReturnsCount })}</Badge>}
+          {!pendingReturns.isLoading && !(returnsOnly && pendingReturns.error) && <Badge variant="secondary">{fmt(t.workflow.pmv2.returnCount, { count: visibleReturns.length })}</Badge>}
         </div>
         {pendingReturns.isLoading ? (
           <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">{t.workflow.pmv2.loadingReturns}</CardContent></Card>
-        ) : !(pendingReturns.data as any[] | undefined)?.length ? (
+        ) : returnsOnly && pendingReturns.error ? (
+          <p role="alert" className="text-sm text-destructive">{localizeApiError(pendingReturns.error.message, language)}</p>
+        ) : !visibleReturns.length ? (
           <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">{t.workflow.pmv2.noPendingReturns}</CardContent></Card>
         ) : (
           <div className="space-y-3">
-            {(pendingReturns.data as any[]).map((item: any) => (
+            {visibleReturns.map((item: any) => (
               <Card key={item.declarationActionId}>
                 <CardHeader className="border-b pb-3"><CardTitle className="text-base">{item.itemName}</CardTitle><CardDescription>{item.taskNumber} · {item.taskItemTitle}</CardDescription></CardHeader>
                   <details className="group">
@@ -631,7 +645,7 @@ export default function Pmv2WarehouseQueue() {
       </section>
       )}
 
-      <Card className="border-blue-200 bg-blue-50/50">
+      {!returnsOnly && <><Card className="border-blue-200 bg-blue-50/50">
         <CardContent className="flex gap-3 pt-6 text-sm text-blue-900">
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
           <div>
@@ -659,6 +673,7 @@ export default function Pmv2WarehouseQueue() {
         loading={identityCandidates.isFetching} error={identityCandidates.error} busy={resolveMaterialIdentity.isPending}
         onConfirm={() => { if (identityRequest?.requestItemId && selectedIdentityCatalogId) resolveMaterialIdentity.mutate({ requestItemId: Number(identityRequest.requestItemId), catalogItemId: Number(selectedIdentityCatalogId), requestedQuantity: Number(approvedIdentityQuantity) }); }}
       />
+      </>}
     </div>
   );
 }

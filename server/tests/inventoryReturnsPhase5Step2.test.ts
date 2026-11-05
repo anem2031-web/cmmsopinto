@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import ts from "typescript";
+import vm from "node:vm";
+import { warehouseReturnBackLink } from "../../shared/returns-center";
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
@@ -108,9 +111,32 @@ describe("Main Phase 5 / 5.2 — Supplier return hardening", () => {
   });
 
   it("leaves a completed return form safely even when a legacy response has no document number", () => {
-    const page = returnPage();
-    expect(page).toContain("data?.returnNumber");
-    expect(page.match(/navigate\(\"\/warehouse\/returns\"\)/g)?.length).toBeGreaterThanOrEqual(2);
+    const page = ts.createSourceFile("WarehouseReturn.tsx", returnPage(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const callbacks: string[] = [];
+    function visit(node: ts.Node) {
+      if (ts.isVariableDeclaration(node) && ["recipientReturnMut", "returnMut", "followupMut"].includes(node.name.getText(page)) && node.initializer && ts.isCallExpression(node.initializer)) {
+        const options = node.initializer.arguments[0];
+        if (options && ts.isObjectLiteralExpression(options)) {
+          const success = options.properties.find(prop => ts.isPropertyAssignment(prop) && prop.name.getText(page) === "onSuccess") as ts.PropertyAssignment;
+          if (success) callbacks.push(success.initializer.getText(page));
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(page);
+    expect(callbacks).toHaveLength(3);
+    for (const search of ["", "?returnTo=returns-center&returnTab=specifications"]) {
+      const destination = warehouseReturnBackLink(search);
+      for (const code of callbacks) {
+        const navigate = vi.fn();
+        const callback = vm.runInNewContext(ts.transpileModule(`(${code})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, {
+          navigate, backLink: destination, toast: { success: vi.fn() }, t: { common: { savedSuccessfully: "Saved" } },
+        });
+        expect(() => callback(undefined)).not.toThrow();
+        expect(navigate).toHaveBeenCalledTimes(1);
+        expect(navigate).toHaveBeenCalledWith(destination);
+      }
+    }
   });
 
 });

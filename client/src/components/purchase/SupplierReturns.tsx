@@ -15,7 +15,7 @@ const replacementStatus: Record<string, string> = {
   partially_received: "استلام جزئي", received: "تم استلام البديل", cancelled: "ملغى",
 };
 
-export function SupplierReturns() {
+export function SupplierReturns({ centerMode = false, search = "" }: { centerMode?: boolean; search?: string } = {}) {
   const { user } = useAuth();
   const [page, setPage] = useState(1);
   const [returnStatus, setReturnStatus] = useState<"active" | "completed">("active");
@@ -64,9 +64,15 @@ export function SupplierReturns() {
     if (!keys.has(identity)) keys.set(identity, crypto.randomUUID());
     chooseReplacement.mutate({ ...command, operationKey: keys.get(identity)! });
   };
+  const loadedRows = list.data?.items ?? [];
+  const searchTerm = centerMode ? search.trim().toLocaleLowerCase() : "";
+  const visibleRows = searchTerm ? loadedRows.filter(row => [row.itemName, row.returnNumber, row.poNumber, row.parentReturnNumber,
+    row.originalReceiptNumber, row.replacementItemName, row.replacementPoNumber, row.returnReason, row.returnedUnit,
+    row.replacementPlanStatus, replacementStatus[row.replacementPlanStatus || ""]]
+    .some(value => String(value ?? "").toLocaleLowerCase().includes(searchTerm))) : loadedRows;
   if (status.isLoading) return <p>جارٍ التحقق من متابعة المرتجعات…</p>;
   if (status.error) return <p role="alert">{status.error.message}</p>;
-  if (!status.data?.enabled) return null;
+  if (!status.data?.enabled) return centerMode ? <p role="status" className="text-sm text-muted-foreground">متابعة مرتجعات المورد غير متاحة حاليًا.</p> : null;
   return <section className="space-y-3" aria-label="متابعة مرتجعات المورد">
     <CatalogPickerDialog open={pickerCaseId != null} onClose={() => setPickerCaseId(null)} onSelect={item => {
       if (pickerCaseId != null) setReplacement(prev => ({ ...prev, [pickerCaseId]: {
@@ -81,8 +87,10 @@ export function SupplierReturns() {
     </div>
     {list.isLoading && <p>جارٍ التحميل…</p>}
     {list.error && <p role="alert">{list.error.message}</p>}
-    {list.data?.items.length === 0 && <p>{returnStatus === "completed" ? "لا توجد متابعات مرتجع مكتملة." : "لا توجد مرتجعات قيد المتابعة."}</p>}
-    {list.data?.items.map(row => <Card key={row.id}><CardContent className="p-4 space-y-3">
+    {centerMode && list.data && <p className="text-sm text-muted-foreground" role="status">البحث في الصفحة الحالية فقط — المعروض {visibleRows.length} من {loadedRows.length}. إجمالي ملفات الحالة: {list.data.total}.</p>}
+    {list.data?.items.length === 0 && <p>{centerMode && (searchTerm || list.data.total > 0) ? "لا توجد بيانات في الصفحة الحالية؛ يمكنك تغيير الصفحة أو حالة المتابعة." : returnStatus === "completed" ? "لا توجد متابعات مرتجع مكتملة." : "لا توجد مرتجعات قيد المتابعة."}</p>}
+    {centerMode && searchTerm && loadedRows.length > 0 && visibleRows.length === 0 && <p>لا توجد نتائج مطابقة في الصفحة الحالية؛ جرّب صفحة أخرى أو غيّر البحث.</p>}
+    {visibleRows.map(row => <Card key={row.id}><CardContent className="p-4 space-y-3">
       <h3 className="font-semibold">{row.itemName || "صنف المرتجع"} — {row.returnNumber}</h3>
       <p>{row.poNumber || "بدون طلب شراء"} · {row.returnedQuantity} {row.returnedUnit}</p>
       {row.originalReceiptNumber && !row.poNumber && <p>سند الاستلام المستقل: {row.originalReceiptNumber}</p>}

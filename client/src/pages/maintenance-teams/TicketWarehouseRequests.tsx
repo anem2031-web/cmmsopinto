@@ -7,21 +7,30 @@ import { ExecutionPanel } from "./ExecutionPanel";
 import { useState, useEffect, useRef } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import type { WarehouseSection } from "@shared/maintenance-team-tickets/warehouse-materials";
+import { matchesReturnSearch } from "@/lib/returnSearch";
 
 export default function TicketWarehouseRequests({
   ticketId,
+  section: selectedSection,
+  embedded = false,
+  search = "",
 }: {
   ticketId?: number;
-}) {
+  section?: "returns";
+  embedded?: boolean;
+  search?: string;
+} = {}) {
+  const returnsOnly = embedded && selectedSection === "returns";
   const { user, loading } = useAuth();
   const { language, dir, t } = useTranslation();
   const l = (ar: string, en: string, ur: string) =>
     language === "ar" ? ar : language === "ur" ? ur : en;
   const utils = trpc.useUtils();
-  const [section, setSection] = useState<WarehouseSection>("waiting");
+  const [sectionState, setSection] = useState<WarehouseSection>(selectedSection ?? "waiting");
+  const section = returnsOnly ? "returns" : sectionState;
   const [limit, setLimit] = useState(20);
   const focused = useRef<number | null>(null);
-  const sections: WarehouseSection[] = ["waiting", "ready", "returns"];
+  const sections: WarehouseSection[] = returnsOnly ? ["returns"] : ["waiting", "ready", "returns"];
   const labels = [
     l("تحتاج معالجة", "Needs processing", "کارروائی درکار"),
     l("جاهزة للصرف", "Ready to issue", "اجرا کے لیے تیار"),
@@ -36,19 +45,21 @@ export default function TicketWarehouseRequests({
   const materials = (requests.data ?? []).flatMap(ticket =>
     (ticket.materialNeeds ?? []).map(need => ({ ticket, need }))
   );
-  const sorted = [...materials].sort(
+  const matching = materials.filter(({ ticket, need }) => matchesReturnSearch(search, ticket.ticketNumber, ticket.title, ticket.teamName,
+    ticket.warehouseName, ticket.siteName, ticket.sectionName, need.name, need.unit));
+  const sorted = [...matching].sort(
     (a, b) =>
       Number(b.ticket.ticketId === ticketId) -
       Number(a.ticket.ticketId === ticketId)
   );
   useEffect(() => {
-    if (!ticketId || focused.current === ticketId) return;
+    if (returnsOnly || !ticketId || focused.current === ticketId) return;
     const ticket = requests.data?.find(t => t.ticketId === ticketId);
     if (!ticket) return;
     focused.current = ticketId;
     setSection(ticket.materialNeeds?.[0]?.section ?? "waiting");
     setLimit(20);
-  }, [ticketId, requests.data]);
+  }, [ticketId, requests.data, returnsOnly]);
   if (loading || (allowed && requests.isLoading))
     return <p className="p-6">{t.common.loading}</p>;
   if (!allowed)
@@ -64,7 +75,7 @@ export default function TicketWarehouseRequests({
   return (
     <div className="space-y-4" dir={dir}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+        {!embedded && <div>
           <h1 className="text-2xl font-bold">
             {l(
               "طلبات مواد تذاكر الصيانة",
@@ -79,7 +90,7 @@ export default function TicketWarehouseRequests({
               "ہر کارڈ اپنے ٹکٹ اور ٹیم سے منسلک مواد کی ضرورت ہے؛ اسٹاک اور حالت کے مطابق کارروائی کریں۔"
             )}
           </p>
-        </div>
+        </div>}
         <Button
           variant="outline"
           disabled={requests.isFetching}
@@ -87,7 +98,7 @@ export default function TicketWarehouseRequests({
             void Promise.all([
               requests.refetch(),
               utils.ticketTeamExecution.details.invalidate(),
-              utils.ticketTeamExecution.balances.invalidate(),
+              ...(returnsOnly ? [] : [utils.ticketTeamExecution.balances.invalidate()]),
             ])
           }
         >
@@ -106,21 +117,21 @@ export default function TicketWarehouseRequests({
           setLimit(20);
         }}
       >
-        <TabsList className="grid h-auto w-full grid-cols-3">
+        {!returnsOnly && <TabsList className="grid h-auto w-full grid-cols-3">
           {sections.map((value, index) => (
             <TabsTrigger key={value} value={value} className="gap-2 py-3">
               {labels[index]}{" "}
               <Badge variant="secondary">
-                {materials.filter(m => m.need.section === value).length}
+                {matching.filter(m => m.need.section === value).length}
               </Badge>
             </TabsTrigger>
           ))}
-        </TabsList>
+        </TabsList>}
         {sections.map(value => {
           const rows = sorted.filter(m => m.need.section === value);
           return (
             <TabsContent key={value} value={value} className="space-y-4">
-              {!rows.length && (
+              {!rows.length && !(returnsOnly && requests.error) && (
                 <p className="rounded-xl border bg-card p-6 text-muted-foreground">
                   {l(
                     "لا توجد طلبات مواد لتذاكر الصيانة في هذا القسم.",
@@ -147,6 +158,7 @@ export default function TicketWarehouseRequests({
                     language={language}
                     mode="warehouse"
                     warehouseSection={value}
+                    returnsOnly={returnsOnly}
                     onChanged={() => void requests.refetch()}
                   />
                 </div>

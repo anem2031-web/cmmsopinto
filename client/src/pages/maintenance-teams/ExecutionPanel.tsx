@@ -90,6 +90,7 @@ export function ExecutionPanel({
   warehouseSection,
   warehouseNeedId,
   warehouseTicket,
+  returnsOnly = false,
   onBusyChange,
 }: {
   assignmentId: number;
@@ -101,6 +102,7 @@ export function ExecutionPanel({
   warehouseSection?: WarehouseSection;
   warehouseNeedId?: number;
   warehouseTicket?: AssignedTeamTicket;
+  returnsOnly?: boolean;
   onBusyChange?: (busy: boolean) => void;
 }) {
   const l = (ar: string, en: string, ur: string) =>
@@ -159,7 +161,7 @@ export function ExecutionPanel({
     : undefined;
   const balances = trpc.ticketTeamExecution.balances.useQuery(
     { assignmentId },
-    { enabled: !!a && a.stage === "waiting_material", retry: false }
+    { enabled: !returnsOnly && !!a && a.stage === "waiting_material", retry: false }
   );
   async function openSupply(needId: number, kind: "transfer" | "purchase") {
     if (busy) return;

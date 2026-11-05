@@ -12,8 +12,11 @@ import { canProcessOperationalIssue, type OperationalDelivery } from "@shared/op
 import { operationalIssueText } from "@/i18n/operationalIssues";
 import { OperationalStockPanel } from "./OperationalStockPanel";
 import { PreparedDispatchPanel } from "./PreparedDispatchPanel";
+import { matchesReturnSearch } from "@/lib/returnSearch";
 
-export function OperationalIssueQueue({ process = false }: { process?: boolean }) {
+export function OperationalIssueQueue({ process = false, returnsOnly = false, search = "" }: {
+  process?: boolean; returnsOnly?: boolean; search?: string;
+}) {
   const { user } = useAuth(); const { language, dir } = useTranslation();
   const text = operationalIssueText[language];
   const list = trpc.operationalIssues.list.useQuery(undefined, { retry: false });
@@ -21,7 +24,7 @@ export function OperationalIssueQueue({ process = false }: { process?: boolean }
   const detail = trpc.operationalIssues.detail.useQuery({ id: id || 0 }, { enabled: Boolean(id && list.data?.enabled), retry: false });
   const approve = trpc.operationalIssues.approve.useMutation();
   const canProcess = process && canProcessOperationalIssue(user?.role);
-  const canSeeStock = canProcess || user?.role === "observer";
+  const canSeeStock = !returnsOnly && (canProcess || user?.role === "observer");
   const stock = trpc.operationalIssues.availability.useQuery({ id: id || 0 }, { enabled: Boolean(id && list.data?.enabled && canSeeStock), retry: false });
   const refresh = async () => { await Promise.all([list.refetch(), ...(id ? [detail.refetch(), ...(canSeeStock ? [stock.refetch()] : [])] : [])]); };
   const run = async (work: () => Promise<unknown>) => {
@@ -31,10 +34,12 @@ export function OperationalIssueQueue({ process = false }: { process?: boolean }
   if (list.isLoading) return <p>{text.load}</p>;
   if (list.error) return <p role="alert" className="text-destructive">{list.error.message}</p>;
   if (!list.data?.enabled) return <p>{text.disabled}</p>;
+  const orders = list.data.orders.filter(order => matchesReturnSearch(search, order.orderNumber, order.siteName, order.sectionName, order.collectorName));
   return <div className="space-y-4" dir={dir}>
     <Button variant="outline" onClick={() => void refresh()}>{text.refresh}</Button>
-    {!list.data.orders.length && <p className="text-muted-foreground">{text.empty}</p>}
-    <div className="space-y-2">{list.data.orders.map(order => <Card key={order.id}>
+    {returnsOnly && <p className="text-sm text-muted-foreground">{language === "ar" ? "اختر طلب صرف لاستعراض سنداته وتسجيل مرتجع من الكميات المصروفة فعليًا." : language === "ur" ? "اصل اجرا کی رسیدیں اور واپسی دیکھنے کے لیے درخواست منتخب کریں۔" : "Choose an issue request to view its deliveries and record an actual return."}</p>}
+    {!orders.length && <p className="text-muted-foreground">{text.empty}</p>}
+    <div className="space-y-2">{orders.map(order => <Card key={order.id}>
       <CardContent className="py-3 flex flex-wrap justify-between items-center gap-3">
         <div><p className="font-semibold">{order.orderNumber}</p><p className="text-sm text-muted-foreground">{order.siteName} / {order.sectionName} · {text.collector}: {order.collectorName}</p></div>
         <div className="flex gap-2 items-center"><Badge variant="outline">{text[order.status]}</Badge><Button variant="outline" onClick={() => setId(order.id)}>{text.details}</Button></div>
@@ -48,12 +53,13 @@ export function OperationalIssueQueue({ process = false }: { process?: boolean }
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-lg border p-3 text-sm">
         <p>{text.totalCost}: {detail.data.cost.issued.toFixed(2)} {text.currency}</p><p>{text.returned}: {detail.data.cost.returned.toFixed(2)} {text.currency}</p><p className="font-semibold">{text.netCost}: {detail.data.cost.net.toFixed(2)} {text.currency}</p>
       </div>
-      {canProcess && detail.data.order.status === "pending" && <Button disabled={approve.isPending} onClick={() => void run(() => approve.mutateAsync({ id: Number(id), revision: Number(detail.data!.order.revision) }))}>{text.approve}</Button>}
+      {!returnsOnly && canProcess && detail.data.order.status === "pending" && <Button disabled={approve.isPending} onClick={() => void run(() => approve.mutateAsync({ id: Number(id), revision: Number(detail.data!.order.revision) }))}>{text.approve}</Button>}
       {canSeeStock && stock.error && <p role="alert" className="text-destructive">{stock.error.message}</p>}
-      {detail.data.items.some(line => line.dispatchContext != null) ? <PreparedDispatchPanel key={id} order={detail.data.order} lines={detail.data.items} stocks={stock.data?.items}
+      {!returnsOnly && (detail.data.items.some(line => line.dispatchContext != null) ? <PreparedDispatchPanel key={id} order={detail.data.order} lines={detail.data.items} stocks={stock.data?.items}
         canProcess={canProcess} loading={stock.isFetching} procurementReady={Boolean(stock.data?.procurementReady)} dispatch={detail.data.dispatch || []} refresh={refresh} /> : detail.data.items.map(line => <OperationalStockPanel key={`${id}:${line.id}`} line={line} stock={stock.data?.items.find(item => item.itemId === Number(line.id))}
         showStock={canSeeStock} loading={stock.isFetching} procurementReady={Boolean(stock.data?.procurementReady)}
-        approved={detail.data!.order.status === "approved"} canProcess={canProcess} orderId={Number(id)} refresh={refresh} />)}
+        approved={detail.data!.order.status === "approved"} canProcess={canProcess} orderId={Number(id)} refresh={refresh} />))}
+      {returnsOnly && !detail.data.deliveries.length && <p className="text-sm text-muted-foreground">{language === "ar" ? "لا توجد سندات صرف لهذا الطلب لتسجيل مرتجع عليها." : language === "ur" ? "اس درخواست کی واپسی کے لیے کوئی اجرا رسید نہیں ہے۔" : "This request has no issue deliveries to return."}</p>}
       {detail.data.deliveries.map(delivery => <OperationalReturnPanel key={delivery.id} delivery={delivery} orderId={Number(id)} canProcess={canProcess} refresh={refresh} />)}
     </CardContent></Card>}
   </div>;

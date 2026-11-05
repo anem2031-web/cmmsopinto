@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import BarcodeScanner from "@/components/common/BarcodeScanner";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { SupplierReturnValuePreview } from "@/components/purchase/SupplierReturnValuePreview";
+import { warehouseReturnBackLink } from "@shared/returns-center";
 
 function fmtDate(d: any) {
   if (!d) return "—";
@@ -21,6 +22,8 @@ function fmtDate(d: any) {
 
 export default function WarehouseReturn() {
   const [, navigate] = useLocation();
+  const search = useSearch();
+  const backLink = warehouseReturnBackLink(search);
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedItem, setSelectedItem] = useState<any>(null);
@@ -32,7 +35,7 @@ export default function WarehouseReturn() {
   const followupStatus = trpc.supplierReturns.status.useQuery();
   const delegateChoices = trpc.supplierReturns.delegates.useQuery(undefined, { enabled: followupStatus.data?.enabled === true });
   const followupMut = trpc.supplierReturns.create.useMutation({
-    onSuccess: () => { toast.success("تم إنشاء المرتجع وإرساله للمندوب"); navigate("/warehouse/returns"); },
+    onSuccess: () => { toast.success("تم إنشاء المرتجع وإرساله للمندوب"); navigate(backLink); },
     onError: error => toast.error(error.message),
   });
   // مصدر الإرجاع (سند الاستلام) المُختار — null يعني "بلا مصدر معروف"
@@ -48,7 +51,7 @@ export default function WarehouseReturn() {
   const { data: warehousesList } = trpc.warehouse.list.useQuery();
   const { data: lotTrackingStatus } = trpc.inventoryCount.lotTrackingStatus.useQuery();
   const lotsEnabled = !!lotTrackingStatus?.enabled;
-  const specificationParam = new URLSearchParams(useSearch()).get("specificationId");
+  const specificationParam = new URLSearchParams(search).get("specificationId");
   const specificationId = Number(specificationParam || 0);
   const specificationRequested = specificationParam !== null;
   const validSpecificationId = Number.isSafeInteger(specificationId) && specificationId > 0;
@@ -192,7 +195,7 @@ export default function WarehouseReturn() {
   const recipientReturnMut = trpc.warehouseReturns.createRecipientReturn.useMutation({
     onSuccess: (data: any) => {
       toast.success(data?.returnNumber ? `${t.common.savedSuccessfully} — ${data.returnNumber}` : t.common.savedSuccessfully);
-      navigate("/warehouse/returns");
+      navigate(backLink);
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -201,7 +204,7 @@ export default function WarehouseReturn() {
   const returnMut = trpc.warehouseReturns.create.useMutation({
     onSuccess: (data: any) => {
       toast.success(data?.returnNumber ? `${t.common.savedSuccessfully} — ${data.returnNumber}` : t.common.savedSuccessfully);
-      navigate("/warehouse/returns");
+      navigate(backLink);
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -309,7 +312,7 @@ export default function WarehouseReturn() {
           <h1 className="text-xl font-bold">مرتجعات المخزون</h1>
           <p className="text-sm text-muted-foreground">{returnMode === "recipient" ? "إرجاع من الجهة المستلمة إلى نفس الـLot الأصلي" : (lotsEnabled ? "إرجاع للمورد من الدفعة الأصلية عبر QR" : "إرجاع صنف من المخزون إلى المورد")}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => navigate("/warehouse/returns")}>
+        <Button variant="outline" size="sm" onClick={() => navigate(backLink)}>
           سجل المرتجعات
         </Button>
       </div>
@@ -826,7 +829,7 @@ export default function WarehouseReturn() {
 
           {/* Actions */}
           <div className="flex gap-3">
-            <Button variant="outline" onClick={() => { if (specificationRequested) { navigate("/warehouse/returns"); return; } setStep("search"); setSelectedItem(null); setReturnLotInfo(null); setRecipientSourceInfo(null); setSelectedSource(null); setSelectedVendorKey(null); }} className="flex-1">
+            <Button variant="outline" onClick={() => { if (specificationRequested) { navigate(backLink); return; } setStep("search"); setSelectedItem(null); setReturnLotInfo(null); setRecipientSourceInfo(null); setSelectedSource(null); setSelectedVendorKey(null); }} className="flex-1">
               {t.common.back}
             </Button>
             <Button

@@ -120,20 +120,27 @@ export function SpecificationReviewList({ data, isLoading, error, page, onPageCh
   </section>;
 }
 
-export function RejectedSpecificationReturns() {
+export function RejectedSpecificationReturns({ centerMode = false, search = "" }: { centerMode?: boolean; search?: string } = {}) {
   const [page, setPage] = useState(1);
   const query = trpc.purchaseSpecifications.rejectedReturns.useQuery({ page, pageSize: 10 }, independentReadOptions);
+  const loadedRows = query.data?.rows || [];
+  const searchTerm = centerMode ? search.trim().toLocaleLowerCase() : "";
+  const visibleRows = searchTerm ? loadedRows.filter((row: PurchaseSpecificationRow) => [row.itemName, row.poNumber, row.lotCode,
+    row.supplierName, row.invoiceNumber, row.receiptNumber, row.warehouseName, row.notes]
+    .some(value => String(value ?? "").toLocaleLowerCase().includes(searchTerm))) : loadedRows;
   return <section className="space-y-3" aria-label="مرفوضة في مطابقة المواصفات">
     <h2 className="font-semibold">مرفوضة في مطابقة المواصفات {query.data ? `(${query.data.total})` : ""}</h2>
     <p className="text-sm text-muted-foreground">هذه الكميات لم يُنفّذ إرجاعها بعد. افتح الصنف لاستكمال مرتجع المورد بالإجراء المعتاد.</p>
     {query.error && <p role="alert" className="text-sm text-destructive">{query.error.message}</p>}
     {query.isLoading && <Loader2 className="h-5 w-5 animate-spin" aria-label="جارٍ تحميل الأصناف المرفوضة" />}
-    {!query.isLoading && !query.error && !query.data?.rows.length && <p className="text-sm text-muted-foreground">لا توجد كميات مرفوضة تنتظر الإرجاع</p>}
-    {(query.data?.rows || []).map((row: PurchaseSpecificationRow) => <Card key={row.id}><CardContent className="space-y-3 p-4">
+    {centerMode && query.data && <p className="text-sm text-muted-foreground" role="status">البحث في الصفحة الحالية فقط — المعروض {visibleRows.length} من {loadedRows.length}. إجمالي المرفوضات: {query.data.total}.</p>}
+    {!query.isLoading && !query.error && !loadedRows.length && <p className="text-sm text-muted-foreground">{centerMode && (searchTerm || (query.data?.total || 0) > 0) ? "لا توجد بيانات في الصفحة الحالية؛ يمكنك تغيير الصفحة أو البحث." : "لا توجد كميات مرفوضة تنتظر الإرجاع"}</p>}
+    {centerMode && searchTerm && !query.isLoading && !query.error && loadedRows.length > 0 && visibleRows.length === 0 && <p className="text-sm text-muted-foreground">لا توجد نتائج مطابقة في الصفحة الحالية؛ جرّب صفحة أخرى أو غيّر البحث.</p>}
+    {visibleRows.map((row: PurchaseSpecificationRow) => <Card key={row.id}><CardContent className="space-y-3 p-4">
       <SpecificationFacts row={row} />
       <p className="text-sm">المتبقي القابل للإرجاع: {row.remainingReturnableQuantity} {row.unit}</p>
       {row.notes && <p className="whitespace-pre-wrap text-sm text-muted-foreground">ملاحظات المطابقة: {row.notes}</p>}
-      <Link href={`/warehouse/return?specificationId=${row.id}`}><Button size="sm" variant="outline">بدء الإرجاع للمورد</Button></Link>
+      <Link href={`/warehouse/return?specificationId=${row.id}${centerMode ? "&returnTo=returns-center&returnTab=specifications" : ""}`}><Button size="sm" variant="outline">بدء الإرجاع للمورد</Button></Link>
     </CardContent></Card>)}
     <PageControls data={query.data} page={page} onPageChange={setPage} />
   </section>;

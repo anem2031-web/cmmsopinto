@@ -5,6 +5,7 @@
  */
 export const BUSINESS_GUARDED_ROLES = ["accountant", "senior_management", "executive_director", "warehouse", "food_warehouse_assistant"] as const;
 import { EXTERNAL_FOLLOWUP_QUERIES, externalFollowupRpcAllowed } from "./external-maintenance-followup";
+import { canAccessReturnsCenter, RETURNS_CENTER_PATH } from "./returns-center";
 export type BusinessRole = typeof BUSINESS_GUARDED_ROLES[number];
 export type BusinessIdentity = { id: number; role: string; isActive?: number };
 export type PricingBundleApprovalStage = "accounting" | "management";
@@ -196,6 +197,7 @@ const warehouseOversightPages = new Set(["/inventory", "/inventory-operations", 
 const managementPages = new Set(["/tickets", "/tickets/inbox", "/tickets/new", "/reports", "/reports/technicians", "/reports/purchase-cycle", "/reports/maintenance-cycle", "/reports/section-report", "/reports/preventive", "/inspection-dashboard", "/ai-assistant"]);
 export function businessPageAllowed(role: BusinessRole, rawPath: string): boolean {
   const path = rawPath.split(/[?#]/, 1)[0] || "/";
+  if (path === RETURNS_CENTER_PATH) return canAccessReturnsCenter(role);
   if (path === "/catalog") return role === "warehouse" || role === "senior_management";
   if (path === "/inventory-settlement-review") return role === "warehouse" || role === "senior_management";
   // The page shell is reachable; its data and actions require project membership.
