@@ -1,4 +1,6 @@
 import { isDelegateRole } from "@shared/roles";
+import { ExternalWorkshopPricingFields, externalWorkshopForm, externalWorkshopIssue, externalWorkshopPayload, type ExternalWorkshopForm } from "@/components/purchase/ExternalWorkshopPricingFields";
+import { externalMaintenanceLabels } from "@/i18n/externalMaintenanceFollowup";
 import { trpc } from "@/lib/trpc";
 import { useLocation, useRoute } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -139,6 +141,7 @@ export default function PurchaseBatchDetail() {
     Number.isFinite(focusedSubmissionId);
   const isAdminOrOwner = user?.role === "admin" || user?.role === "owner";
   const [estimates, setEstimates] = useState<Record<number, string>>({});
+  const [workshopDrafts, setWorkshopDrafts] = useState<Record<number, ExternalWorkshopForm>>({});
   const [selectedRevisionItemId, setSelectedRevisionItemId] = useState<number | null>(null);
   const [itemRevisionReason, setItemRevisionReason] = useState("");
   const [delegateChangeDialogItem, setDelegateChangeDialogItem] = useState<any>(null);
@@ -615,6 +618,7 @@ export default function PurchaseBatchDetail() {
 
                           {itemBelongsToMe && item.status === "pending" && !item.batchId && !item.delegateChangeRequestedAt && (
                             <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 space-y-2">
+                              <ExternalWorkshopPricingFields item={item} idPrefix={`external-batch-${item.id}`} value={externalWorkshopForm(item, workshopDrafts[item.id])} onChange={value => setWorkshopDrafts(previous => ({ ...previous, [item.id]: value }))} disabled={estimateMut.isPending} />
                               <p className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
                                 <DollarSign className="w-3.5 h-3.5" /> {t.workflow.purchase.estimatedUnitCost}
                               </p>
@@ -646,12 +650,14 @@ export default function PurchaseBatchDetail() {
                                         toast.error(t.workflow.purchase.enterValidPrice);
                                         return;
                                       }
+                                      const workshopIssue = externalWorkshopIssue(item, workshopDrafts[item.id]);
+                                      if (workshopIssue) { toast.error(externalMaintenanceLabels(language)[workshopIssue]); return; }
                                       estimateMut.mutate({
                                         purchaseOrderId: po.id,
-                                        items: [{ id: item.id, estimatedUnitCost: estimates[item.id] }],
+                                        items: [{ id: item.id, estimatedUnitCost: estimates[item.id], ...externalWorkshopPayload(item, workshopDrafts[item.id]) }],
                                       });
                                     }}
-                                    disabled={estimateMut.isPending}
+                                    disabled={estimateMut.isPending || !!externalWorkshopIssue(item, workshopDrafts[item.id])}
                                   >
                                     {estimateMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t.workflow.purchase.save}
                                   </Button>

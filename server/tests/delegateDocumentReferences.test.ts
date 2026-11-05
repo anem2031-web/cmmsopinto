@@ -8,6 +8,7 @@ import { router, protectedProcedure } from "../_core/trpc";
 import { isDelegateRole } from "../../shared/roles";
 import { isDelegateOwnPurchaseDraft } from "../../shared/purchaseDraftVisibility";
 import { isPurchasePdfApprover } from "../_core/authz/purchase-document";
+import { externalWorkshopForPurchaseItem } from "../services/external-maintenance-pricing";
 
 const document = { id: 1, requestedById: 7, poNumber: "PR-FIXTURE" };
 const items = [{ id: 11, delegateId: 3 }, { id: 12, delegateId: 4 }];
@@ -15,6 +16,11 @@ const comments = [{ purchaseOrderItemId: 11 }, { purchaseOrderItemId: 12 }];
 const scope = vi.fn((_user: any, po: any) => { if (po.id !== 1) throw new TRPCError({ code: "FORBIDDEN" }); });
 const names = vi.fn(async (value: any) => value);
 const packageOrders = vi.fn(async () => [{ ...document, items }]);
+const purchaseSource = ts.createSourceFile("purchase-orders.router.ts", readFileSync("server/routers/purchase/purchase-orders.router.ts", "utf8"), ts.ScriptTarget.Latest, true);
+const workshopEnrichment = purchaseSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "enrichExternalWorkshopPricingItems")!;
+const enrichExternalWorkshopPricingItems = vm.runInNewContext(ts.transpileModule(`(${workshopEnrichment.getText(purchaseSource).replace(/^export /, "")})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, {
+  db: { getPurchaseOrderTicketContextBatch: async () => new Map() }, externalWorkshopForPurchaseItem,
+});
 function procedure(file: string, rootName: string) {
   const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
   let expression = "";
@@ -30,6 +36,7 @@ function procedure(file: string, rootName: string) {
   if (!expression) throw new Error("Missing production document handler");
   return vm.runInNewContext(ts.transpileModule(`(${expression})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, {
     z, TRPCError, protectedProcedure, isDelegateRole, isDelegateOwnPurchaseDraft, isPurchasePdfApprover,
+    enrichExternalWorkshopPricingItems,
     db: { getPurchaseOrderById: async (id: number) => ({ ...document, id }), getPOItems: async () => items, getProcurementComments: async () => comments, getPurchasePackageById: async () => ({ id: 20, createdById: 8 }) },
     assertCanViewPurchaseOrder: scope, assertCanPerformPOAction: () => {},
     createPurchaseOrderReadScope: async (user: any) => ({

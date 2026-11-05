@@ -1383,25 +1383,28 @@ export async function getPOItemsByStatus(status: string) {
 //   بند — أضف حقلها لهذا الاستعلام المجمّع (أو استعلام JOIN مشابه) واستخدمه.
 // ══════════════════════════════════════════════════════════════════════════════
 export async function getPurchaseOrderTicketContextBatch(purchaseOrderIds: number[]) {
-  type Context = { po: any; ticket: any; externalJob: any };
+  type Context = { po: any; ticket: any; ticketItem: any; externalJob: any; externalItemCount: unknown };
   const contextMap = new Map<number, Context>();
   const db = await getDb();
   const uniqueIds = Array.from(new Set(purchaseOrderIds.filter((id): id is number => !!id)));
   if (!db || uniqueIds.length === 0) return contextMap;
 
-  const rows = await db
+  const rows = await readScopeChunks(uniqueIds, ids => db
     .select({
       po: purchaseOrders,
       ticket: tickets,
+      ticketItem: ticketItems,
       externalJob: externalMaintenanceJobs,
+      externalItemCount: sql<number>`(SELECT COUNT(*) FROM purchase_order_items externalItem WHERE externalItem.purchaseOrderId=${purchaseOrders.id})`,
     })
     .from(purchaseOrders)
     .leftJoin(tickets, eq(purchaseOrders.ticketId, tickets.id))
+    .leftJoin(ticketItems, eq(purchaseOrders.ticketItemId, ticketItems.id))
     .leftJoin(externalMaintenanceJobs, eq(externalMaintenanceJobs.purchaseOrderId, purchaseOrders.id))
-    .where(inArray(purchaseOrders.id, uniqueIds));
+    .where(inArray(purchaseOrders.id, ids)));
 
   for (const row of rows) {
-    contextMap.set(row.po.id, { po: row.po, ticket: row.ticket, externalJob: row.externalJob });
+    contextMap.set(row.po.id, { po: row.po, ticket: row.ticket, ticketItem: row.ticketItem, externalJob: row.externalJob, externalItemCount: row.externalItemCount });
   }
   return contextMap;
 }

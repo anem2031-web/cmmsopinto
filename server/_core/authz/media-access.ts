@@ -167,6 +167,9 @@ export const mediaAccessPort: MediaAccessPort = {
         if (!isExternalDelegateJob(user, scope) || !key || mediaKeyFromValue(scope.assetBeforePhotoUrl) !== key) throw denied();
         return;
       }
+      const { assertDelegateExternalAssetKey } = await import("./external-followup-media");
+      await assertDelegateExternalAssetKey(user, [ref], key || "", mediaKeyFromValue);
+      return;
     }
     if (ref.kind === "ticket" || ref.kind === "external") {
       const ticket = await db.getTicketById(ref.parentId!);
@@ -228,6 +231,26 @@ export async function assertMediaAccess(user: MediaActor | null | undefined, raw
   if (key.startsWith("cmms/backups/")) throw denied();
   if (user.role === "observer") return key;
   const references = await port.references(key);
+  const externalReferences = references.filter(reference => reference.kind === "external");
+  if (isDelegateRole(user.role) && externalReferences.length) {
+    // A report/image graft must not turn an original financial PDF into a new
+    // asset permission. Keep its original document boundary independently.
+    for (const reference of references.filter(reference => reference.kind === "attachment" && isPurchaseDocumentAttachment(reference.entityType || ""))) {
+      await port.authorize(user, reference, key);
+    }
+    if (port === mediaAccessPort) {
+      const { assertDelegateExternalAssetKey } = await import("./external-followup-media");
+      await assertDelegateExternalAssetKey(user, externalReferences, key, mediaKeyFromValue);
+      return key;
+    }
+    // Custom ports keep the same external-before-fallback contract in callers
+    // and isolated tests; one readable own external source is sufficient.
+    for (const reference of externalReferences) {
+      try { await port.authorize(user, reference, key); return key; }
+      catch (error) { if (!(error instanceof TRPCError) || !["FORBIDDEN", "NOT_FOUND", "BAD_REQUEST"].includes(error.code)) throw error; }
+    }
+    throw denied();
+  }
   // A restricted financial PDF cannot be made public by grafting the same key
   // onto an otherwise readable image/catalog record. Its original document gate
   // must pass before the ordinary any-readable-reference fallback below.

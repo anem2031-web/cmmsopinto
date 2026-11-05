@@ -4,6 +4,7 @@
  * New endpoints must receive a reviewed grant here before these roles can use them.
  */
 export const BUSINESS_GUARDED_ROLES = ["accountant", "senior_management", "executive_director", "warehouse", "food_warehouse_assistant"] as const;
+import { EXTERNAL_FOLLOWUP_QUERIES, externalFollowupRpcAllowed } from "./external-maintenance-followup";
 export type BusinessRole = typeof BUSINESS_GUARDED_ROLES[number];
 export type BusinessIdentity = { id: number; role: string; isActive?: number };
 export type PricingBundleApprovalStage = "accounting" | "management";
@@ -180,6 +181,7 @@ export const BUSINESS_ROLE_CAPABILITIES: Record<BusinessRole, { query: readonly 
 };
 
 export function businessRpcAllowed(user: BusinessIdentity | null | undefined, type: string, path: string): boolean {
+  if ((EXTERNAL_FOLLOWUP_QUERIES as readonly string[]).includes(path)) return externalFollowupRpcAllowed(user, type, path);
   if (!isBusinessGuardedRole(user?.role)) return true;
   if (path === "construction" || path.startsWith("construction.") || path === "preventive" || path.startsWith("preventive.")) return false;
   if (type === "mutation" && path === "auth.logout") return true;

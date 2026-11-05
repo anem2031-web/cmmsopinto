@@ -1,4 +1,6 @@
 import { isDelegateRole } from "@shared/roles";
+import { ExternalWorkshopPricingFields, externalWorkshopForm, externalWorkshopIssue, externalWorkshopPayload, type ExternalWorkshopForm } from "@/components/purchase/ExternalWorkshopPricingFields";
+import { externalMaintenanceLabels } from "@/i18n/externalMaintenanceFollowup";
 import { isItTeamRole, MAINTENANCE_RESPONSIBLE_DEPARTMENT } from "@shared/roles";
 import { useState, useRef } from "react";
 import QRCode from "qrcode";
@@ -645,6 +647,7 @@ export default function PurchaseCycle() {
 
   // Estimate state
   const [estimateValues, setEstimateValues] = useState<Record<number, string>>({});
+  const [workshopDrafts, setWorkshopDrafts] = useState<Record<number, ExternalWorkshopForm>>({});
 
   // ── فلاتر كل تبويب ──────────────────────────────────────────
   const [searchEstimate,   setSearchEstimate]   = useState("");
@@ -977,6 +980,8 @@ export default function PurchaseCycle() {
                         )}
                       </div>
                     ) : (
+                      <div className="space-y-3">
+                      <ExternalWorkshopPricingFields item={item} idPrefix={`external-cycle-${item.id}`} value={externalWorkshopForm(item, workshopDrafts[item.id])} onChange={value => setWorkshopDrafts(previous => ({ ...previous, [item.id]: value }))} disabled={estimateCostMut.isPending} />
                       <div className="flex gap-2 items-end">
                         <div className="flex-1">
                           <Label className="text-xs text-amber-700">{t.workflow.purchase.estimatedUnitPriceCurrency.replace("{currency}", t.common.currency)}</Label>
@@ -995,21 +1000,24 @@ export default function PurchaseCycle() {
                         )}
                         <Button
                           size="sm"
-                          disabled={!estimateValues[item.id] || parseFloat(estimateValues[item.id]) <= 0 || estimateCostMut.isPending}
+                          disabled={!estimateValues[item.id] || parseFloat(estimateValues[item.id]) <= 0 || estimateCostMut.isPending || !!externalWorkshopIssue(item, workshopDrafts[item.id])}
                           onClick={() => {
                             if (!estimateValues[item.id] || parseFloat(estimateValues[item.id]) <= 0) {
                               toast.error(t.purchaseOrders.enterPrice);
                               return;
                             }
+                            const workshopIssue = externalWorkshopIssue(item, workshopDrafts[item.id]);
+                            if (workshopIssue) { toast.error(externalMaintenanceLabels(language)[workshopIssue]); return; }
                             estimateCostMut.mutate({
                               purchaseOrderId: item.purchaseOrderId,
-                              items: [{ id: item.id, estimatedUnitCost: estimateValues[item.id] }]
+                              items: [{ id: item.id, estimatedUnitCost: estimateValues[item.id], ...externalWorkshopPayload(item, workshopDrafts[item.id]) }]
                             });
                           }}
                           className="shrink-0"
                         >
                           {estimateCostMut.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : t.purchaseOrders.savePricing}
                         </Button>
+                      </div>
                       </div>
                     )}
                   </CardContent>

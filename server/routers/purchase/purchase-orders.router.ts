@@ -7,6 +7,7 @@ import { listDelegateCompleted } from "../../services/delegate-completed";
 import { isDelegateOwnPurchaseDraft } from "../../../shared/purchaseDraftVisibility";
 import { isItTeamRole, isDelegateRole } from "@shared/roles";
 import { assignOwnDelegateItem, delegateAssignmentOptions, managerAssignableItemIds } from "../../services/delegate-manager-assignment";
+import { externalWorkshopInput, externalWorkshopForPurchaseItem, withExternalWorkshopPricing } from "../../services/external-maintenance-pricing";
 import { assertLegacyTeamExecutionAllowed } from "../maintenance-teams/execution.guard";
 import { createTicketMaterialPurchase } from "../maintenance-teams/purchase-form";
 import { TeamTicketError } from "../../../shared/maintenance-team-tickets/model";
@@ -419,15 +420,23 @@ function shapeEnrichedPurchaseCycleItem(item: any, context: { po: any; ticket: a
     externalMaintenanceJobId: externalJob?.id || null,
     externalMaintenanceStatus: externalJob?.status || null,
     externalWarehouseReceivedAt: externalJob?.warehouseReceivedAt || null,
+    ...externalWorkshopForPurchaseItem(item, context),
   };
 }
 
 // الحل الدائم لمشكلة N+1: استعلام مجمّع واحد لكل بنود القائمة بدل رحلة قاعدة
 // بيانات مستقلة لكل بند. أي تبويب جديد يحتاج إثراء بنود بسياق طلب الشراء/البلاغ
 // يجب أن يستخدم هذه الدالة، وليس enrichPurchaseCycleItem القديمة لكل بند.
-async function enrichPurchaseCycleItemsBatch(items: any[]) {
+export async function enrichPurchaseCycleItemsBatch(items: any[]) {
   const contextMap = await db.getPurchaseOrderTicketContextBatch(items.map(i => i.purchaseOrderId));
   return items.map(item => shapeEnrichedPurchaseCycleItem(item, contextMap.get(item.purchaseOrderId)));
+}
+
+/** Add quote-only workshop fields after the caller has filtered visible items. */
+export async function enrichExternalWorkshopPricingItems(items: any[]) {
+  if (!items.length) return items;
+  const contexts = await db.getPurchaseOrderTicketContextBatch(items.map(item => item.purchaseOrderId));
+  return items.map(item => ({ ...item, ...externalWorkshopForPurchaseItem(item, contexts.get(item.purchaseOrderId)) }));
 }
 
 interface InventoryTicketDeliveryContext {
@@ -2026,6 +2035,7 @@ export const purchaseOrdersRouter = router({
     photoUrl: z.string().optional(),
     notes: z.string().optional(),
     estimatedUnitCost: z.string().optional(),
+    externalWorkshop: externalWorkshopInput.optional(),
     lastKnownUpdatedAt: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
     if (pricingBundlesEnabled()) await assertItemOutsidePricingBundle(await db.getDb(), input.id);
@@ -2079,8 +2089,9 @@ export const purchaseOrdersRouter = router({
       updates.estimatedTotalCost = String(parseFloat(oldItem.estimatedUnitCost) * input.quantity);
     }
     await withPendingReviewItemWrite(ctx.user, po, oldItem, "editItem", async tx => {
+    const saveItem = async (writeTx?: any) => {
     if (input.estimatedUnitCost !== undefined) {
-      const updated = await db.updatePOItemIfDelegateChangeUnlocked(input.id, updates, undefined, undefined, tx, oldItem.batchId,isDelegateRole(ctx.user.role)?ctx.user.id:undefined);
+      const updated = await db.updatePOItemIfDelegateChangeUnlocked(input.id, updates, undefined, undefined, writeTx, oldItem.batchId,isDelegateRole(ctx.user.role)?ctx.user.id:undefined);
       if (!updated) {
         throw new TRPCError({
           code: "CONFLICT",
@@ -2088,8 +2099,19 @@ export const purchaseOrdersRouter = router({
         });
       }
     } else {
-      await db.updatePOItem(input.id, updates, tx, undefined, oldItem.batchId);
+      await db.updatePOItem(input.id, updates, writeTx, undefined, oldItem.batchId);
     }
+    };
+    if (input.estimatedUnitCost !== undefined || input.quantity !== undefined && oldItem.estimatedUnitCost != null) {
+      const workshopDatabase = tx || await db.getDb();
+      if (!workshopDatabase) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر الاتصال بقاعدة البيانات" });
+      await withExternalWorkshopPricing({ database: workshopDatabase, transaction: work => db.withTransaction(work), existingTx: tx,
+        actor: ctx.authenticatedUser ?? ctx.user, purchaseOrderId: po.id, itemId: oldItem.id, externalWorkshop: input.externalWorkshop,
+        authorize: current => {
+          assertCanPerformPurchaseItemReviewAction("editItem", current.actor, current.po, current.item);
+          if (oldItem.updatedAt && String(current.item.updatedAt) !== String(oldItem.updatedAt)) throw new TRPCError({ code: "CONFLICT", message: "تغيّر تسعير الصنف؛ حدّث الصفحة" });
+        }, write: saveItem });
+    } else await saveItem(tx);
     });
     await db.createAuditLog({
       userId: ctx.user.id,
@@ -2121,6 +2143,7 @@ export const purchaseOrdersRouter = router({
     photoUrl: z.string().optional(),
     notes: z.string().optional(),
     estimatedUnitCost: z.string().optional(),
+    externalWorkshop: externalWorkshopInput.optional(),
     lastKnownUpdatedAt: z.string().optional(),
   })).mutation(async ({ input, ctx }) => {
     const po = await db.getPurchaseOrderById(input.purchaseOrderId);
@@ -2192,7 +2215,17 @@ export const purchaseOrdersRouter = router({
       updates.purchaseCancelledAt = null;
     }
 
-    await db.updatePOItem(oldItem.id, updates);
+    const saveReturnedItem = async (tx?: any) => db.updatePOItem(oldItem.id, updates, tx);
+    if (input.estimatedUnitCost !== undefined || input.quantity !== undefined && oldItem.estimatedUnitCost != null) {
+      const workshopDatabase = await db.getDb();
+      if (!workshopDatabase) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر الاتصال بقاعدة البيانات" });
+      await withExternalWorkshopPricing({ database: workshopDatabase, transaction: work => db.withTransaction(work),
+        actor: ctx.authenticatedUser ?? ctx.user, purchaseOrderId: po.id, itemId: oldItem.id, externalWorkshop: input.externalWorkshop, creatorResubmission: true,
+        authorize: current => {
+          assertCanResolveReturnedPOItem(current.actor, { requestedById: current.po.requestedById, itemStatus: current.item.status });
+          if (!['needs_item_revision', 'purchase_cancelled'].includes(current.item.status) || oldItem.updatedAt && String(current.item.updatedAt) !== String(oldItem.updatedAt)) throw new TRPCError({ code: "CONFLICT", message: "تغيّرت حالة الصنف المعاد؛ حدّث الصفحة" });
+        }, write: saveReturnedItem });
+    } else await saveReturnedItem();
     await queuePurchaseTranslation("PO_ITEM", oldItem.id, [
       { fieldName: "itemName", text: input.itemName },
       { fieldName: "description", text: input.description },
@@ -2424,6 +2457,7 @@ export const purchaseOrdersRouter = router({
     items: z.array(z.object({
       id: z.number(),
       estimatedUnitCost: z.string(),
+      externalWorkshop: externalWorkshopInput.optional(),
     })),
   })).mutation(async ({ input, ctx }) => {
     // اجلب الطلب أولاً لمعرفة حالته الحالية
@@ -2456,16 +2490,25 @@ export const purchaseOrdersRouter = router({
       // ── دائمًا: حفظ السعر فقط يضع الصنف في "estimated" بانتظار إرساله ضمن دفعة ──
       // (سواء كان الطلب لسه pending_estimate، أو سبق واعتُمدت دفعات أخرى منه، أو حتى لو وصل الطلب لحالة approved)
       // لا يوجد أي مسار يعتمد الصنف تلقائيًا بدون المرور على submitPricedBatch ثم اعتماد الحسابات/الإدارة لهذه الدفعة تحديدًا.
-      const estimateSaved = await db.updatePOItemIfDelegateChangeUnlocked(item.id, {
+      const workshopDatabase = await db.getDb();
+      if (!workshopDatabase) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر الاتصال بقاعدة البيانات" });
+      const estimateSaved = await withExternalWorkshopPricing({ database: workshopDatabase, transaction: work => db.withTransaction(work),
+        actor: ctx.authenticatedUser ?? ctx.user, purchaseOrderId: po.id, itemId: poItem.id, externalWorkshop: item.externalWorkshop,
+        authorize: current => { if (current.item.reviewRole != null) assertRoutedPurchaseItemReady(current.po, current.item); assertPOItemAssignedToDelegate(current.actor, current.item); },
+        write: async (tx, current) => {
+      const saved = await db.updatePOItemIfDelegateChangeUnlocked(item.id, {
         estimatedUnitCost: item.estimatedUnitCost,
-        estimatedTotalCost: String(totalCost),
+        estimatedTotalCost: String(current ? cost * Number(current.item.quantity) : totalCost),
         status: "estimated",
         batchId: null, // أي إعادة تسعير تفصل الصنف عن أي دفعة قديمة وتجعله جاهزًا لدفعة جديدة
       }, "pending", {
         actorUserId: ctx.user.id,
         actorName: ctx.user.name || null,
         eventType: "estimate_updated",
-      },undefined,undefined,isDelegateRole(ctx.user.role)?ctx.user.id:undefined);
+      },tx,undefined,isDelegateRole(ctx.user.role)?ctx.user.id:undefined);
+      if (!saved) throw new TRPCError({ code: "CONFLICT", message: "تغيّر تسعير الصنف أو المندوب؛ حدّث الصفحة" });
+      return saved;
+      }});
       if (!estimateSaved) {
         throw new TRPCError({
           code: "CONFLICT",
@@ -2569,8 +2612,9 @@ export const purchaseOrdersRouter = router({
     readScope.assert(po);
 
     const allItems = readScope.filterItems(po, await db.getPOItems(input.id));
-    const items = isDelegateRole(ctx.user.role) && !isDelegateOwnPurchaseDraft(ctx.user, po)
+    const scopedItems = isDelegateRole(ctx.user.role) && !isDelegateOwnPurchaseDraft(ctx.user, po)
       ? allItems.filter((item: any) => Number(item.delegateId) === ctx.user.id) : allItems;
+    const items = await enrichExternalWorkshopPricingItems(scopedItems);
     const allComments = await db.getProcurementComments(input.id);
     const ownItemIds = new Set(items.map((item: any) => item.id));
     const comments = isDelegateRole(ctx.user.role) || readScope.isRoutedReviewOnly(po)
@@ -2655,10 +2699,10 @@ list: protectedProcedure.input(z.object({
     const isAdminOrOwner = ctx.user.role === "admin" || ctx.user.role === "owner";
     if (isAdminOrOwner) {
       // Admin/owner see all items
-      return db.getAllPOItems();
+      return enrichExternalWorkshopPricingItems(await db.getAllPOItems());
     }
     if (!isDelegateRole(ctx.user.role)) return [];
-    return db.getPOItemsByDelegate(ctx.user.id);
+    return enrichExternalWorkshopPricingItems(await db.getPOItemsByDelegate(ctx.user.id));
   }),
 
   /**

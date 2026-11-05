@@ -1,4 +1,6 @@
 import { isDelegateRole } from "@shared/roles";
+import { ExternalWorkshopPricingFields, externalWorkshopForm, externalWorkshopIssue, externalWorkshopPayload, needsExternalWorkshop, type ExternalWorkshopForm } from "@/components/purchase/ExternalWorkshopPricingFields";
+import { externalMaintenanceLabels } from "@/i18n/externalMaintenanceFollowup";
 import { trpc } from "@/lib/trpc";
 import { independentReadOptions } from "@/lib/read-transport";
 import { refreshPurchaseExecution, purchaseRefreshNotice } from "@/lib/purchaseExecutionRefresh";
@@ -152,6 +154,7 @@ export default function MyItems() {
   const [activeTab, setActiveTab] = useState("pending_estimate");
   const [estimateDialog, setEstimateDialog] = useState<any>(null);
   const [estimateCost, setEstimateCost] = useState("");
+  const [workshopDrafts, setWorkshopDrafts] = useState<Record<number, ExternalWorkshopForm>>({});
   const [purchaseDialog, setPurchaseDialog] = useState<any>(null);
   const [uploadingField, setUploadingField] = useState<string | null>(null);
   const [invoiceUrl, setInvoiceUrl] = useState("");
@@ -521,7 +524,7 @@ export default function MyItems() {
       </Tabs>
 
       <Dialog open={!!estimateDialog} onOpenChange={(open) => { if (!open) setEstimateDialog(null); }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className={`max-w-md ${needsExternalWorkshop(estimateDialog) ? "max-h-[90vh] overflow-y-auto" : ""}`}>
           <DialogHeader>
             <DialogTitle className="text-base">{t.purchaseOrders.estimatedUnitCost}</DialogTitle>
           </DialogHeader>
@@ -552,16 +555,19 @@ export default function MyItems() {
                   </p>
                 </div>
               )}
+              <ExternalWorkshopPricingFields item={estimateDialog} idPrefix={`external-myitems-${estimateDialog.id}`} value={externalWorkshopForm(estimateDialog, workshopDrafts[estimateDialog.id])} onChange={value => setWorkshopDrafts(previous => ({ ...previous, [estimateDialog.id]: value }))} disabled={estimateMut.isPending} />
               <Button
                 className="w-full gap-2"
                 onClick={() => {
                   if (!estimateCost || parseFloat(estimateCost) <= 0) { toast.error(t.purchaseOrders.estimatedUnitCost); return; }
+                  const workshopIssue = externalWorkshopIssue(estimateDialog, workshopDrafts[estimateDialog.id]);
+                  if (workshopIssue) { toast.error(externalMaintenanceLabels(language)[workshopIssue]); return; }
                   estimateMut.mutate({
                     purchaseOrderId: estimateDialog.purchaseOrderId,
-                    items: [{ id: estimateDialog.id, estimatedUnitCost: estimateCost }],
+                    items: [{ id: estimateDialog.id, estimatedUnitCost: estimateCost, ...externalWorkshopPayload(estimateDialog, workshopDrafts[estimateDialog.id]) }],
                   });
                 }}
-                disabled={estimateMut.isPending}
+                disabled={estimateMut.isPending || !!externalWorkshopIssue(estimateDialog, workshopDrafts[estimateDialog.id])}
               >
                 {estimateMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <DollarSign className="w-4 h-4" />}
                 {t.common.save}

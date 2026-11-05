@@ -10,7 +10,7 @@ import {
   createPurchaseOrderReadScope,
 } from "../../_core/authz/guard";
 import { PO_STATUS } from "../../_core/authz/policy";
-import { submitPricedBatchForPO } from "./purchase-orders.router";
+import { submitPricedBatchForPO, enrichExternalWorkshopPricingItems } from "./purchase-orders.router";
 import { getActivePricingBatchItems } from "./pricing-batch-state";
 import { syncPathBTicketFromPurchaseOrder } from "./ticket-purchase-workflow";
 import { notifyItemRejection } from "../_shared/router-helpers";
@@ -261,6 +261,9 @@ export const purchasePackagesRouter = router({
       }
 
       const response = { ...pkg, orders: ordersWithItems.map(po => withPurchaseSubmissionTime({ ...po, items: isDelegateRole(ctx.user.role) ? po.items.filter((item: any) => Number(item.delegateId) === ctx.user.id) : po.items })) };
+      const enrichedItems = await enrichExternalWorkshopPricingItems(response.orders.flatMap((po: any) => po.items));
+      const enrichedById = new Map(enrichedItems.map((item: any) => [item.id, item]));
+      response.orders = response.orders.map((po: any) => ({ ...po, items: po.items.map((item: any) => enrichedById.get(item.id) || item) }));
       if (isDelegateRole(ctx.user.role)) {
         return localizeMasterDataReferences({ ...response, createdByName: null,
           orders: response.orders.map((po: any) => ({ ...po, requestedByName: po.requestedByName ?? null,

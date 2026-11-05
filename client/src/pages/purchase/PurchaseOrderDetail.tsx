@@ -1,4 +1,6 @@
 import { isDelegateRole } from "@shared/roles";
+import { ExternalWorkshopPricingFields, externalWorkshopForm, externalWorkshopIssue, externalWorkshopPayload, needsExternalWorkshop, type ExternalWorkshopForm } from "@/components/purchase/ExternalWorkshopPricingFields";
+import { externalMaintenanceLabels } from "@/i18n/externalMaintenanceFollowup";
 import { defaultDelegateManagerId, reviewDelegateId, reviewBulkDelegateValue } from "@/lib/delegateReviewDefaults";
 import { PricingBundleLink, PricingBundleAddButton } from "@/components/purchase/PricingBundleActions";
 import { ReplacementRepriceButton } from "@/components/purchase/ReplacementRepriceButton";
@@ -383,6 +385,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   }, [focusedItemId, po?.items?.length]);
 
   const [estimates, setEstimates] = useState<Record<number, string>>({});
+  const [workshopDrafts, setWorkshopDrafts] = useState<Record<number, ExternalWorkshopForm>>({});
   const [rejectReason, setRejectReason] = useState("");
   const [custodyAmount, setCustodyAmount] = useState("");
   const [batchCustodyAmounts, setBatchCustodyAmounts] = useState<Record<number, string>>({});
@@ -400,6 +403,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   const [delegateChangeReason, setDelegateChangeReason] = useState("");
   const [delegateSelections, setDelegateSelections] = useState<Record<number, string>>({});
   const [editForm, setEditForm] = useState<{ itemName: string; description: string; quantity: number; estimatedUnitCost: string; unit: string; photoUrl: string; notes: string }>({ itemName: "", description: "", quantity: 1, estimatedUnitCost: "", unit: "", photoUrl: "", notes: "" });
+  const showExternalEditWorkshop = !!editingItem && needsExternalWorkshop(editingItem) && !['approved', 'partial_purchase', 'purchased', 'received'].includes(po?.status || "");
   const [reviewDecisions, setReviewDecisions] = useState<Record<number, { action: "approve" | "reject"; delegateId?: number; rejectionReason?: string }>>({});
   const [selectedReviewItemIds, setSelectedReviewItemIds] = useState<number[]>([]);
   const hasRoutedReview = (po?.items || []).some(isRoutedPurchaseItem);
@@ -1274,6 +1278,7 @@ const visibleItems = useMemo(() => {
 
 {isMyItem && item.status === "pending" && !item.batchId && !item.delegateChangeRequestedAt && (
   <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+    <ExternalWorkshopPricingFields item={item} idPrefix={`external-quote-${item.id}`} value={externalWorkshopForm(item, workshopDrafts[item.id])} onChange={value => setWorkshopDrafts(previous => ({ ...previous, [item.id]: value }))} disabled={estimateMut.isPending} />
     <p className="text-xs font-medium text-amber-800 flex items-center gap-1.5">
       <DollarSign className="w-3.5 h-3.5" /> {t.purchaseOrders.estimatedUnitCost}:
     </p>
@@ -1312,15 +1317,19 @@ const visibleItems = useMemo(() => {
             return;
           }
 
+          const workshopIssue = externalWorkshopIssue(item, workshopDrafts[item.id]);
+          if (workshopIssue) { toast.error(externalMaintenanceLabels(language)[workshopIssue]); return; }
+
           estimateMut.mutate({
             purchaseOrderId: po.id,
             items: [{
               id: item.id,
-              estimatedUnitCost: estimates[item.id]
+              estimatedUnitCost: estimates[item.id],
+              ...externalWorkshopPayload(item, workshopDrafts[item.id]),
             }]
           });
         }}
-        disabled={estimateMut.isPending}
+        disabled={estimateMut.isPending || !!externalWorkshopIssue(item, workshopDrafts[item.id])}
         className="shrink-0"
       >
         {estimateMut.isPending
@@ -2353,7 +2362,7 @@ const visibleItems = useMemo(() => {
 
       {/* Edit Item Dialog */}
       <Dialog open={!!editingItem} onOpenChange={(open) => { if (!open) setEditingItem(null); }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className={`max-w-md ${showExternalEditWorkshop ? "max-h-[90vh] overflow-y-auto" : ""}`}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Pencil className="w-4 h-4" />
@@ -2393,6 +2402,8 @@ const visibleItems = useMemo(() => {
               </div>
             )}
 
+            {showExternalEditWorkshop && <ExternalWorkshopPricingFields item={editingItem} idPrefix={`external-edit-${editingItem.id}`} value={externalWorkshopForm(editingItem, workshopDrafts[editingItem.id])} onChange={value => setWorkshopDrafts(previous => ({ ...previous, [editingItem.id]: value }))} disabled={editItemMut.isPending || editAndResubmitReturnedItemMut.isPending} />}
+
             <div className="space-y-2">
               <Label>Photo URL</Label>
               <Input value={editForm.photoUrl} onChange={e => setEditForm(p => ({ ...p, photoUrl: e.target.value }))} />
@@ -2408,6 +2419,8 @@ const visibleItems = useMemo(() => {
               variant={isEditingReturnedItem ? "outline" : "default"}
               onClick={() => {
                 if (!editingItem) return;
+                const workshopIssue = showExternalEditWorkshop && editForm.estimatedUnitCost ? externalWorkshopIssue(editingItem, workshopDrafts[editingItem.id]) : null;
+                if (workshopIssue) { toast.error(externalMaintenanceLabels(language)[workshopIssue]); return; }
                 editItemMut.mutate({
                   lastKnownUpdatedAt: getLastKnownUpdatedAt(editingItem),
                   id: editingItem.id,
@@ -2422,9 +2435,10 @@ const visibleItems = useMemo(() => {
                   unit: editForm.unit || undefined,
                   photoUrl: editForm.photoUrl || undefined,
                   notes: editForm.notes || undefined,
+                  ...(showExternalEditWorkshop && editForm.estimatedUnitCost ? externalWorkshopPayload(editingItem, workshopDrafts[editingItem.id]) : {}),
                 });
               }}
-              disabled={editItemMut.isPending || editAndResubmitReturnedItemMut.isPending}
+              disabled={editItemMut.isPending || editAndResubmitReturnedItemMut.isPending || !!(showExternalEditWorkshop && editForm.estimatedUnitCost && externalWorkshopIssue(editingItem, workshopDrafts[editingItem.id]))}
             >
               {editItemMut.isPending
                 ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -2435,6 +2449,8 @@ const visibleItems = useMemo(() => {
               <Button
                 onClick={() => {
                   if (!editingItem) return;
+                  const workshopIssue = showExternalEditWorkshop && editForm.estimatedUnitCost ? externalWorkshopIssue(editingItem, workshopDrafts[editingItem.id]) : null;
+                  if (workshopIssue) { toast.error(externalMaintenanceLabels(language)[workshopIssue]); return; }
                   editAndResubmitReturnedItemMut.mutate({
                     lastKnownUpdatedAt: getLastKnownUpdatedAt(editingItem),
                     id: editingItem.id,
@@ -2449,9 +2465,10 @@ const visibleItems = useMemo(() => {
                     unit: editForm.unit || undefined,
                     photoUrl: editForm.photoUrl || undefined,
                     notes: editForm.notes || undefined,
+                    ...(showExternalEditWorkshop && editForm.estimatedUnitCost ? externalWorkshopPayload(editingItem, workshopDrafts[editingItem.id]) : {}),
                   });
                 }}
-                disabled={editItemMut.isPending || editAndResubmitReturnedItemMut.isPending}
+                disabled={editItemMut.isPending || editAndResubmitReturnedItemMut.isPending || !!(showExternalEditWorkshop && editForm.estimatedUnitCost && externalWorkshopIssue(editingItem, workshopDrafts[editingItem.id]))}
               >
                 {editAndResubmitReturnedItemMut.isPending
                   ? <Loader2 className="w-4 h-4 animate-spin" />

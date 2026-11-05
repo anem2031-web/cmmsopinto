@@ -4,11 +4,13 @@ import { drizzle } from "drizzle-orm/mysql2";
 import { externalMaintenanceJobs, users, tickets, ticketItems, purchaseOrders, purchaseOrderItems, ticketStatusHistory, assets } from "../../drizzle/schema";
 import { purchaseSpecificationsDatabase } from "./fixtures/purchaseSpecificationsDatabase";
 import { hasCurrentExternalDelegateReceipt, canWarehouseReprepareExternalAsset } from "../../shared/externalMaintenanceWorkflow";
+import { externalMaintenanceReturnTime } from "../../shared/externalMaintenanceReturnTime";
 
 const ports = vi.hoisted(() => ({ db: null as any, number: vi.fn() }));
 vi.mock("../_core/db/client", () => ({ getDb: async () => ports.db, withTransaction: (work: any) => ports.db.transaction(work) }));
 vi.mock("../_core/db/purchase", () => ({ getNextPONumber: () => ports.number() }));
 import { prepareExternalMaintenanceJob, decideExternalMaintenanceDelegateReceipt, approveExternalMaintenanceGateExit,
+  approveExternalMaintenanceGateEntry, receiveExternalMaintenanceAsset,
   listExternalMaintenanceJobsForDelegate, listPathCTicketsWaitingWarehousePreparation } from "../_core/db/external-maintenance";
 
 let f: ReturnType<typeof purchaseSpecificationsDatabase>;
@@ -53,7 +55,7 @@ beforeEach(() => {
   f.insert("tickets", { id: 10, ticketNumber: "MT-CORE", title: "العطل", description: "تفاصيل البلاغ", maintenancePath: "C", status: "work_approved" });
   f.insert("ticket_items", { id: 11, ticketId: 10, itemNumber: 1, maintenancePath: "C", status: "work_approved", description: "المواصفات" });
 });
-afterEach(() => { ports.db = null; f.close(); });
+afterEach(() => { ports.db = null; f.close(); vi.useRealTimers(); });
 
 describe("External asset delegate receipt uses the same guarded preparation and gate transaction", () => {
   it("gives the assigned delegate manager the same receipt and purchase ownership without allowing a foreign delegate",async()=>{
@@ -231,5 +233,49 @@ describe("External asset delegate receipt uses the same guarded preparation and 
     expect(itemOnly.map(row => row.job.id)).toEqual([prepared.jobId]);
     f.memory.exec("DELETE FROM ticket_items WHERE id=11");
     expect(await listExternalMaintenanceJobsForDelegate(2)).toEqual([]);
+  });
+
+  it("uses the actual gate-entry timestamp to freeze delay while warehouse receipt remains a separate existing transition", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-04T08:00:00Z"));
+    const prepared = await prepareExternalMaintenanceJob(preparation);
+    await decide(prepared.jobId);
+    const created = await exit(prepared.jobId);
+    expect(jobRow(prepared.jobId).gateExitApprovedAt).toBe("2026-11-04 08:00:00");
+    // The existing delegate purchase/return-ready transition has completed.
+    f.memory.exec(`UPDATE external_maintenance_jobs SET status='waiting_gate_entry',expectedReturnDate='2026-11-05';
+      UPDATE purchase_order_items SET status='purchased'; UPDATE purchase_orders SET status='purchased';`);
+    vi.setSystemTime(new Date("2026-11-07T22:10:00Z")); // 8 November in Riyadh.
+    const receipt = { jobId: prepared.jobId, warehouseUserId: 1, assetAfterReturnPhotoUrl: "/after.jpg", returnCondition: "تم الإصلاح" };
+    await expect(receiveExternalMaintenanceAsset(receipt)).rejects.toThrow("INVALID_RECEIPT_STAGE");
+    expect(externalMaintenanceReturnTime(jobRow(prepared.jobId))).toMatchObject({ state: "late", days: 3, frozen: false });
+    await approveExternalMaintenanceGateEntry({ jobId: prepared.jobId, gateUserId: 3, carrierName: "المندوب" });
+    const entered = jobRow(prepared.jobId);
+    expect(entered).toMatchObject({ status: "waiting_warehouse_receipt", gateEntryApprovedAt: "2026-11-07 22:10:00", warehouseReceivedAt: null });
+    expect(externalMaintenanceReturnTime(entered, new Date("2026-12-01T00:00:00Z"))).toMatchObject({ state: "late", days: 3, frozen: true });
+    expect(f.memory.prepare("SELECT status FROM purchase_order_items").get()).toEqual({ status: "purchased" });
+    vi.setSystemTime(new Date("2026-11-10T05:00:00Z"));
+    await receiveExternalMaintenanceAsset(receipt);
+    const received = jobRow(prepared.jobId);
+    expect(received).toMatchObject({ status: "waiting_technician_handover", warehouseReceivedAt: "2026-11-10 05:00:00", assetAfterReturnPhotoUrl: "/after.jpg" });
+    expect(externalMaintenanceReturnTime(received, new Date("2026-12-01T00:00:00Z"))).toMatchObject({ state: "late", days: 3, frozen: true });
+    expect(f.memory.prepare("SELECT status FROM purchase_orders WHERE id=?").get(created.purchaseOrderId)).toEqual({ status: "received" });
+    expect(f.memory.prepare("SELECT status FROM purchase_order_items").get()).toEqual({ status: "delivered_to_warehouse" });
+    expect(f.memory.prepare("SELECT status FROM tickets WHERE id=10").get()).toEqual({ status: "out_for_repair" });
+    expect(count("external_maintenance_jobs")).toBe(1); expect(count("purchase_orders")).toBe(1);
+  });
+
+  it("does not mark warehouse receipt complete if the existing purchase receipt write rolls back", async () => {
+    const prepared = await prepareExternalMaintenanceJob(preparation);
+    await decide(prepared.jobId); await exit(prepared.jobId);
+    f.memory.exec("UPDATE external_maintenance_jobs SET status='waiting_gate_entry',expectedReturnDate='2026-11-05'");
+    await approveExternalMaintenanceGateEntry({ jobId: prepared.jobId, gateUserId: 3, carrierName: "المندوب" });
+    const entered = jobRow(prepared.jobId);
+    f.memory.exec("CREATE TRIGGER fail_external_return BEFORE UPDATE ON purchase_order_items BEGIN SELECT RAISE(ABORT,'receipt unavailable'); END");
+    await expect(receiveExternalMaintenanceAsset({ jobId: prepared.jobId, warehouseUserId: 1, assetAfterReturnPhotoUrl: "/after.jpg", returnCondition: "عاد" })).rejects.toMatchObject({ cause: { message: expect.stringContaining("receipt unavailable") } });
+    const stillActive = jobRow(prepared.jobId);
+    expect(stillActive).toMatchObject({ status: "waiting_warehouse_receipt", warehouseReceivedAt: null, returnDocumentNumber: null, gateEntryApprovedAt: entered.gateEntryApprovedAt });
+    expect(externalMaintenanceReturnTime(stillActive).frozen).toBe(true);
+    expect(f.memory.prepare("SELECT status FROM purchase_orders").get()).toEqual({ status: "pending_estimate" });
   });
 });

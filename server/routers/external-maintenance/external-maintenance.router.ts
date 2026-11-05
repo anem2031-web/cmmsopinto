@@ -21,6 +21,8 @@ import { queueTranslation } from "../../services/translation/translationEngine";
 import { detectLanguage } from "../../services/translation/translation";
 import { returnExternalRoute, readExternalRouteReviews, decideExternalRoute } from "../../services/external-route-review";
 import { isExternalDelegateJob, loadExternalDelegateScopes, requireExternalDelegateJobs } from "../../_core/authz/external-delegate-access";
+import { externalFollowupDetailInput, externalFollowupListInput } from "../../../shared/external-maintenance-followup";
+import { listExternalMaintenanceFollowup, externalMaintenanceFollowupDetail } from "../../services/external-maintenance-followup";
 
 function translateExternalDbError(error: unknown): never {
   const code = error instanceof Error ? error.message : String(error);
@@ -86,6 +88,16 @@ async function currentExternalActor(context: {user:any;authenticatedUser?:any}, 
 }
 
 export const externalMaintenanceRouter = router({
+  listFollowup: protectedProcedure.input(externalFollowupListInput).query(async ({ ctx, input }) => {
+    const database = await db.getDb();
+    if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر الاتصال بقاعدة البيانات" });
+    return listExternalMaintenanceFollowup(database, ctx.authenticatedUser ?? ctx.user, input);
+  }),
+  followupDetail: protectedProcedure.input(externalFollowupDetailInput).query(async ({ ctx, input }) => {
+    const database = await db.getDb();
+    if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر الاتصال بقاعدة البيانات" });
+    return externalMaintenanceFollowupDetail(database, ctx.authenticatedUser ?? ctx.user, input);
+  }),
   returnForRouteReview: warehouseProcedure.input(z.object({ ticketId: z.number().int().positive(), ticketItemId: z.number().int().positive(), reason: z.string().trim().min(1).max(4000) }).strict())
     .mutation(({ ctx, input }) => returnExternalRoute(ctx.user, input)),
   routeReviews: protectedProcedure.input(z.object({ ticketId: z.number().int().positive() }).strict())

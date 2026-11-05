@@ -19,6 +19,7 @@ import { isOwnerAdminOnlyRpc, isOwnerOrAdminRole } from "../../shared/restricted
 import { approvedPricingDocumentRpcAllowed } from "../../shared/approved-pricing-documents";
 import { externalDelegateRpcAllowed } from "../../shared/external-delegate-access";
 import { isDelegateRole, delegateManagerAssignmentRpcAllowed } from "../../shared/delegate-role";
+import { externalFollowupRpcAllowed } from "../../shared/external-maintenance-followup";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -27,6 +28,7 @@ const t = initTRPC.context<TrpcContext>().create({
 export const router = t.router;
 const roleScopeGuard = t.middleware(async opts => {
   const user = opts.ctx.authenticatedUser ?? opts.ctx.user;
+  if (!externalFollowupRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لمتابعة الصيانة الخارجية" });
   if (!delegateManagerAssignmentRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "تعيين الصنف لمسئول المناديب فقط" });
   if (!externalDelegateRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "الإجراء للمندوب المسند إليه الأصل فقط" });
   if (isDelegateRole(user?.role)) {
