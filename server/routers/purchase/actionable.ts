@@ -26,6 +26,7 @@ import { PO_STATUS, ROUTED_REVIEW_BLOCKED_PO_STATUSES, type ActionName } from ".
 import { canReviewPurchaseItem, isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
 import { hasCommittedPurchaseItemReview } from "../../../shared/purchaseItemReviewWorkflow";
 import { isDelegateRole } from "../../../shared/roles";
+import type { LegacyPricingBatchReadScope } from "../../_core/authz/legacy-pricing-batch-read";
 
 /** حالات الأصناف التي تتطلب قرارًا من منشئ الطلب */
 const ITEM_STATUSES_NEEDING_CREATOR = ["needs_item_revision", "purchase_cancelled"];
@@ -44,6 +45,9 @@ export interface ActionablePO {
   actionMode?: "estimate" | "purchase" | "mixed";
   /** Keep per-item review navigation separate from a later header finance stage. */
   reviewAction?: "review" | "delegate_change";
+  /** Independent legacy finance work; never replace the true PO header status. */
+  approvalAction?: "accounting" | "management";
+  actionKey?: string;
 }
 
 interface UserCtx {
@@ -108,7 +112,7 @@ export function getDelegateItemActionMode(
   if (
     ["approved", "funded"].includes(item.status) &&
     ([PO_STATUS.APPROVED, PO_STATUS.PARTIAL_PURCHASE].includes(poStatus as any) ||
-      ([PO_STATUS.PENDING_ACCOUNTING, PO_STATUS.PENDING_MANAGEMENT].includes(poStatus as any) && !!item.batchId))
+      ([PO_STATUS.PENDING_ESTIMATE, PO_STATUS.PENDING_ACCOUNTING, PO_STATUS.PENDING_MANAGEMENT].includes(poStatus as any) && !!item.batchId))
   ) {
     return "purchase";
   }
@@ -181,7 +185,8 @@ function buildItemsSummary(items: ItemInput[]): string | undefined {
 export function computeActionablePOs(
   ctx: UserCtx,
   pos: POInput[],
-  items: ItemInput[]
+  items: ItemInput[],
+  legacyApprovals: readonly LegacyPricingBatchReadScope[] = [],
 ): ActionablePO[] {
   const itemsByPO = new Map<number, ItemInput[]>();
   for (const it of items) {
@@ -196,6 +201,23 @@ export function computeActionablePOs(
     const poItems = itemsByPO.get(po.id) ?? [];
     const isCreator = po.requestedById === ctx.id;
     const itemsSummary = buildItemsSummary(poItems);
+
+    // A legacy standalone batch remains actionable while a different batch or
+    // review changes the summary header. PB submissions and unified DPB roots
+    // keep their own aggregate cards; the read loader excludes unified roots.
+    const financeStage = ctx.role === "accountant" ? "accounting" : ctx.role === "senior_management" ? "management" : null;
+    const finance = financeStage && (ctx.isActive === 1 || ctx.isActive === true) &&
+      !(ROUTED_REVIEW_BLOCKED_PO_STATUSES as readonly string[]).includes(po.status)
+      ? legacyApprovals.filter(approval => approval.purchaseOrderId === po.id && approval.stage === financeStage &&
+        approval.purchasePackageSubmissionId == null && poItems.some(item => item.purchaseOrderId === po.id &&
+          item.batchId === approval.batchId && item.status === "estimated" && item.id != null && approval.itemIds.includes(item.id))) : [];
+    const hasFinanceAction = finance.length > 0;
+    if (hasFinanceAction) {
+      result.push({ id: po.id, poNumber: po.poNumber, status: po.status,
+        approvalAction: financeStage!, actionKey: `${financeStage}:${po.id}`,
+        reason: financeStage === "management" ? "دفعة تسعير تحتاج اعتمادك الإداري" : "دفعة تسعير تحتاج اعتمادك المحاسبي",
+        actionLabel: "اعتمد", itemsSummary });
+    }
 
     const myReviewItems = !(ROUTED_REVIEW_BLOCKED_PO_STATUSES as readonly string[]).includes(po.status)
       ? poItems.filter(item => canReviewPurchaseItem(ctx, item)) : [];
@@ -342,7 +364,7 @@ export function computeActionablePOs(
     // Routed rows never fall through to an unrelated manager's header-only review.
     if (po.status === PO_STATUS.PENDING_REVIEW && poItems.length > 0 && poItems.every(item => item.reviewRole != null)) continue;
     const stage = describeStageAction(ctx, po);
-    if (stage) {
+    if (stage && !hasFinanceAction) {
       result.push({
         id: po.id, poNumber: po.poNumber, status: po.status,
         reason: stage.reason,

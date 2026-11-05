@@ -1311,14 +1311,58 @@ export async function getNextBatchNumber(purchaseOrderId: number, tx?: any) {
   return rows.length > 0 ? rows[0].batchNumber + 1 : 1;
 }
 
-export async function getPOPricingBatches(purchaseOrderId: number) {
-  const db = await getDb();
+export async function getPOPricingBatches(purchaseOrderId: number, tx?: any): Promise<Array<typeof poPricingBatches.$inferSelect>> {
+  const db = tx || await getDb();
   if (!db) return [];
   return db
     .select()
     .from(poPricingBatches)
     .where(eq(poPricingBatches.purchaseOrderId, purchaseOrderId))
     .orderBy(poPricingBatches.batchNumber);
+}
+
+/** Fresh legacy finance scope. This does not authorize a PDF or an approval write.
+ * A sibling batch may move the PO header back without changing this batch's stage.
+ * Unified DPB-owned batches keep their existing root approval boundary, even when
+ * the rollout flag has subsequently been disabled. */
+export async function getLegacyPricingBatchReadScopeRows(
+  actor: { id: number; role: string; isActive?: number | boolean | null },
+  orderIds?: number[], database?: any,
+): Promise<any[]> {
+  const stage = actor.role === "accountant" ? "pending_accounting" : actor.role === "senior_management" ? "pending_management" : null;
+  if (!stage || !Number.isSafeInteger(actor.id) || actor.id <= 0 || !(actor.isActive === 1 || actor.isActive === true) ||
+    orderIds?.length === 0 || orderIds?.some(id => !Number.isSafeInteger(id) || id <= 0)) return [];
+  const db = database ?? await getDb();
+  if (!db) throw Error("تعذر تحميل نطاق دفعات التسعير");
+  const metadata = await db.execute(sql`SELECT TABLE_NAME FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='delegate_pricing_bundle_approvals'`);
+  if (!Array.isArray(metadata?.[0])) throw Error("تعذر التحقق من نطاق اعتماد الحزمة");
+  const hasUnified = metadata[0].length > 0;
+  const read = async (selected?: number[]) => {
+    const result = await db.execute(sql`SELECT b.id AS batchId,b.purchaseOrderId,b.purchasePackageSubmissionId,
+      b.status AS batchStatus,b.accountingApprovedById,b.accountingApprovedAt,
+      p.status AS parentStatus,i.id AS itemId,i.purchaseOrderId AS itemPurchaseOrderId,i.status AS itemStatus
+      FROM po_pricing_batches b
+      INNER JOIN purchase_orders p ON p.id=b.purchaseOrderId
+      INNER JOIN purchase_order_items i ON i.batchId=b.id AND i.purchaseOrderId=p.id
+      INNER JOIN users u ON u.id=${actor.id} AND u.role=${actor.role} AND u.isActive=1
+      WHERE b.status=${stage} AND i.status='estimated'
+      AND p.status NOT IN ('draft','revision_needed','closed','rejected')
+      AND ${stage === "pending_management" ? sql`b.accountingApprovedById>0 AND b.accountingApprovedAt IS NOT NULL` : sql`1=1`}
+      AND NOT EXISTS (SELECT 1 FROM purchase_order_items foreign_item WHERE foreign_item.batchId=b.id
+        AND (foreign_item.purchaseOrderId IS NULL OR foreign_item.purchaseOrderId<>p.id))
+      AND (b.purchasePackageSubmissionId IS NULL OR EXISTS (
+        SELECT 1 FROM purchase_package_submissions s INNER JOIN purchase_packages pk ON pk.id=s.purchasePackageId
+        WHERE s.id=b.purchasePackageSubmissionId AND p.packageId=pk.id
+        AND (s.status=b.status OR (s.status IS NULL AND b.status='pending_accounting'))))
+      ${hasUnified ? sql`AND NOT EXISTS (SELECT 1 FROM delegate_pricing_bundle_approvals a
+        INNER JOIN delegate_pricing_bundle_batches l ON l.bundleId=a.bundleId WHERE l.pricingBatchId=b.id)` : sql``}
+      ${selected ? sql`AND p.id IN (${sql.join(selected.map(id => sql`${id}`), sql`,`)})` : sql``}
+      ORDER BY p.id,b.id,i.id`);
+    if (!Array.isArray(result?.[0])) throw Error("تعذر تحميل نطاق دفعات التسعير");
+    return result[0] as any[];
+  };
+  return orderIds ? readScopeChunks(orderIds, read) : read();
 }
 
 /** Approval metadata for list cards, without a query per purchase order. */

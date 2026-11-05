@@ -27,6 +27,7 @@ export async function rejectEmptyPendingPricingBatches(
     actorId?: number | null;
     actorName?: string | null;
     reason?: string;
+    allowedBatchIds?: readonly number[];
   }
 ): Promise<number[]> {
   if (isObserverReadScope()) return [];
@@ -40,6 +41,7 @@ export async function rejectEmptyPendingPricingBatches(
     `أُغلقت الدفعة تلقائيًا لأن جميع أصنافها أُلغيت أو رُفضت${options?.actorName ? ` — آخر إجراء بواسطة ${options.actorName}` : ""}`;
 
   for (const batch of batches) {
+    if (options?.allowedBatchIds && !options.allowedBatchIds.includes(Number(batch.id))) continue;
     if (!PENDING_BATCH_STATUSES.has(batch.status)) continue;
 
     const batchItems = items.filter((item) => item.batchId === batch.id);

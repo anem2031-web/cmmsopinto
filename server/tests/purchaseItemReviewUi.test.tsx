@@ -55,6 +55,25 @@ function elements(tree: any, match: (node: any) => boolean): any[] {
   return [...(match(tree) ? [tree] : []), ...elements(tree.props?.children, match)];
 }
 
+function queueScope(overrides: any = {}) {
+  const h: any = {
+    isSeniorReviewRole: true, seniorActionTab: "management", isPackageSubmissionActionRole: true,
+    isReviewerGroupingActionRole: true, isDelegatePricingActionRole: false,
+    actionableItems: [], unifiedApprovalQ: { data: { items: [] }, isLoading: false },
+    seniorAccountingQ: { data: { items: [] }, isLoading: false },
+    actionableSubmissionItems: [], actionableSubmissionOrderIds: new Set(),
+    reviewerActionablePackages: [], reviewerPackagedOrderIds: new Set(), delegatePricingPackagedOrderIds: new Set(),
+    useMemo: (f: any) => f(), actionableLoading: false, actionablePackageCardsLoading: false, actionableSubmissionsLoading: false,
+    needsActionablePackageCards: false, delegatePendingEstimateItemsLoading: false,
+    ...overrides,
+  };
+  h.refresh = () => {
+    for (const name of ["seniorAccountingItems", "seniorManagementItems", "currentUnifiedApprovalQ", "unifiedApprovalItems", "allUnifiedApprovalItems", "unifiedSubmissionIds", "unifiedOrderIds", "standaloneActionableItems", "seniorReviewActionItems", "seniorManagementActionItems", "seniorActionCounts", "displayedStandaloneActionableItems", "showReviewActionCards", "showFinancialActionCards", "showLegacySubmissionCards", "actionableDisplayCount", "currentActionableDisplayCount", "actionableViewLoading"]) h[name] = evaluate(listing.values.get(name)!, h);
+  };
+  h.refresh();
+  return h;
+}
+
 describe("Routed purchase review UI, actual view expressions without API or environment", () => {
   it("keeps own pending items actionable even while another item reached accounting", () => {
     const h = scope([item(1), item(2, { status: "pending", reviewedById: 8, reviewedAt: "2026-11-03" }), item(3, { reviewRole: "senior_management" })]);
@@ -148,6 +167,87 @@ describe("Routed purchase review UI, actual view expressions without API or envi
     expect(h.unifiedApprovalItems.map((row: any) => row.id)).toEqual([1]);
     expect(h.displayedStandaloneActionableItems.map((row: any) => row.id)).toEqual([13]);
     expect(h.currentActionableDisplayCount).toBe(3); expect(h.showLegacySubmissionCards).toBe(true);
+  });
+  it("keeps an independent management batch actionable while another batch puts the same PR at accounting", () => {
+    const row = { id: 10, status: "pending_accounting", approvalAction: "management", actionKey: "management:10" };
+    const h = queueScope({ actionableItems: [row] });
+    expect(h.seniorActionCounts).toEqual({ review: 0, accounting: 0, management: 1 });
+    expect(h.displayedStandaloneActionableItems).toEqual([row]);
+    expect(row.status).toBe("pending_accounting");
+    h.seniorActionTab = "review"; h.refresh();
+    expect(h.displayedStandaloneActionableItems).toEqual([]);
+    h.seniorActionTab = "accounting"; h.refresh();
+    expect(h.displayedStandaloneActionableItems).toEqual([]);
+  });
+  it("keeps routed review and independent management actions on the same PR in their respective tabs", () => {
+    const reviewRow = { id: 10, status: "pending_accounting", reviewAction: "review", actionKey: "review:10" };
+    const managementRow = { id: 10, status: "pending_accounting", approvalAction: "management", actionKey: "management:10" };
+    const h = queueScope({ actionableItems: [reviewRow, managementRow] });
+    expect(h.seniorActionCounts).toEqual({ review: 1, accounting: 0, management: 1 });
+    expect(h.displayedStandaloneActionableItems).toEqual([managementRow]);
+    h.seniorActionTab = "review"; h.refresh();
+    expect(h.displayedStandaloneActionableItems).toEqual([reviewRow]);
+
+    const ast = ts.createSourceFile("List.tsx", listing.source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let key = "";
+    function find(node: ts.Node) {
+      if (ts.isJsxAttribute(node) && node.name.getText(ast) === "key" && node.initializer?.getText(ast).includes("po:${it.id}")) key = (node.initializer as ts.JsxExpression).expression!.getText(ast);
+      ts.forEachChild(node, find);
+    }
+    find(ast);
+    expect([reviewRow, managementRow].map(it => evaluate(key, { it }))).toEqual(["review:10", "management:10"]);
+    expect(evaluate(key, { it: { id: 11 } })).toBe("po:11");
+  });
+  it("does not mistake unrelated DPB, PB or routed-review membership for the independent batch action", () => {
+    const managementRow = { id: 10, status: "pending_accounting", approvalAction: "management", actionKey: "management:10" };
+    const h = queueScope({
+      actionableItems: [managementRow, { id: 10, status: "pending_accounting", reviewAction: "review" },
+        { id: 11, status: "pending_management" }, { id: 12, status: "pending_management" }],
+      unifiedApprovalQ: { data: { items: [{ id: 1, status: "pending_management", coveredOrderIds: [10, 11], submissionIds: [100] }] }, isLoading: false },
+      actionableSubmissionItems: [{ submissionId: 101, orderIds: [10, 12] }], actionableSubmissionOrderIds: new Set([10, 12]),
+      reviewerActionablePackages: [{ id: 9 }], reviewerPackagedOrderIds: new Set([10]),
+    });
+    expect(h.standaloneActionableItems).toEqual([managementRow]);
+    expect(h.seniorActionCounts).toEqual({ review: 1, accounting: 0, management: 3 });
+    expect(h.actionableDisplayCount).toBe(4);
+    expect(h.unifiedApprovalItems.map((row: any) => row.id)).toEqual([1]);
+    expect(h.showLegacySubmissionCards).toBe(true);
+  });
+  it("preserves accountant independent actions without granting legacy accounting actions to senior management", () => {
+    const row = { id: 10, status: "pending_management", approvalAction: "accounting", actionKey: "accounting:10" };
+    const accountant = queueScope({ isSeniorReviewRole: false, isReviewerGroupingActionRole: false, actionableItems: [row],
+      unifiedApprovalQ: { data: { items: [{ id: 2, status: "pending_accounting", coveredOrderIds: [10], submissionIds: [200] }] }, isLoading: false } });
+    expect(accountant.displayedStandaloneActionableItems).toEqual([row]);
+    expect(accountant.actionableDisplayCount).toBe(2);
+
+    const senior = queueScope({ actionableItems: [row], seniorActionTab: "accounting",
+      seniorAccountingQ: { data: { items: [{ id: 2, status: "pending_accounting", coveredOrderIds: [20], submissionIds: [200] }] }, isLoading: false } });
+    expect(senior.seniorActionCounts).toEqual({ review: 0, accounting: 1, management: 0 });
+    expect(senior.displayedStandaloneActionableItems).toEqual([]);
+    expect(senior.unifiedApprovalItems.map((entry: any) => entry.id)).toEqual([2]);
+  });
+  it("keeps detail approval on the actual batch stage and does not project a whole-order approval from the read exception", () => {
+    const ast = ts.createSourceFile("Detail.tsx", detail.source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let batchAction = "", parentAction = "";
+    function find(node: ts.Node) {
+      if (ts.isJsxExpression(node) && node.expression) {
+        const expression = node.expression.getText(ast);
+        if (expression.startsWith('(role === "senior_management" || isAdminOrOwner) && batch.status')) batchAction = expression;
+        if (expression.startsWith('(role === "senior_management" || isAdminOrOwner) &&') && expression.includes('po.status === "pending_management"')) parentAction = expression;
+      }
+      ts.forEachChild(node, find);
+    }
+    find(ast);
+    const mutate = vi.fn(), base = { role: "senior_management", isAdminOrOwner: false, isMaintenanceManagerVariant: false, po: { status: "pending_accounting" }, batch: { id: 3, status: "pending_management" },
+      approveManagementBatchMut: { isPending: false, mutate }, Button: frame, t: ar, Loader2: frame };
+    const tree = evaluate(batchAction, base);
+    expect(tree).toBeTruthy();
+    tree.props.onClick();
+    expect(mutate).toHaveBeenCalledWith({ batchId: 3 });
+    expect(evaluate(batchAction, { ...base, batch: { id: 4, status: "pending_accounting" } })).toBe(false);
+    expect(evaluate(parentAction, { ...base, pricingBatches: [base.batch], hasRoutedReview: false })).toBe(false);
+    expect(evaluate(parentAction, { ...base, po: { status: "pending_management" }, pricingBatches: [base.batch], hasRoutedReview: false })).toBe(false);
+    expect(evaluate(detail.values.get("canCancelItem")!, base)).toBe(false);
   });
   it("renders three senior stage controls with counts and switches the selected tab without changing other roles", () => {
     const ast = ts.createSourceFile("List.tsx", listing.source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX); let nav = "";

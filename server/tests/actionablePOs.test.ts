@@ -14,6 +14,13 @@ describe("قائمة أصناف المندوب بعد اعتماد دفعة جز
   it("يعرض شراء الصنف المعتمد في دفعة رغم انتظار حالة الطلب العامة للحسابات", () => {
     expect(getDelegateItemActionMode("pending_accounting", { status: "approved", batchId: 10, delegateChangeRequestedAt: null })).toBe("purchase");
   });
+  it("يبقي دفعة معتمدة للشراء أثناء إعادة تسعير صنف آخر فقط، مع بقاء قيود الطلب غير المرسل", () => {
+    expect(getDelegateItemActionMode("pending_estimate", { status: "approved", batchId: 10, delegateChangeRequestedAt: null })).toBe("purchase");
+    expect(getDelegateItemActionMode("pending_estimate", { status: "approved", batchId: null, delegateChangeRequestedAt: null })).toBeNull();
+    for (const status of ["draft", "pending_review", "revision_needed", "closed", "rejected"]) {
+      expect(getDelegateItemActionMode(status, { status: "approved", batchId: 10, delegateChangeRequestedAt: null })).toBeNull();
+    }
+  });
   it("لا يعرض شراء صنف بلا دفعة معتمدة أو صنف مرفوض", () => {
     expect(getDelegateItemActionMode("pending_accounting", { status: "approved", batchId: null, delegateChangeRequestedAt: null })).toBeNull();
     expect(getDelegateItemActionMode("pending_accounting", { status: "rejected", batchId: 10, delegateChangeRequestedAt: null })).toBeNull();

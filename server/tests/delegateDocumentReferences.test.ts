@@ -42,6 +42,8 @@ function procedure(file: string, rootName: string) {
     createPurchaseOrderReadScope: async (user: any) => ({
       assert: (po: any) => scope(user, po),
       filterItems: (_po: any, rows: any[]) => rows,
+      filterComments: (_po: any, rows: any[]) => rows,
+      projectOrder: (po: any) => po,
       isRoutedReviewOnly: () => false,
     }),
     localizePurchaseUserNames: async (rows: any) => rows,

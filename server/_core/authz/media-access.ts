@@ -197,7 +197,7 @@ export const mediaAccessPort: MediaAccessPort = {
       const { createPurchaseOrderReadScope } = await import("./guard");
       const scope = await createPurchaseOrderReadScope(user, [po]);
       scope.assert(po);
-      if (scope.isRoutedReviewOnly(po) && !scope.filterItems(po, [{ id: ref.id, purchaseOrderId: po.id }]).length) throw denied();
+      if (scope.hasLimitedItemScope(po) && !scope.filterItems(po, [{ id: ref.id, purchaseOrderId: po.id }]).length) throw denied();
       return;
     }
     if (ref.kind === "construction" || ref.kind === "construction_task") {

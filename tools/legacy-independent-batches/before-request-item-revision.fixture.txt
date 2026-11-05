@@ -1,0 +1,123 @@
+// Immutable production handler captured from 9e8142eee2df1f018efb1bf0d6a424657eae0bc6:server/routers/purchase/purchase-orders.router.ts
+const before = { requestItemRevision: delegateProcedure.input(z.object({
+    itemId: z.number(),
+    note: z.string().min(5, "يجب كتابة سبب طلب المراجعة"),
+  })).mutation(async ({ input, ctx }) => {
+
+    const item = await db.getPOItemById(input.itemId);
+
+    if (!item) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "الصنف غير موجود" });
+    }
+
+    const po = await db.getPurchaseOrderById(item.purchaseOrderId);
+
+    if (!po) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
+    }
+
+    // ── تحقق أن المندوب يملك هذا الصنف فعلاً ──
+    const isAdminOrOwner = ctx.user.role === "admin" || ctx.user.role === "owner";
+    if (!isAdminOrOwner && item.delegateId !== ctx.user.id) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "لا يمكنك طلب مراجعة صنف غير مخصص لك",
+      });
+    }
+
+    // يُسمح بطلب المراجعة في أي وقت طالما الصنف لا يزال متاحاً لدى المندوب
+    // (لم يُسعَّر بعد ولم يُرسل ضمن أي دفعة تسعير)، بغض النظر عن حالة الطلب
+    // الإجمالية (فلا يتأثر ذلك بتقدّم أصناف أخرى للمحاسبة عبر مندوبين آخرين)
+    if (item.status !== "pending") {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "لا يمكن طلب مراجعة الصنف بعد تسعيره أو إرساله بالفعل",
+      });
+    }
+    if (item.batchId) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "لا يمكن طلب مراجعة صنف تم إرساله بالفعل ضمن دفعة تسعير",
+      });
+    }
+
+    await db.updatePOItem(item.id, {
+      status: "needs_item_revision",
+      itemRevisionNote: input.note,
+      itemRevisionRequestedById: ctx.user.id,
+      itemRevisionRequestedAt: new Date(),
+    });
+    await queuePurchaseTranslation("PO_ITEM", item.id, [
+      { fieldName: "itemRevisionNote", text: input.note },
+    ], ctx.user.id);
+
+    await createTranslatedProcurementComment(db, {
+      purchaseOrderId: po.id,
+      purchaseOrderItemId: item.id,
+      userId: ctx.user.id,
+      userName: ctx.user.name || "User",
+      userRole: ctx.user.role,
+      actionType: "item_revision_requested",
+      note: `الصنف: ${item.itemName}\n\nالسبب:\n${input.note}`,
+    });
+
+    // أخطر منشئ الطلب ليعدّل الصنف
+    await db.createNotification({
+      userId: po.requestedById,
+      title: "⚠️ طلب مراجعة صنف",
+      message: `الصنف "${item.itemName}" يحتاج مراجعة.\n\nالسبب:\n${input.note}\n\nيمكنك تعديل الصنف وإعادة إرساله، أو إلغاءه نهائياً.`,
+      type: "warning",
+      relatedPoId: po.id,
+    });
+
+    await db.createAuditLog({
+      userId: ctx.user.id,
+      action: "request_item_revision",
+      entityType: "purchase_order_item",
+      entityId: item.id,
+      newValues: { status: "needs_item_revision", note: input.note },
+    });
+
+    // ── بعد طلب المراجعة: تحقق هل الأصناف الباقية كلها مسعّرة ──
+    // السيناريو: المندوب سعّر 2 وطلب مراجعة 2 → الـ 2 المسعّرة يجب أن تمشي للمحاسبة الآن
+    const allItemsAfter = await db.getPOItems(po.id);
+    const readyForAccounting = allItemsAfter.every(
+      i =>
+        i.status === "estimated" ||
+        i.status === "rejected" ||
+        i.status === "cancelled" ||
+        i.status === "needs_item_revision"
+    );
+    // تحقق إضافي: يجب أن يكون في صنف واحد على الأقل مسعّر حتى نتقدم
+    const hasEstimatedItems = allItemsAfter.some(i => i.status === "estimated");
+
+    if (readyForAccounting && hasEstimatedItems) {
+      const finalTotalEstimated = allItemsAfter
+        .filter(i => i.status === "estimated")
+        .reduce((sum, i) => sum + parseFloat(i.estimatedTotalCost || "0"), 0);
+
+      await db.updatePurchaseOrder(po.id, {
+        status: "pending_accounting",
+        totalEstimatedCost: String(finalTotalEstimated),
+      });
+
+      const accountants = await db.getUsersByRole("accountant");
+      for (const acc of accountants) {
+        await db.createNotification({
+          userId: acc.id,
+          title: "طلب شراء بانتظار الاعتماد",
+          message: `طلب شراء رقم ${po.poNumber} بانتظار اعتماد الحسابات (بعض الأصناف قيد المراجعة).`,
+          type: "warning",
+          relatedPoId: po.id,
+        });
+      }
+    }
+
+    await syncPathBTicketFromPurchaseOrder(
+      po.id,
+      ctx.user.id,
+      "طُلبت مراجعة أحد أصناف طلب الشراء",
+    );
+    return { success: true };
+
+  }) };

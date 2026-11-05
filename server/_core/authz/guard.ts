@@ -25,7 +25,6 @@ import {
   assertCanResolvePOItemDelegateChange,
   assertItemAssignedToDelegate,
   assertPOVisible,
-  filterVisiblePOs,
   isItemAssignedToDelegate,
   isPOVisible,
   type ActionContext,
@@ -36,6 +35,7 @@ import {
   type VisibilityContext,
 } from "./engine";
 import { ROUTED_REVIEW_BLOCKED_PO_STATUSES, type ActionName } from "./policy";
+import { groupLegacyPricingBatchReadScopes } from "./legacy-pricing-batch-read";
 
 export type { ActionName } from "./policy";
 export { PO_STATUS } from "./policy";
@@ -89,12 +89,69 @@ export async function createPurchaseOrderReadScope(user: MinimalCtxUser, orders?
   const routedReviewPoIds = Array.from(new Set(permittedReviewRows.map((item: any) => Number(item.purchaseOrderId))));
   const extended = { ...visCtx, routedReviewPoIds };
   const isRoutedReviewOnly = (po: POVisibilitySubject) => !isPOVisible(visCtx, po) && isPOVisible(extended, po);
+  const legacyRows = ["accountant", "senior_management"].includes(user.role) && (user.isActive === 1 || user.isActive === true)
+    ? await db.getLegacyPricingBatchReadScopeRows(user, orders?.map(order => Number(order.id))) : [];
+  const legacyApprovals = groupLegacyPricingBatchReadScopes(user, legacyRows);
+  const legacyByOrder = new Map<number, typeof legacyApprovals>();
+  for (const approval of legacyApprovals) {
+    const current = legacyByOrder.get(approval.purchaseOrderId) ?? [];
+    current.push(approval); legacyByOrder.set(approval.purchaseOrderId, current);
+  }
+  const legacyFor = (po: POVisibilitySubject) => (ROUTED_REVIEW_BLOCKED_PO_STATUSES as readonly string[]).includes(po.status)
+    ? [] : legacyByOrder.get(Number(po.id)) ?? [];
+  const canRead = (po: POVisibilitySubject) => isPOVisible(extended, po) || legacyFor(po).length > 0;
+  const hasLimitedItemScope = (po: POVisibilitySubject) => !isPOVisible(visCtx, po) && canRead(po);
+  const isLegacyApprovalOnly = (po: POVisibilitySubject) => !isPOVisible(extended, po) && legacyFor(po).length > 0;
+  const projectOrder = <T extends POVisibilitySubject>(po: T): T => {
+    if (!isLegacyApprovalOnly(po)) return po;
+    const projected: any = { ...po };
+    for (const field of Object.keys(projected)) {
+      if (/^(accounting|management)/.test(field) || /SignatureSnapshot$/.test(field) ||
+        ["totalEstimatedCost", "totalActualCost", "totalEstimatedText", "custodyAmount", "notes", "rejectedById", "rejectedAt", "rejectionReason"].includes(field)) projected[field] = null;
+    }
+    // These summaries describe all sibling lines, not just the granted batch.
+    for (const field of ["itemNames", "itemNames_ar", "itemNames_en", "itemNames_ur", "delegateBreakdown"]) {
+      if (field in projected) projected[field] = [];
+    }
+    if ("itemCount" in projected) projected.itemCount = new Set(legacyFor(po).flatMap(approval => approval.itemIds)).size;
+    if ("delegateCount" in projected) projected.delegateCount = null;
+    return projected;
+  };
+  const permittedItemIds = (po: POVisibilitySubject) => new Set([
+    ...legacyFor(po).flatMap(approval => approval.itemIds),
+    ...(isRoutedReviewOnly(po) ? Array.from(scopedIds) : []),
+  ]);
+  const filterItems = <T extends { id: number; purchaseOrderId?: number }>(po: POVisibilitySubject, items: T[]): T[] => {
+    if (!canRead(po)) return [];
+    if (!hasLimitedItemScope(po)) return items;
+    const allowed = permittedItemIds(po);
+    return items.filter(item => allowed.has(Number(item.id)) && Number(item.purchaseOrderId ?? po.id) === Number(po.id));
+  };
   return {
-    assert: (po: POVisibilitySubject): void => assertPOVisible(extended, po),
-    filter: <T extends POVisibilitySubject>(orders: T[]): T[] => filterVisiblePOs(extended, orders),
+    assert: (po: POVisibilitySubject): void => { if (!canRead(po)) assertPOVisible(extended, po); },
+    filter: <T extends POVisibilitySubject>(orders: T[]): T[] => orders.filter(canRead).map(projectOrder),
     isRoutedReviewOnly,
-    filterItems: <T extends { id: number; purchaseOrderId?: number }>(po: POVisibilitySubject, items: T[]): T[] =>
-      isRoutedReviewOnly(po) ? items.filter(item => scopedIds.has(Number(item.id)) && Number(item.purchaseOrderId ?? po.id) === Number(po.id)) : items,
+    hasLimitedItemScope,
+    isLegacyApprovalOnly,
+    projectOrder,
+    legacyApprovals,
+    filterItems,
+    filterComments: <T extends { purchaseOrderId?: number; purchaseOrderItemId?: number | null }>(po: POVisibilitySubject, comments: T[]): T[] => {
+      if (!canRead(po)) return [];
+      if (!hasLimitedItemScope(po)) return comments;
+      const allowed = permittedItemIds(po), financeOnly = isLegacyApprovalOnly(po);
+      return comments.filter(comment => Number(comment.purchaseOrderId ?? po.id) === Number(po.id) &&
+        (comment.purchaseOrderItemId == null ? !financeOnly : allowed.has(Number(comment.purchaseOrderItemId))));
+    },
+    filterBatches: <T extends { id: number; purchaseOrderId?: number }>(po: POVisibilitySubject, batches: T[]): T[] => {
+      if (!canRead(po)) return [];
+      if (!hasLimitedItemScope(po)) return batches;
+      // Existing early routed-review reads keep their pre-existing batch DTO.
+      // The new finance exception is the only reason for narrowing this list.
+      if (!isLegacyApprovalOnly(po)) return batches;
+      const allowed = new Set(legacyFor(po).map(approval => approval.batchId));
+      return batches.filter(batch => allowed.has(Number(batch.id)) && Number(batch.purchaseOrderId ?? po.id) === Number(po.id));
+    },
   };
 }
 

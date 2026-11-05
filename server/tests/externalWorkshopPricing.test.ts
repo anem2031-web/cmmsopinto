@@ -13,6 +13,7 @@ import { TRPCError } from "@trpc/server";
 import { isDelegateRole } from "../../shared/delegate-role";
 import { isRoutedPurchaseItem } from "../../shared/purchase-item-review";
 import { assertRoutedPurchaseItemReady } from "../services/purchase-review-routing";
+import { summarizePurchasePricingStage } from "../../shared/purchasePricingStage";
 vi.mock("../_core/db", () => ({}));
 import { assertPOItemAssignedToDelegate, assertCanPerformPurchaseItemReviewAction, assertCanResolveReturnedPOItem } from "../_core/authz/guard";
 import { protectedProcedure, delegateProcedure, router } from "../routers/_shared/procedures";
@@ -226,6 +227,8 @@ describe("actual pricing API handlers cannot bypass workshop validation", () => 
       getPurchaseOrderById: async (id: number) => row("purchase_orders", id),
       getPOItemById: async (id: number) => row("purchase_order_items", id),
       getPOItems: async (id: number) => f.memory.prepare("SELECT * FROM purchase_order_items WHERE purchaseOrderId=?").all(id),
+      getPOPricingBatches: async () => [],
+      updatePurchaseOrder: (id: number, data: any, tx?: any) => (tx || f.db).update(purchaseOrders).set(data).where(eq(purchaseOrders.id, id)),
       updatePOItem: (id: number, data: any, tx?: any) => (tx || f.db).update(purchaseOrderItems).set(data).where(eq(purchaseOrderItems.id, id)),
       createAuditLog: vi.fn(), createNotification: vi.fn(),
     };
@@ -236,8 +239,11 @@ describe("actual pricing API handlers cannot bypass workshop validation", () => 
     const context: any = { z, TRPCError, protectedProcedure, delegateProcedure, db: database, pricingBundlesEnabled: () => false,
       externalWorkshopInput, withExternalWorkshopPricing, isDelegateRole, isRoutedPurchaseItem, assertRoutedPurchaseItemReady,
       assertPOItemAssignedToDelegate, assertCanPerformPurchaseItemReviewAction, assertCanResolveReturnedPOItem,
+      summarizePurchasePricingStage, assertItemOutsidePricingBundle: async () => {},
       purchaseOrders, purchaseOrderItems, users, eq, queuePurchaseTranslation: vi.fn(), createTranslatedProcurementComment: vi.fn(), syncPathBTicketFromPurchaseOrder: vi.fn() };
     context.withPendingReviewItemWrite = vm.runInNewContext(expression("withPendingReviewItemWrite", true), context);
+    context.syncIndependentPurchasePricingStage = vm.runInNewContext(expression("syncIndependentPurchasePricingStage", true), context);
+    context.withPurchaseItemReturnWrite = vm.runInNewContext(expression("withPurchaseItemReturnWrite", true), context);
     return router({ purchaseOrders: router({
       estimateCost: vm.runInNewContext(expression("estimateCost", false), context),
       editItem: vm.runInNewContext(expression("editItem", false), context),

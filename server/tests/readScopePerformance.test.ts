@@ -26,6 +26,7 @@ vi.mock("../_core/db", () => ({
   getDb: async () => state.database,
   // Legacy fixtures contain no routed-review assignments.
   getPurchaseItemReviewScopeRows: async () => [],
+  getLegacyPricingBatchReadScopeRows: async () => [],
   getPOItemsByDelegate: state.delegates, getUserIdsByRole: state.assistants,
   getPurchaseOrdersByIds: (ids: number[]) => getPurchaseOrdersByIds(ids, state.database),
   getPurchaseOrderById: async (id: number) => (await state.database.select().from(purchaseOrders).where(inArray(purchaseOrders.id, [id])))[0],
@@ -148,7 +149,7 @@ describe("Real SQL list scopes and complete aggregate authorization", () => {
     purchaseFixture();
     const beforeRead = vi.fn(async () => {});
     const proc = handler("server/routers/purchase/purchase-orders.router.ts", "listPricingBatches", {
-      z, TRPCError, protectedProcedure, assertCanViewPurchaseOrder, purchaseDocumentPermission,
+      z, TRPCError, protectedProcedure, assertCanViewPurchaseOrder, createPurchaseOrderReadScope, purchaseDocumentPermission,
       isPurchasePdfApprover: (user: any) => ["accountant", "senior_management"].includes(user.role),
       rejectEmptyPendingPricingBatches: beforeRead,
       loadDocumentListPort: (rows: any[], _db: any, options: any) => loadDocumentListPort(rows, memory, options),
@@ -197,7 +198,7 @@ describe("Real SQL list scopes and complete aggregate authorization", () => {
     }
     const bulk = vi.fn((ids: number[]) => getPackageSubmissionsWithBatchesForPackages(ids, memory));
     const proc = handler("server/routers/purchase/purchase-packages.router.ts", "actionableSubmissionsForMe", {
-      TRPCError, protectedProcedure, filterVisiblePurchaseOrders, groupReadRows, assertCanPerformPOAction: () => {},
+      TRPCError, protectedProcedure, filterVisiblePurchaseOrders, createPurchaseOrderReadScope, groupReadRows, assertCanPerformPOAction: () => {},
       db: { getPurchasePackagesList: async () => Array.from({ length: 30 }, (_, i) => ({ id: i + 1, packageNumber: `PB-${i + 1}` })),
         getPurchaseOrders: async () => memory.memory.prepare("SELECT * FROM purchase_orders").all(),
         getPackageSubmissionsWithBatchesForPackages: bulk },

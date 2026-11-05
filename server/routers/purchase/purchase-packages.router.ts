@@ -347,10 +347,12 @@ export const purchasePackagesRouter = router({
       db.getPurchasePackagesList(),
       db.getPurchaseOrders({}),
     ]);
-    const visibleOrders = await filterVisiblePurchaseOrders(ctx.user, allOrders as any[]);
+    const approvalReadScope = await createPurchaseOrderReadScope(ctx.user, allOrders as any[]);
+    const visibleOrders = approvalReadScope.filter(allOrders as any[]);
     const visibleOrderById = new Map<number, any>(
       visibleOrders.map((po: any) => [Number(po.id), po] as [number, any])
     );
+    const allOrderById = new Map<number, any>(allOrders.map((po: any) => [Number(po.id), po]));
     const visiblePoIdsByPackage = new Map<number, Set<number>>();
 
     for (const po of visibleOrders as any[]) {
@@ -382,11 +384,22 @@ export const purchasePackagesRouter = router({
             : sub.status === "pending_management";
         if (!submissionIsActionable) continue;
 
-        const actionableBatches = (sub.batches ?? []).filter((batch: any) =>
-          visiblePoIds.has(Number(batch.purchaseOrderId)) &&
-          batch.status === targetBatchStatus
-        );
+        const actionableBatches = (sub.batches ?? []).filter((batch: any) => {
+          const parent = visibleOrderById.get(Number(batch.purchaseOrderId));
+          return parent && visiblePoIds.has(Number(batch.purchaseOrderId)) && batch.status === targetBatchStatus &&
+            approvalReadScope.filterBatches(parent, [batch]).length > 0;
+        });
         if (actionableBatches.length === 0) continue;
+        const newlyScoped = actionableBatches.some((batch: any) =>
+          approvalReadScope.isLegacyApprovalOnly(visibleOrderById.get(Number(batch.purchaseOrderId))));
+        // The legacy button approves the complete submission. A new narrow
+        // parent read must not turn a visible subset into an aggregate action.
+        if (newlyScoped && (sub.batches ?? []).some((batch: any) => {
+          const parent = allOrderById.get(Number(batch.purchaseOrderId));
+          if (!parent || Number(parent.packageId) !== Number(pkg.id) || Number(batch.purchasePackageSubmissionId) !== Number(sub.id)) return true;
+          if (batch.status === "rejected") return false;
+          return batch.status !== targetBatchStatus || approvalReadScope.filterBatches(parent, [batch]).length === 0;
+        })) continue;
 
         const orderIds = Array.from(new Set(
           actionableBatches.map((batch: any) => Number(batch.purchaseOrderId))
@@ -1034,12 +1047,21 @@ export const purchasePackagesRouter = router({
       // مشتق فقط من صلاحية طلب الشراء، مطابقةً لمبدأ المرحلة الأولى.
       const enriched = await Promise.all(
         subs.map(async (sub: any) => {
-          const visibleBatches = (sub.batches ?? []).filter((b: any) =>
-            visiblePoIds.has(b.purchaseOrderId)
-          );
+          const visibleBatches = (sub.batches ?? []).filter((b: any) => {
+            const parent = orderById.get(Number(b.purchaseOrderId));
+            return parent && visiblePoIds.has(b.purchaseOrderId) && readScope.filterBatches(parent, [b]).length > 0;
+          });
+          const presented = { ...sub };
+          if (visibleBatches.length !== (sub.batches ?? []).length && visibleBatches.some((batch: any) =>
+            readScope.isLegacyApprovalOnly(orderById.get(Number(batch.purchaseOrderId))))) {
+            for (const field of Object.keys(presented)) {
+              if (/^(accounting|management)/.test(field) || /SignatureSnapshot$/.test(field) ||
+                ["totalEstimatedCost", "custodyBalance", "custodyAmount", "notes"].includes(field)) presented[field] = null;
+            }
+          }
 
           return {
-            ...sub,
+            ...presented,
             ...await purchaseDocumentPermission(ctx.user, Number(visibleBatches[0]?.purchaseOrderId), undefined, Number(sub.id), scope),
             batches: visibleBatches.map((b: any) => {
               const po = orderById.get(Number(b.purchaseOrderId));

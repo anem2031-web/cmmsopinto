@@ -11,6 +11,7 @@ import { reservedPricingItemIds } from "../services/delegate-pricing-bundles/res
 import { canRoleAccessPath, isDelegateRole } from "../../shared/roles";
 import { readAccountingSignature } from "../services/pdf/accountingSignature";
 import { assertRoutedPurchaseItemReady } from "../services/purchase-review-routing";
+import { summarizePurchasePricingStage } from "../../shared/purchasePricingStage";
 import type { TrpcContext } from "../_core/context";
 const actor = { id: 11, role: "delegate", isActive: 1, name: "Delegate" };
 function extract(file: string, name: string) {
@@ -20,6 +21,8 @@ function extract(file: string, name: string) {
   return ts.transpileModule(`(${fn.getText(source).replace(/^export /, "")})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 }
 const submitCode = extract("server/routers/purchase/purchase-orders.router.ts", "submitPricedBatchForPO");
+const syncStageCode = extract("server/routers/purchase/purchase-orders.router.ts", "syncIndependentPurchasePricingStage");
+const syncStage = (db: any) => vm.runInNewContext(syncStageCode, { db, summarizePurchasePricingStage });
 function fixture() {
   let state: any = { bundles: [], members: [], links: [], batches: [], submissions: [], items: Array.from({ length: 25 }, (_, index) => ({ id: index + 1, purchaseOrderId: index < 2 ? 101 : index % 2 ? 102 : 103, poNumber: index < 2 ? "PR-101" : index % 2 ? "PR-102" : "PR-103", packageId: index < 2 ? null : index % 2 ? 9 : 10, purchaseOrderStatus: "pending_estimate", delegateId: 11, catalogItemId: 55, itemName: `Material ${index + 1}`, sectionId: index + 1, sectionName: `Section ${index + 1}`, siteId: 1, siteName: "Site", categoryName: "Category", ticketId: index + 30, ticketItemId: index + 40, quantity: index === 0 ? 50 : 2, unit: "piece", estimatedUnitCost: "10.00", estimatedTotalCost: index === 0 ? "500.00" : "20.00", supplierName: `Supplier ${index + 1}`, status: "estimated", batchId: null })) };
   const flags = { renderFail: false, batchFailPo: 0, syncFail: false, replacementOrderId: 0, unifiedInitFail:false }; let queue = Promise.resolve(); let transactionDepth = 0;
@@ -69,20 +72,22 @@ function fixture() {
     throw Error(q);
   } };
   const database: any = { execute: tx.execute, transaction: (work: any) => { const next = queue.then(async () => { const old = structuredClone(state); transactionDepth++; try { return await work(tx); } catch (error) { state = old; throw error; } finally { transactionDepth--; } }); queue = next.catch(() => {}); return next; } };
-  const submit = vm.runInNewContext(submitCode, {
-    isDelegateRole,
-    TRPCError, pricingBundlesEnabled: () => true, reservedPricingItemIds, assertRoutedPurchaseItemReady,
-    reserveReplacementPricing: async () => null,
-    isItemAssignedToPODelegate: (user: any, item: any) => user.id === item.delegateId,
-    db: {
+  const purchaseDb = {
       getPurchaseOrderById: async (id: number, transaction: any) => { expect(transaction).toBe(tx); return { id, poNumber: `PR-${id}`, status: "pending_estimate" }; },
       getPOItems: async (id: number, transaction: any) => { expect(transaction).toBe(tx); return state.items.filter((i: any) => i.purchaseOrderId === id); },
+      getPOPricingBatches: async (id: number, transaction: any) => { expect(transaction).toBe(tx); return state.batches.filter((batch: any) => batch.purchaseOrderId === id); },
       getNextBatchNumber: async (id: number, transaction: any) => { expect(transaction).toBe(tx); return state.batches.filter((b: any) => b.purchaseOrderId === id).length + 1; },
       createPOPricingBatch: async (data: any, transaction: any) => { expect(transaction).toBe(tx); if (data.purchaseOrderId === flags.batchFailPo) throw Error("accounting write failed"); const id = state.batches.length + 1; state.batches.push({ ...data, id }); return id; },
       updatePOItem: async (id: number, data: any, transaction: any) => { expect(transaction).toBe(tx); Object.assign(state.items.find((i: any) => i.id === id), data); },
       updatePurchaseOrder: async (_id: number, _data: any, transaction: any) => { expect(transaction).toBe(tx); },
       getUsersByRole: async () => [], createAuditLog: vi.fn(),
-    },
+  };
+  const submit = vm.runInNewContext(submitCode, {
+    isDelegateRole,
+    TRPCError, pricingBundlesEnabled: () => true, reservedPricingItemIds, assertRoutedPurchaseItemReady,
+    reserveReplacementPricing: async () => null,
+    isItemAssignedToPODelegate: (user: any, item: any) => user.id === item.delegateId,
+    db: purchaseDb, syncIndependentPurchasePricingStage: syncStage(purchaseDb),
     archiveDelegatePricingBatchPdf: () => { throw Error("Do not archive a second live-data PDF"); },
   });
   const ports = {
@@ -383,9 +388,9 @@ describe("Compatibility with the existing submission outside the new delegate la
   });
   it("keeps original batch selection, accounting status, finalization and archive when disabled",async()=>{
     const items=[{id:1,delegateId:11,status:"estimated",batchId:null,estimatedTotalCost:"30"},{id:2,delegateId:22,status:"estimated",batchId:null},{id:3,delegateId:11,status:"pending",batchId:null}];
-    const db={getPurchaseOrderById:vi.fn(async()=>({id:101,poNumber:"PR-101",status:"pending_estimate"})),getPOItems:vi.fn(async()=>items),getNextBatchNumber:vi.fn(async()=>2),createPOPricingBatch:vi.fn(async(..._args:any[])=>17),updatePOItem:vi.fn((..._args:any[])=>{}),updatePurchaseOrder:vi.fn()};
+    const db={getPurchaseOrderById:vi.fn(async()=>({id:101,poNumber:"PR-101",status:"pending_estimate"})),getPOItems:vi.fn(async()=>items),getPOPricingBatches:vi.fn(async()=>[{id:17,status:"pending_accounting"}]),getNextBatchNumber:vi.fn(async()=>2),createPOPricingBatch:vi.fn(async(..._args:any[])=>17),updatePOItem:vi.fn((id:number,data:any)=>{Object.assign(items.find(item=>item.id===id)!,data);}),updatePurchaseOrder:vi.fn()};
     const finalize=vi.fn(),archive=vi.fn(async()=>true);
-    const submit=vm.runInNewContext(submitCode,{isDelegateRole,db:{...db,getDb:async()=>null},TRPCError,pricingBundlesEnabled:()=>false,reservedPricingItemIds,isItemAssignedToPODelegate:(user:any,item:any)=>item.delegateId===user.id,finalizePricedBatchForPO:finalize,archiveDelegatePricingBatchPdf:archive});
+    const submit=vm.runInNewContext(submitCode,{isDelegateRole,db:{...db,getDb:async()=>null},syncIndependentPurchasePricingStage:syncStage(db),TRPCError,pricingBundlesEnabled:()=>false,reservedPricingItemIds,isItemAssignedToPODelegate:(user:any,item:any)=>item.delegateId===user.id,finalizePricedBatchForPO:finalize,archiveDelegatePricingBatchPdf:archive});
     vi.stubEnv("DELEGATE_PRICING_BUNDLES_ENABLED","false");const result=await submit(101,actor);
     expect(result).toMatchObject({batchId:17,itemCount:1,pricingDocumentArchived:true});expect(db.createPOPricingBatch.mock.calls[0][0]).toMatchObject({purchaseOrderId:101,batchNumber:2,itemCount:1,status:"pending_accounting"});
     expect(db.updatePOItem.mock.calls[0][0]).toBe(1); expect(finalize).toHaveBeenCalledOnce();expect(archive).toHaveBeenCalledOnce();

@@ -51,11 +51,13 @@ const port: BusinessTranslationPort = {
       await assertTicketReadable(user, ticket);
       return;
     }
-    const { assertCanViewPurchaseOrder, assertCanPerformPOAction, filterVisiblePurchaseOrders } = await import("./guard");
+    const { createPurchaseOrderReadScope, assertCanPerformPOAction, filterVisiblePurchaseOrders } = await import("./guard");
     if (kind === "po") {
       const po = await db.getPurchaseOrderById(id);
       if (!po) throw denied();
-      await assertCanViewPurchaseOrder(user, po);
+      const scope = await createPurchaseOrderReadScope(user, [po]);
+      scope.assert(po);
+      if (scope.isLegacyApprovalOnly(po)) throw denied(); // Header notes/financial translations remain redacted.
       return;
     }
     assertCanPerformPOAction("viewPurchasePackage", user);
@@ -80,11 +82,11 @@ export async function authorizeBusinessTranslationParents(user: BusinessIdentity
     return;
   }
   const db = await import("../db");
-  const { createPurchaseOrderReadGuard, assertCanPerformPOAction } = await import("./guard");
+  const { createPurchaseOrderReadGuard, createPurchaseOrderReadScope, assertCanPerformPOAction } = await import("./guard");
   if (kind === "po") {
     const orders = new Map<number, any>((await db.getPurchaseOrdersByIds(ids)).map(row => [Number(row.id), row]));
-    const check = await createPurchaseOrderReadGuard(user, Array.from(orders.values()));
-    for (const id of ids) { const order = orders.get(id); if (!order) throw denied(); check(order); }
+    const scope = await createPurchaseOrderReadScope(user, Array.from(orders.values()));
+    for (const id of ids) { const order = orders.get(id); if (!order) throw denied(); scope.assert(order); if (scope.isLegacyApprovalOnly(order)) throw denied(); }
     return;
   }
   assertCanPerformPOAction("viewPurchasePackage", user);
@@ -107,11 +109,11 @@ export async function authorizeBusinessPurchaseTranslationRows(user: BusinessIde
   const byId = new Map<number, any>(orders.map(row => [Number(row.id), row]));
   const scope = await createPurchaseOrderReadScope(user, orders);
   for (const id of ids) { const order = byId.get(id); if (!order) throw denied(); scope.assert(order); }
-  const earlyBatchParents = type === "PO_BATCH" ? orders.filter(order => scope.isRoutedReviewOnly(order)).map(order => Number(order.id)) : [];
+  const earlyBatchParents = type === "PO_BATCH" ? orders.filter(order => scope.hasLimitedItemScope(order)).map(order => Number(order.id)) : [];
   const batchItems = earlyBatchParents.length ? await db.getFullPOItemsForPOs(earlyBatchParents) : [];
   for (const row of rows) {
     const order = byId.get(Number(row.parentId));
-    if (!scope.isRoutedReviewOnly(order)) continue;
+    if (!scope.hasLimitedItemScope(order)) continue;
     if (type === "PO_BATCH") {
       const members = batchItems.filter(item => Number(item.purchaseOrderId) === Number(order.id) && Number(item.batchId) === Number(row.id));
       if (!members.length || scope.filterItems(order, members).length !== members.length) throw denied();
@@ -119,7 +121,10 @@ export async function authorizeBusinessPurchaseTranslationRows(user: BusinessIde
     }
     const itemId = type === "PO_ITEM" ? row.id : row.purchaseOrderItemId;
     // Shared header comments retain their existing visibility; history always has a line.
-    if (itemId == null && type === "PO_COMMENT") continue;
+    if (itemId == null && type === "PO_COMMENT") {
+      if (!scope.filterComments(order, [{ purchaseOrderId: Number(order.id), purchaseOrderItemId: null }]).length) throw denied();
+      continue;
+    }
     if (itemId == null || !scope.filterItems(order, [{ id: Number(itemId), purchaseOrderId: Number(order.id) }]).length) throw denied();
   }
 }
@@ -148,7 +153,7 @@ export async function assertBusinessTranslationAccess(user: BusinessIdentity, ra
   const tableType = type as keyof typeof parentTables;
   const rows = ids.length ? await source.parents(tableType, ids) : [];
   if (rows.length !== ids.length || ids.some(id => !rows.some(row => row.id === id))) throw denied();
-  if (user.role === "senior_management" && parentTables[tableType][2] === "po" && source.authorizeRows) {
+  if (["senior_management", "accountant"].includes(user.role) && parentTables[tableType][2] === "po" && source.authorizeRows) {
     return source.authorizeRows(user, tableType, rows);
   }
   await authorizeParents(source, user, parentTables[tableType][2], Array.from(new Set(rows.map(row => row.parentId))));

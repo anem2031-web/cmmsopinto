@@ -10,13 +10,13 @@ import { inventoryReadProcedure, accountantProcedure, managementProcedure, wareh
 import { BUSINESS_GUARDED_ROLES, businessHttpAllowed, canCreateUserRole, businessHomePath, isBusinessGuardedRole } from "../../shared/business-role-policy";
 import { assertBusinessRpc } from "../_core/authz/business-guard";
 import { assertBusinessTranslationAccess } from "../_core/authz/business-resources";
-import { assertCanViewPurchaseOrder } from "../_core/authz/guard";
+import { assertCanViewPurchaseOrder, createPurchaseOrderReadScope } from "../_core/authz/guard";
 import { canRoleAccessPath, APP_ROLE, isDelegateRole } from "../../shared/roles";
 import { observerHttpAllowed } from "../../shared/observer-policy";
 import { technicianHttpAllowed } from "../../shared/technician-policy";
 
 const spies = vi.hoisted(() => ({ audit: vi.fn(async () => [1]), write: vi.fn(async () => 1), po: vi.fn(), repair: vi.fn(), batches: vi.fn(async () => [{ id: 10 }]) }));
-vi.mock("../_core/db", () => ({ getAuditLogsEnhanced: spies.audit, getPurchaseOrderById: spies.po, addInventoryTransaction: spies.write, getPurchaseItemReviewScopeRows: async () => [] }));
+vi.mock("../_core/db", () => ({ getAuditLogsEnhanced: spies.audit, getPurchaseOrderById: spies.po, addInventoryTransaction: spies.write, getPurchaseItemReviewScopeRows: async () => [], getLegacyPricingBatchReadScopeRows: async () => [] }));
 const ast = (file: string) => ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
 function expression(file: string, property: string, variable?: string) {
   const source = ast(file); let found = "";
@@ -44,7 +44,7 @@ const api = router({
   }),
   purchaseOrders: router({
     list: protectedProcedure.query(() => [{ id: 1 }]),
-    listPricingBatches: evaluate(expression("server/routers/purchase/purchase-orders.router.ts", "listPricingBatches"), { ...common, loadDocumentListPort: async () => ({}), db: { getPurchaseOrderById: spies.po, getPOPricingBatches: spies.batches }, rejectEmptyPendingPricingBatches: spies.repair, assertCanViewPurchaseOrder,
+    listPricingBatches: evaluate(expression("server/routers/purchase/purchase-orders.router.ts", "listPricingBatches"), { ...common, loadDocumentListPort: async () => ({}), db: { getPurchaseOrderById: spies.po, getPOPricingBatches: spies.batches }, rejectEmptyPendingPricingBatches: spies.repair, assertCanViewPurchaseOrder, createPurchaseOrderReadScope,
       purchaseDocumentPermission: async (user: { role: string }) => ({ pdfAllowed: !["accountant", "senior_management"].includes(user.role), pdfBlockedReason: ["accountant", "senior_management"].includes(user.role) ? "Awaiting fixture approval" : null }),
       isPurchasePdfApprover: (user: { role: string }) => ["accountant", "senior_management"].includes(user.role),
     }),

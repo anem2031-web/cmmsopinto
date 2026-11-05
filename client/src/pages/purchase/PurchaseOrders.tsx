@@ -431,10 +431,13 @@ export default function PurchaseOrders() {
   const standaloneActionableItems = useMemo(() =>
     actionableItems.filter((it: any) => {
       const id = Number(it.id);
-      if(isPackageSubmissionActionRole&&unifiedOrderIds.has(id)&&!(isSeniorReviewRole && it.reviewAction))return false;
-      if (isPackageSubmissionActionRole && actionableSubmissionOrderIds.has(id) && !(isSeniorReviewRole && it.reviewAction)) return false;
+      // The server marks only independent batches here. Another stage/package
+      // on the same PR does not represent this financial action.
+      const independentApproval = it.approvalAction === "management" || it.approvalAction === "accounting";
+      if(isPackageSubmissionActionRole&&unifiedOrderIds.has(id)&&!independentApproval&&!(isSeniorReviewRole && it.reviewAction))return false;
+      if (isPackageSubmissionActionRole && actionableSubmissionOrderIds.has(id) && !independentApproval && !(isSeniorReviewRole && it.reviewAction)) return false;
       if (isDelegatePricingActionRole && it.actionMode === "estimate" && delegatePricingPackagedOrderIds.has(id)) return false;
-      if (isReviewerGroupingActionRole && reviewerPackagedOrderIds.has(id)) return false;
+      if (isReviewerGroupingActionRole && reviewerPackagedOrderIds.has(id) && !independentApproval) return false;
       return true;
     }),
   [
@@ -450,8 +453,8 @@ export default function PurchaseOrders() {
     isSeniorReviewRole,
   ]);
 
-  const seniorReviewActionItems = standaloneActionableItems.filter((row: any) => row.reviewAction || row.status !== "pending_management");
-  const seniorManagementActionItems = standaloneActionableItems.filter((row: any) => !row.reviewAction && row.status === "pending_management");
+  const seniorReviewActionItems = standaloneActionableItems.filter((row: any) => row.reviewAction || !row.approvalAction && row.status !== "pending_management");
+  const seniorManagementActionItems = standaloneActionableItems.filter((row: any) => row.approvalAction === "management" || !row.approvalAction && !row.reviewAction && row.status === "pending_management");
   const seniorActionCounts = {
     review: seniorReviewActionItems.length + reviewerActionablePackages.length,
     accounting: seniorAccountingItems.length,
@@ -966,7 +969,7 @@ export default function PurchaseOrders() {
               ))}
 
               {displayedStandaloneActionableItems.map((it: any) => (
-                <Card key={`po:${it.id}`} className="hover:shadow-sm transition-shadow">
+                <Card key={it.actionKey ?? `po:${it.id}`} className="hover:shadow-sm transition-shadow">
                   <CardContent className="py-4 flex items-center justify-between gap-4 flex-wrap">
                     <div className="min-w-0">
                       <div className="font-semibold">{it.poNumber}</div>

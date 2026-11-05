@@ -16,6 +16,7 @@ import * as db from "../_core/db";
 
 vi.mock("../_core/db", () => ({
   getPurchaseItemReviewScopeRows: vi.fn(async () => []),
+  getLegacyPricingBatchReadScopeRows: vi.fn(async () => []),
   getPOItemsByDelegate: vi.fn(async () => []),
   getUserIdsByRole: vi.fn(async () => []),
   getPurchaseOrderById: vi.fn(),

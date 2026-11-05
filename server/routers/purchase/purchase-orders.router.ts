@@ -8,6 +8,7 @@ import { isDelegateOwnPurchaseDraft } from "../../../shared/purchaseDraftVisibil
 import { isItTeamRole, isDelegateRole } from "@shared/roles";
 import { assignOwnDelegateItem, delegateAssignmentOptions, managerAssignableItemIds } from "../../services/delegate-manager-assignment";
 import { externalWorkshopInput, externalWorkshopForPurchaseItem, withExternalWorkshopPricing } from "../../services/external-maintenance-pricing";
+import { summarizePurchasePricingStage } from "../../../shared/purchasePricingStage";
 import { assertLegacyTeamExecutionAllowed } from "../maintenance-teams/execution.guard";
 import { createTicketMaterialPurchase } from "../maintenance-teams/purchase-form";
 import { TeamTicketError } from "../../../shared/maintenance-team-tickets/model";
@@ -56,8 +57,41 @@ import { APP_ROLE, MAINTENANCE_RESPONSIBLE_DEPARTMENT, canRoleViewAllPurchaseSup
 import { createTranslatedProcurementComment, queuePurchaseTranslation } from "./translation-queue";
 import { isPurchasePdfApprover, purchaseDocumentPermission, withPurchaseDocumentPermissions } from "../../_core/authz/purchase-document";
 import { loadDocumentListPort } from "../../_core/db/document-list";
+import { groupReadRows } from "../../_core/authz/read-batch";
 import { reserveReplacementPricing, markReplacementPurchased } from "../../supplier-return-followup/pricing-bridge";
 import { trialEnabled, readRows } from "../../supplier-return-followup/runtime";
+
+async function syncIndependentPurchasePricingStage(po: any, tx?: any) {
+  const [items, batches] = await Promise.all([db.getPOItems(po.id, tx), db.getPOPricingBatches(po.id, tx)]);
+  const summary = summarizePurchasePricingStage(po.status, items, batches);
+  if (summary.status !== po.status || "totalEstimatedCost" in summary) await db.updatePurchaseOrder(po.id, summary, tx);
+  return { ...summary, notifyLegacyAccounting: summary.status !== po.status && "totalEstimatedCost" in summary };
+}
+
+/** The item return and its header summary share a fresh, locked source. */
+async function withPurchaseItemReturnWrite<T>(actor: any, po: any, item: any, mode: "request" | "resubmit", write: (tx: any, currentItem: any) => Promise<T>, existingTx?: any) {
+  const work = async (tx: any) => {
+    const [currentPo] = await tx.select().from(purchaseOrders).where(eq(purchaseOrders.id, po.id)).for("update");
+    const [currentItem] = await tx.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.id, item.id)).for("update");
+    const [currentActor] = await tx.select().from(users).where(eq(users.id, actor.id)).for("update");
+    if (!currentPo || !currentItem || currentItem.purchaseOrderId !== currentPo.id || !currentActor || currentActor.role !== actor.role || Number(currentActor.isActive) !== 1) throw new TRPCError({ code: "FORBIDDEN", message: "تغيّرت صلاحية المستخدم أو مصدر الصنف؛ حدّث الصفحة" });
+    if (["draft", "closed", "rejected", "revision_needed"].includes(currentPo.status)) throw new TRPCError({ code: "CONFLICT", message: "تغيّرت مرحلة طلب الشراء؛ حدّث الصفحة" });
+    if (currentItem.status !== item.status || String(currentItem.updatedAt) !== String(item.updatedAt)) throw new TRPCError({ code: "CONFLICT", message: "تغيّرت حالة الصنف؛ حدّث الصفحة" });
+    if (mode === "request") {
+      assertPOItemAssignedToDelegate(currentActor, currentItem);
+      if (currentItem.status !== "pending" || currentItem.batchId != null) throw new TRPCError({ code: "CONFLICT", message: "لا يمكن إعادة صنف مسعّر أو مرسل ضمن دفعة" });
+      if (currentItem.reviewRole != null) assertRoutedPurchaseItemReady(currentPo, currentItem);
+    } else {
+      assertCanResolveReturnedPOItem(currentActor, { requestedById: currentPo.requestedById, itemStatus: currentItem.status });
+      if (!["needs_item_revision", "purchase_cancelled"].includes(currentItem.status) || currentItem.status === "needs_item_revision" && currentItem.batchId != null) throw new TRPCError({ code: "CONFLICT", message: "تغيّرت حالة الصنف المعاد؛ حدّث الصفحة" });
+    }
+    await assertItemOutsidePricingBundle(tx, currentItem.id);
+    const result = await write(tx, currentItem);
+    const summary = await syncIndependentPurchasePricingStage(currentPo, tx);
+    return { result, summary };
+  };
+  return existingTx ? work(existingTx) : db.withTransaction(work);
+}
 
 /** Serialize review-time editing/deletion/cancellation with the review decision. */
 async function withPendingReviewItemWrite<T>(actor: any, po: any, item: any, action: "editItem" | "deleteItem" | "cancelItem", write: (tx?: any) => Promise<T>): Promise<T> {
@@ -761,13 +795,8 @@ export async function submitPricedBatchForPO(
     });
   }
 
-  // أي دفعة تسعير جديدة (أولى أو لاحقة) تُعيد الطلب لحالة "بانتظار اعتماد الحسابات"
-  // بغض النظر عن المرحلة التي وصلها الطلب سابقاً (approved / partial_purchase / purchased...)،
-  // حتى يظهر بشكل صحيح عند الفلترة من شاشة الحسابات/الإدارة العليا، ولا يُشترط تسعير الطلب بالكامل.
-  // الاستثناء الوحيد: طلب مغلق أو مرفوض نهائياً لا يجب أن تتغير حالته.
-  if (!["closed", "rejected"].includes(po.status)) {
-    await db.updatePurchaseOrder(purchaseOrderId, { status: "pending_accounting" }, opts?.tx);
-  }
+  // The header summarizes all actual batches without changing any prior decision.
+  await syncIndependentPurchasePricingStage(po, opts?.tx);
 
   if (!opts?.bundleId) await finalizePricedBatchForPO(purchaseOrderId, user, po, Number(batchId), Number(batchNumber), readyItems);
 
@@ -2215,7 +2244,8 @@ export const purchaseOrdersRouter = router({
       updates.purchaseCancelledAt = null;
     }
 
-    const saveReturnedItem = async (tx?: any) => db.updatePOItem(oldItem.id, updates, tx);
+    const saveReturnedItem = async (tx?: any) => withPurchaseItemReturnWrite(ctx.user, po, oldItem, "resubmit",
+      currentTx => db.updatePOItem(oldItem.id, updates, currentTx), tx);
     if (input.estimatedUnitCost !== undefined || input.quantity !== undefined && oldItem.estimatedUnitCost != null) {
       const workshopDatabase = await db.getDb();
       if (!workshopDatabase) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر الاتصال بقاعدة البيانات" });
@@ -2555,10 +2585,14 @@ export const purchaseOrdersRouter = router({
     // أصنافها تُغلق عند فتح الطلب، ثم تُعرض كسجل تاريخي غير قابل للاعتماد.
     const po = await db.getPurchaseOrderById(input.purchaseOrderId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND" });
-    await assertCanViewPurchaseOrder(ctx.user, po);
-    await rejectEmptyPendingPricingBatches(input.purchaseOrderId);
+    const readScope = await createPurchaseOrderReadScope(ctx.user, [po]);
+    readScope.assert(po);
+    const permittedBatches = readScope.filterBatches(po, await db.getPOPricingBatches(input.purchaseOrderId));
+    await rejectEmptyPendingPricingBatches(input.purchaseOrderId, readScope.hasLimitedItemScope(po)
+      ? { allowedBatchIds: permittedBatches.map(batch => Number(batch.id)) } : undefined);
     const batches = await db.getPOPricingBatches(input.purchaseOrderId);
-    const visible = isDelegateRole(ctx.user.role) ? batches.filter(batch => Number(batch.submittedById) === ctx.user.id) : batches;
+    const scopedBatches = readScope.filterBatches(po, batches);
+    const visible = isDelegateRole(ctx.user.role) ? scopedBatches.filter(batch => Number(batch.submittedById) === ctx.user.id) : scopedBatches;
     const pricingDb = typeof db.getDb === "function" ? await db.getDb() : null;
     const replacementRows = pricingDb && await trialEnabled(pricingDb)
       ? await readRows(pricingDb, sql`SELECT p.id,p.quotedTotal,p.creditAllocated,p.additionalFunding,i.batchId
@@ -2588,14 +2622,18 @@ export const purchaseOrdersRouter = router({
   actionableForMe: protectedProcedure.query(async ({ ctx }) => {
     const allPOs = await db.getPurchaseOrders({});
     // نطاق الرؤية أولًا — لا يظهر أي طلب لا يملك المستخدم صلاحية رؤيته أصلًا
-    const visible = await filterVisiblePurchaseOrders(ctx.user, allPOs);
+    const readScope = await createPurchaseOrderReadScope(ctx.user, allPOs);
+    const visible = readScope.filter(allPOs);
     if (visible.length === 0) return { items: [], total: 0 };
 
-    const poItems = await db.getPOItemsForPOs(visible.map((p: any) => p.id));
+    const allItems = await db.getPOItemsForPOs(visible.map((p: any) => p.id));
+    const itemsByPo = groupReadRows(allItems, (item: any) => Number(item.purchaseOrderId));
+    const poItems = visible.flatMap((po: any) => readScope.filterItems(po, itemsByPo.get(Number(po.id)) || []));
     const actionable = computeActionablePOs(
       { id: ctx.user.id, role: ctx.user.role, isActive: ctx.user.isActive },
       visible as any,
-      poItems as any
+      poItems as any,
+      readScope.legacyApprovals
     );
     const localized = await localizePurchaseUserNames(actionable as any[], (ctx.user.preferredLanguage || "ar") as SupportedLanguage);
     return { items: localized, total: localized.length };
@@ -2617,9 +2655,10 @@ export const purchaseOrdersRouter = router({
     const items = await enrichExternalWorkshopPricingItems(scopedItems);
     const allComments = await db.getProcurementComments(input.id);
     const ownItemIds = new Set(items.map((item: any) => item.id));
-    const comments = isDelegateRole(ctx.user.role) || readScope.isRoutedReviewOnly(po)
-      ? allComments.filter(comment => !comment.purchaseOrderItemId || ownItemIds.has(comment.purchaseOrderItemId)) : allComments;
-    const [localizedPo] = await localizePurchaseUserNames([po as any], (ctx.user.preferredLanguage || "ar") as SupportedLanguage);
+    const scopedComments = readScope.filterComments(po, allComments);
+    const comments = isDelegateRole(ctx.user.role)
+      ? scopedComments.filter(comment => !comment.purchaseOrderItemId || ownItemIds.has(comment.purchaseOrderItemId)) : scopedComments;
+    const [localizedPo] = await localizePurchaseUserNames([readScope.projectOrder(po) as any], (ctx.user.preferredLanguage || "ar") as SupportedLanguage);
     if (isDelegateRole(ctx.user.role)) {
       // Participant names stay on the authorized document; no directory/profile is returned.
       return localizeMasterDataReferences({ ...localizedPo, requestedByName: localizedPo.requestedByName ?? null,
@@ -3083,12 +3122,12 @@ list: protectedProcedure.input(z.object({
       });
     }
 
-    await db.updatePOItem(item.id, {
+    const { summary: revisionSummary } = await withPurchaseItemReturnWrite(ctx.user, po, item, "request", tx => db.updatePOItem(item.id, {
       status: "needs_item_revision",
       itemRevisionNote: input.note,
       itemRevisionRequestedById: ctx.user.id,
       itemRevisionRequestedAt: new Date(),
-    });
+    }, tx));
     await queuePurchaseTranslation("PO_ITEM", item.id, [
       { fieldName: "itemRevisionNote", text: input.note },
     ], ctx.user.id);
@@ -3120,29 +3159,8 @@ list: protectedProcedure.input(z.object({
       newValues: { status: "needs_item_revision", note: input.note },
     });
 
-    // ── بعد طلب المراجعة: تحقق هل الأصناف الباقية كلها مسعّرة ──
-    // السيناريو: المندوب سعّر 2 وطلب مراجعة 2 → الـ 2 المسعّرة يجب أن تمشي للمحاسبة الآن
-    const allItemsAfter = await db.getPOItems(po.id);
-    const readyForAccounting = allItemsAfter.every(
-      i =>
-        i.status === "estimated" ||
-        i.status === "rejected" ||
-        i.status === "cancelled" ||
-        i.status === "needs_item_revision"
-    );
-    // تحقق إضافي: يجب أن يكون في صنف واحد على الأقل مسعّر حتى نتقدم
-    const hasEstimatedItems = allItemsAfter.some(i => i.status === "estimated");
-
-    if (readyForAccounting && hasEstimatedItems) {
-      const finalTotalEstimated = allItemsAfter
-        .filter(i => i.status === "estimated")
-        .reduce((sum, i) => sum + parseFloat(i.estimatedTotalCost || "0"), 0);
-
-      await db.updatePurchaseOrder(po.id, {
-        status: "pending_accounting",
-        totalEstimatedCost: String(finalTotalEstimated),
-      });
-
+    // Only the historical, genuinely unbatched whole-PO route creates this alert.
+    if (revisionSummary.notifyLegacyAccounting) {
       const accountants = await db.getUsersByRole("accountant");
       for (const acc of accountants) {
         await db.createNotification({
@@ -3387,14 +3405,13 @@ list: protectedProcedure.input(z.object({
       });
     }
 
-    // ── أعد الصنف لحالة pending حتى يسعّره المندوب مباشرة ──
-    // الطلب يبقى في pending_estimate وهذا صحيح — المندوب سيسعّر هذا الصنف
-    await db.updatePOItem(item.id, {
+    // Return this item only; another batch may still await a financial decision.
+    await withPurchaseItemReturnWrite(ctx.user, po, item, "resubmit", tx => db.updatePOItem(item.id, {
       status: "pending",
       itemRevisionNote: null,
       itemRevisionRequestedById: null,
       itemRevisionRequestedAt: null,
-    });
+    }, tx));
 
     await createTranslatedProcurementComment(db, {
       purchaseOrderId: po.id,
