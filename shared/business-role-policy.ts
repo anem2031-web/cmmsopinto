@@ -81,6 +81,7 @@ const seniorCatalogMutations = [
   ...paths("catalog.importExport", "exportExcel exportItemsExcel exportTaxonomyTreeExcel importPreview importCommit"),
 ];
 const warehouseQueries = [
+  ...paths("warehouseRequestDocuments", "list detail"),
   ...paths("purchaseSpecifications", "status rejectedReturns rejectedReturnSource"),
   ...paths("supplierReturns", "status list delegates valuePreview"),
   ...paths("inventory", "list books bookPages taxonomy lotSummaries listLots getTransactions issueCostAllocations scanBarcode getItemSummary getPurchaseHistory getLedger"),
@@ -118,6 +119,7 @@ const warehouseOversightQueries = [
   ...paths("purchaseOrders", "searchItemNames trackItem"),
 ];
 const warehouseMutations = [
+  "warehouseRequestDocuments.recordPrint",
   ...paths("supplierReturns", "create command confirmRefund"),
   "externalMaintenance.returnForRouteReview",
   ...paths("inventoryCount", "saveSettlementDraft submitSettlementDraft correctCount"),

@@ -18,6 +18,8 @@ import { createPurchaseSpecificationsRouter } from "./purchase/specifications.ro
 import { getDb } from "../_core/db";
 import { createPurchaseOrderReadGuard } from "../_core/authz/guard";
 import { deliveryDocumentsRouter } from "./purchase/delivery-documents.router";
+import { createWarehouseRequestDocumentsRouter } from "./inventory/warehouse-request-documents.router";
+import { warehouseRequestDocumentService } from "../_core/db/warehouse-request-documents";
 import { returnDocumentsRouter } from "./inventory/return-documents.router";
 import { approvalsRouter } from "./purchase/approvals.router";
 import { purchasePackagesRouter } from "./purchase/purchase-packages.router";
@@ -112,6 +114,7 @@ purchaseOrders: router({
   purchaseCategories: centerCategoriesRouter,
 
   deliveryDocuments: deliveryDocumentsRouter,
+  warehouseRequestDocuments: createWarehouseRequestDocumentsRouter(warehouseRequestDocumentService),
   returnDocuments: returnDocumentsRouter,
 
   inventory: inventoryRouter,

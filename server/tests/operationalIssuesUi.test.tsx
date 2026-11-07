@@ -56,7 +56,7 @@ describe("Independent operational issue pages and existing warehouse source tabs
   it("adds the third tab and keeps both existing source selections", () => {
     state.role = "warehouse"; state.enabled = true; state.search = "?source=operational";
     const html = renderToStaticMarkup(<WarehouseRequestsPage />);
-    expect((html.match(/role="tab"/g) || []).length).toBe(3);
+    expect((html.match(/role="tab"/g) || []).length).toBe(5);
     expect(html).toContain("OPR-TEST-1");
     expect(warehouseRequestsSelection("?source=tickets&ticketId=12")).toEqual({ source: "tickets", ticketId: 12 });
     expect(warehouseRequestsSelection("").source).toBe("pmv2");
