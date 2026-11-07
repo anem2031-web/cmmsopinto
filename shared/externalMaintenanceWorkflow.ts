@@ -41,6 +41,7 @@ export function canWarehouseReprepareExternalAsset(job: {
 }): boolean {
   if (job.purchaseOrderId != null || job.gateExitApprovedAt) return false;
   return job.status === EXTERNAL_MAINTENANCE_STATUS.WAITING_WAREHOUSE_PREPARATION ||
+    (job.status === EXTERNAL_MAINTENANCE_STATUS.WAITING_DELEGATE_RECEIPT && job.delegateReceiptStatus === "pending") ||
     (job.status === EXTERNAL_MAINTENANCE_STATUS.WAITING_GATE_EXIT &&
       !hasCurrentExternalDelegateReceipt(job));
 }

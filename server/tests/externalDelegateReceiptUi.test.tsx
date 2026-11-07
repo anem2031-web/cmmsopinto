@@ -159,11 +159,21 @@ describe("Assigned delegate external-maintenance receipt cards", () => {
 });
 
 describe("Warehouse title and re-preparation", () => {
-  it("deduplicates rejected jobs, preserves one job/document and excludes waiting acceptance from preparation", () => {
+  it("keeps a pending delegate receipt editable in the warehouse queue without duplicating the job", () => {
     const rejected = prepared(); rejected.job.status = "waiting_warehouse_preparation"; rejected.job.delegateReceiptStatus = "rejected";
     const queue = externalPreparationRows([{ ticketId: 9, ticketItemId: 10 }], [rejected, prepared()]);
     expect(queue).toHaveLength(1); expect(queue[0].job.id).toBe(20);
+    expect(queue[0].job.status).toBe("waiting_delegate_receipt");
     expect(externalPreparationDraft(queue[0])).toEqual({ purchaseTitle: rejected.job.purchaseTitle, assetName: "Asset A", assetBeforePhotoUrl: "uploads/asset.webp", assetBeforeCondition: "Stopped", delegateId: "7", warehouseNotes: "Keep upright" });
+  });
+  it("offers editing until the delegate accepts and hides the edit afterward", () => {
+    const row = prepared();
+    fixture.warehouse.jobs = [row];
+    render(<ExternalMaintenanceWarehouseTab />);
+    expect(fixture.buttons.some(props => text(props.children).trim() === "تعديل التجهيز")).toBe(true);
+    row.job.status = "waiting_gate_exit"; row.job.delegateReceiptStatus = "accepted";
+    Object.assign(row.job, { warehousePreparedAt: "2026-11-04T10:00:00Z", delegateReceiptAt: "2026-11-04T11:00:00Z", delegateReceiptById: 7 });
+    expect(externalPreparationRows([], [row])).toHaveLength(0);
   });
   it.each(["unaccepted", "missingTitle", "legacyRevision"])("returns a %s legacy pre-exit job to editable preparation", kind => {
     const row = prepared(); row.job.status = "waiting_gate_exit"; row.job.delegateReceiptStatus = "accepted";
@@ -208,7 +218,7 @@ describe("Warehouse title and re-preparation", () => {
     const row = prepared(); row.job.status = "waiting_warehouse_preparation"; row.job.delegateReceiptStatus = "rejected"; row.job.delegateReceiptReason = "Cannot accept this asset";
     fixture.warehouse.jobs = [row];
     let html = render(<ExternalMaintenanceWarehouseTab />); expect(html).toContain("Cannot accept this asset");
-    button(ar.workflow.purchase.prepareAsset).onClick(); render(<ExternalMaintenanceWarehouseTab />);
+    button("تعديل التجهيز").onClick(); render(<ExternalMaintenanceWarehouseTab />);
     const title = fixture.inputs.find(props => props.id === "external-purchase-title"); expect(title.value).toBe(row.job.purchaseTitle);
     title.onChange({ target: { value: "  Motor replacement maintenance  " } }); render(<ExternalMaintenanceWarehouseTab />);
     expect(button(ar.workflow.purchase.saveIssueDocument).disabled).toBe(false); button(ar.workflow.purchase.saveIssueDocument).onClick();

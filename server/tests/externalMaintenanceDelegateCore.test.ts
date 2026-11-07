@@ -89,6 +89,19 @@ describe("External asset delegate receipt uses the same guarded preparation and 
     expect(count("external_maintenance_jobs")).toBe(0); expect(count("audit_logs")).toBe(0);
   });
 
+  it("allows the warehouse to edit while delegate receipt is pending and invalidates the old revision", async () => {
+    const first = await prepareExternalMaintenanceJob(preparation);
+    expect(canWarehouseReprepareExternalAsset(jobRow(first.jobId))).toBe(true);
+    const revised = await prepareExternalMaintenanceJob({ ...preparation, jobId: first.jobId, expectedRevision: 1, purchaseTitle: "سن صفائح المنشار" });
+    expect(revised).toMatchObject({ jobId: first.jobId, exitDocumentNumber: first.exitDocumentNumber, preparationRevision: 2 });
+    expect(count("external_maintenance_jobs")).toBe(1);
+    expect(jobRow(first.jobId)).toMatchObject({ status: "waiting_delegate_receipt", purchaseTitle: "سن صفائح المنشار", delegateReceiptStatus: "pending" });
+    await expect(decide(first.jobId, "accept", 1)).rejects.toThrow("CONFLICT");
+    await decide(first.jobId, "accept", 2);
+    expect(canWarehouseReprepareExternalAsset(jobRow(first.jobId))).toBe(false);
+    await expect(prepareExternalMaintenanceJob({ ...preparation, jobId: first.jobId, expectedRevision: 2 })).rejects.toThrow("CONFLICT");
+  });
+
   it("keeps the same job and document after rejection, audits the reason before reassigning and invalidates the previous delegate/revision", async () => {
     const first = await prepareExternalMaintenanceJob(preparation);
     await expect(decide(first.jobId, "reject", 1, 2, " ")).rejects.toThrow("REASON_REQUIRED");

@@ -460,7 +460,7 @@ export default function ExternalMaintenanceWarehouseTab() {
                 <Button onClick={() => {
                   setPrepareTicket(ticket);
                   setPrepareForm(externalPreparationDraft(ticket));
-                }} className="gap-2"><Truck className="w-4 h-4"/> {t.workflow.purchase.prepareAsset}</Button>
+                }} className="gap-2"><Truck className="w-4 h-4"/> {ticket.job ? routeText("تعديل التجهيز", "Edit preparation", "تیاری میں ترمیم کریں") : t.workflow.purchase.prepareAsset}</Button>
                 {!ticket.job && <Button variant="outline" onClick={() => { setReturnTicket(ticket); setReturnReason(""); returnRoute.reset(); }}>
                   {routeText("إعادة للمسؤول لمراجعة المسار", "Return for route review", "راستے کے جائزے کیلئے واپس")}
                 </Button>}
