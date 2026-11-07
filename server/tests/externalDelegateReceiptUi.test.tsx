@@ -61,7 +61,7 @@ vi.mock("../../client/src/lib/trpc", () => {
 vi.mock("../../client/src/lib/printExternalMaintenanceDocument", () => ({ printExternalMaintenanceDocument: vi.fn() }));
 
 import { DelegateExternalMaintenanceCards } from "../../client/src/components/purchase/DelegateExternalMaintenanceCards";
-import ExternalMaintenanceWarehouseTab, { externalPreparationDraft, externalPreparationRows } from "../../client/src/pages/purchase/ExternalMaintenanceWarehouseTab";
+import ExternalMaintenanceWarehouseTab, { externalPreparationDraft, externalPreparationRows, filterSortExternalWarehouseRows } from "../../client/src/pages/purchase/ExternalMaintenanceWarehouseTab";
 import { printExternalMaintenanceDocument } from "../../client/src/lib/printExternalMaintenanceDocument";
 
 const prepared = (): any => ({ ticketId: 9, ticketItemId: 10, ticketNumber: "MT-2026-010", ticketTitle: "Original ticket title", ticketDescription: "Original fault details",
@@ -159,6 +159,26 @@ describe("Assigned delegate external-maintenance receipt cards", () => {
 });
 
 describe("Warehouse title and re-preparation", () => {
+  it("searches ticket numbers immediately and sorts all warehouse rows newest by default", () => {
+    const older = prepared(); older.ticketNumber = "MT-2026-00672-01"; older.job.updatedAt = "2026-11-02T10:00:00Z";
+    const newer = prepared(); newer.ticketNumber = "MT-2026-00673-01"; newer.job.id = 21; newer.job.updatedAt = "2026-11-05T10:00:00Z";
+    expect(filterSortExternalWarehouseRows([older, newer], "", "newest").map(row => row.job.id)).toEqual([21, 20]);
+    expect(filterSortExternalWarehouseRows([older, newer], "", "oldest").map(row => row.job.id)).toEqual([20, 21]);
+    expect(filterSortExternalWarehouseRows([older, newer], "00672", "newest").map(row => row.job.id)).toEqual([20]);
+    expect(filterSortExternalWarehouseRows([older, newer], "٦٧٢", "newest").map(row => row.job.id)).toEqual([20]);
+    expect(filterSortExternalWarehouseRows([older, newer], "موتور", "newest").map(row => row.job.id)).toEqual([21, 20]);
+  });
+  it("updates the warehouse cards as soon as a ticket number is typed", () => {
+    const first = prepared(); first.ticketNumber = "MT-2026-00672-01";
+    const second = prepared(); second.job.id = 21; second.ticketNumber = "MT-2026-00673-01";
+    fixture.warehouse.jobs = [first, second];
+    let html = render(<ExternalMaintenanceWarehouseTab />);
+    expect(html).toContain(first.ticketNumber); expect(html).toContain(second.ticketNumber);
+    fixture.inputs.find(props => props.id === "external-warehouse-search").onChange({ target: { value: "00672" } });
+    html = render(<ExternalMaintenanceWarehouseTab />);
+    expect(html).toContain(first.ticketNumber); expect(html).not.toContain(second.ticketNumber);
+    expect(html).toContain("الأحدث أولًا"); expect(html).toContain("الأقدم أولًا");
+  });
   it("keeps a pending delegate receipt editable in the warehouse queue without duplicating the job", () => {
     const rejected = prepared(); rejected.job.status = "waiting_warehouse_preparation"; rejected.job.delegateReceiptStatus = "rejected";
     const queue = externalPreparationRows([{ ticketId: 9, ticketItemId: 10 }], [rejected, prepared()]);

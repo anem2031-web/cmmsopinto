@@ -241,6 +241,35 @@ export function externalPreparationDraft(ticket: any) {
   };
 }
 
+type ExternalWarehouseSort = "newest" | "oldest";
+
+export function filterSortExternalWarehouseRows(rows: any[], query: string, sort: ExternalWarehouseSort) {
+  const normalize = (value: unknown) => String(value ?? "")
+    .replace(/[٠-٩]/g, digit => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, digit => String(digit.charCodeAt(0) - 0x06f0))
+    .toLocaleLowerCase();
+  const term = normalize(query.trim());
+  const matching = term ? rows.filter(row => [
+    row.ticketNumber, row.ticketTitle, row.ticketDescription, row.itemDescription,
+    row.assetName, row.assetRegisteredName, row.assignedTechnicianName,
+    row.delegateName, row.poNumber, row.ticketId, row.ticketItemId, row.ticketItemNumber,
+    row.job?.id, row.job?.assetName, row.job?.purchaseTitle,
+    row.job?.exitDocumentNumber, row.job?.returnDocumentNumber, row.job?.handoverDocumentNumber,
+  ].some(value => normalize(value).includes(term))) : rows;
+  const timestamp = (row: any) => {
+    const value = row.job?.updatedAt ?? row.job?.createdAt ?? row.updatedAt ?? row.createdAt;
+    const time = value ? new Date(value).getTime() : NaN;
+    return Number.isFinite(time) ? time : null;
+  };
+  return [...matching].sort((a, b) => {
+    const first = timestamp(a), second = timestamp(b);
+    if (first === null && second !== null) return 1;
+    if (second === null && first !== null) return -1;
+    if (first !== null && second !== null && first !== second) return sort === "newest" ? second - first : first - second;
+    return Number(b.job?.id ?? b.ticketItemId ?? b.ticketId ?? 0) - Number(a.job?.id ?? a.ticketItemId ?? a.ticketId ?? 0);
+  });
+}
+
 export default function ExternalMaintenanceWarehouseTab() {
   const { t, language, dir } = useTranslation();
   const utils = trpc.useUtils();
@@ -283,6 +312,11 @@ export default function ExternalMaintenanceWarehouseTab() {
   const [pageReceipt, setPageReceipt] = useState(1);
   const [pageHandover, setPageHandover] = useState(1);
   const [pageMonitoring, setPageMonitoring] = useState(1);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<ExternalWarehouseSort>("newest");
+  const resetPages = () => {
+    setPagePreparation(1); setPageReceipt(1); setPageHandover(1); setPageMonitoring(1);
+  };
 
   const delegates = useMemo(() => (users as any[]).filter(user => isDelegateRole(user.role) && user.isActive !== 0), [users]);
   const recipients = useMemo(() => (users as any[]).filter(user =>
@@ -356,7 +390,7 @@ export default function ExternalMaintenanceWarehouseTab() {
   };
 
   const jobs = (data?.jobs || []) as any[];
-  const waitingPreparation = externalPreparationRows(data?.waitingPreparation || [], jobs);
+  const preparationRows = externalPreparationRows(data?.waitingPreparation || [], jobs);
   const externalJobIds = useMemo(
     () => jobs.map(row => Number(row.job?.id)).filter((id: number) => Number.isFinite(id)),
     [jobs],
@@ -384,10 +418,14 @@ export default function ExternalMaintenanceWarehouseTab() {
       },
     };
   };
-  const waitingReceipt = jobs.filter(row => row.job.status === "waiting_warehouse_receipt");
-  const waitingHandover = jobs.filter(row => row.job.status === "waiting_technician_handover");
-  const preparationIds = new Set(waitingPreparation.map(row => row.job?.id).filter(Boolean));
-  const monitoring = jobs.filter(row => !preparationIds.has(row.job.id) && !["waiting_warehouse_receipt", "waiting_technician_handover"].includes(row.job.status));
+  const receiptRows = jobs.filter(row => row.job.status === "waiting_warehouse_receipt");
+  const handoverRows = jobs.filter(row => row.job.status === "waiting_technician_handover");
+  const preparationIds = new Set(preparationRows.map(row => row.job?.id).filter(Boolean));
+  const monitoringRows = jobs.filter(row => !preparationIds.has(row.job.id) && !["waiting_warehouse_receipt", "waiting_technician_handover"].includes(row.job.status));
+  const waitingPreparation = filterSortExternalWarehouseRows(preparationRows, search, sort);
+  const waitingReceipt = filterSortExternalWarehouseRows(receiptRows, search, sort);
+  const waitingHandover = filterSortExternalWarehouseRows(handoverRows, search, sort);
+  const monitoring = filterSortExternalWarehouseRows(monitoringRows, search, sort);
 
   // عرض 15 عملية فقط بكل تبويب دفعة واحدة — يقلّل عدد العناصر المرسومة فعليًا
   // بالصفحة (خصوصًا تبويب "متابعة المسار C" اللي يرسم خطًا زمنيًا كاملًا لكل بلاغ).
@@ -402,6 +440,23 @@ export default function ExternalMaintenanceWarehouseTab() {
     <div className="space-y-6">
       <div className="rounded-xl border bg-slate-50 p-4 text-sm text-slate-700">
         {t.workflow.purchase.externalFlowHelp}
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-56 flex-1 space-y-1">
+          <Label htmlFor="external-warehouse-search">{routeText("بحث برقم البلاغ أو أي كلمة أو رقم", "Search by ticket number, text or number", "ٹکٹ نمبر، متن یا عدد سے تلاش کریں")}</Label>
+          <Input id="external-warehouse-search" type="search" value={search}
+            placeholder={routeText("اكتب رقم البلاغ أو أي جزء من البيانات", "Type a ticket number or any part of the details", "ٹکٹ نمبر یا تفصیلات کا کوئی حصہ لکھیں")}
+            onChange={event => { setSearch(event.target.value); resetPages(); }} />
+        </div>
+        <div className="min-w-44 space-y-1">
+          <Label htmlFor="external-warehouse-sort">{routeText("الترتيب", "Sort by", "ترتیب")}</Label>
+          <select id="external-warehouse-sort" className="h-10 w-full rounded-md border bg-background px-3" value={sort}
+            onChange={event => { setSort(event.target.value as ExternalWarehouseSort); resetPages(); }}>
+            <option value="newest">{routeText("الأحدث أولًا", "Newest first", "نیا پہلے")}</option>
+            <option value="oldest">{routeText("الأقدم أولًا", "Oldest first", "پرانا پہلے")}</option>
+          </select>
+        </div>
       </div>
 
       <Tabs defaultValue="preparation">
