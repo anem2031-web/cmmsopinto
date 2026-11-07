@@ -14,7 +14,7 @@ const parse = (value: any) => typeof value === "string" ? JSON.parse(value) : va
 
 /** Only approved DPB documents: no original PDF storage access or writer ports. */
 export class ApprovedPricingDocumentReader {
-  constructor(private ports: Pick<PricingBundlePorts, "database" | "render" | "signature">, private enabled: () => boolean) {}
+  constructor(private ports: Pick<PricingBundlePorts, "database" | "render" | "signature" | "fixedApprovedPdf">, private enabled: () => boolean) {}
   private async currentActor(actor: ApprovedPricingDocumentActor) {
     if (!canReadApprovedPricingDocuments(actor)) throw deny();
     const db = await this.ports.database();
@@ -92,7 +92,8 @@ export class ApprovedPricingDocumentReader {
     const snapshot = this.snapshot(bundle, scopes.get(id) || []);
     if (!snapshot) throw deny();
     const approved = await approvedBundleSnapshot(db, bundle, snapshot, source => this.ports.signature(source));
-    const pdf = await this.ports.render(approved);
+    const fixed = await this.ports.fixedApprovedPdf?.(db, bundle, approved);
+    const pdf = fixed ?? await this.ports.render(approved);
     if (!Buffer.isBuffer(pdf) || !pdf.length || pdf.length > 8*1024*1024) throw new Error("تعذر تجهيز ملف PDF");
     return { name: `${bundle.bundleNumber}.pdf`, content: pdf.toString("base64") };
   }

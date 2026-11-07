@@ -15,6 +15,7 @@ export interface PricingBundlePorts {
   submitPO(poId: number, actor: PricingBundleActor, options: { selectedItemIds: number[]; tx: any; purchasePackageSubmissionId?: number; skipArchive: true; bundleId: number; delegateSignatureSnapshot?: string | null }): Promise<any>;
   createPackageSubmission(packageId: number, actorId: number, tx: any): Promise<{ id: number } | null>;
   render(snapshot: PricingBundleSnapshot): Promise<Buffer>;
+  fixedApprovedPdf?(database: any, bundle: { id: number; bundleNumber: string }, approved: PricingBundleSnapshot): Promise<Buffer | null>;
   signature(source: string | null): Promise<string>;
   sync(poId: number, actorId: number, batchId: number): Promise<void>;
   finishUnifiedSend?(actor: PricingBundleActor, bundleId:number):Promise<void>;
@@ -354,7 +355,8 @@ export class PricingBundleService {
       // completed document shared by accounting/management, not a prior list flag.
       // Never replace pdfContent or the delegate's frozen snapshot.
       const approved = await approvedBundleSnapshot(database, bundle, snapshot, source => this.ports.signature(source));
-      const pdf = this.checkedPdf(await this.ports.render(approved));
+      const fixed = await this.ports.fixedApprovedPdf?.(database, bundle, approved);
+      const pdf = this.checkedPdf(fixed ?? await this.ports.render(approved));
       return { name: `${bundle.bundleNumber}.pdf`, content: pdf.toString("base64") };
     }
     let pending = this.pendingPdfs.get(id);

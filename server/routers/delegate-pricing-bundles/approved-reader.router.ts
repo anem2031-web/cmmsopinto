@@ -4,7 +4,7 @@ import { documentListPageInput } from "../../../shared/document-list";
 import { ApprovedPricingDocumentReader } from "../../services/delegate-pricing-bundles/approved-reader";
 import type { PricingBundlePorts } from "../../services/delegate-pricing-bundles/service";
 
-export function createApprovedPricingDocumentsRouter(ports: Pick<PricingBundlePorts, "database" | "render" | "signature">, enabled: () => boolean) {
+export function createApprovedPricingDocumentsRouter(ports: Pick<PricingBundlePorts, "database" | "render" | "signature" | "fixedApprovedPdf">, enabled: () => boolean) {
   const reader = new ApprovedPricingDocumentReader(ports, enabled);
   return router({
     listPage: approvedPricingDocumentProcedure.input(documentListPageInput).query(({ctx,input}) => reader.listPage(ctx.user,input)),

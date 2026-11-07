@@ -11,11 +11,13 @@ import { syncPathBTicketFromPurchaseOrder } from "../purchase/ticket-purchase-wo
 import { sql } from "drizzle-orm";
 import type { PricingBundlePorts } from "../../services/delegate-pricing-bundles/service";
 import { createApprovedPricingDocumentsRouter } from "./approved-reader.router";
+import { readFixedApprovedDocument } from "../../services/delegate-pricing-bundles/fixed-approved-document";
 const pricingBundlePorts: PricingBundlePorts = {
   database: async () => { const database = await db.getDb(); if (!database) throw new Error("قاعدة البيانات غير متاحة"); return database; },
   submitPO: submitPricedBatchForPO,
   createPackageSubmission: db.createPurchasePackageSubmission,
   render: snapshot => generatePurchaseRequestPDF(0, snapshot.delegate.id, undefined, undefined, snapshot),
+  fixedApprovedPdf: readFixedApprovedDocument,
   signature: getSignatureDataUrl,
   unified:unifiedApprovalPorts,
   finishUnifiedSend:async(actor,id)=>{
