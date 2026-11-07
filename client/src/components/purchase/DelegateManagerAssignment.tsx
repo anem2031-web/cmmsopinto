@@ -13,7 +13,7 @@ export function canManagerAssignOwnItem(actor: { id: number; role?: string | nul
   return !!actor && actor.role === APP_ROLE.DELEGATE_MANAGER && Number(actor.isActive) === 1
     && !!item && item.managerAssignable === true && Number(item.delegateId) === actor.id
     && item.status === "pending" && item.batchId == null && !item.delegateChangeRequestedAt
-    && item.estimatedUnitCost == null && item.estimatedTotalCost == null && item.estimatedById == null && item.estimatedAt == null
+    && item.estimatedUnitCost == null && item.estimatedTotalCost == null && item.estimatedById == null
     && item.ticketPath !== "C" && !item.isExternalMaintenance;
 }
 

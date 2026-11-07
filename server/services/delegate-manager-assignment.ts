@@ -33,7 +33,7 @@ export function canManagerAssignOwnItem(actor:Actor,item:any):boolean {
   if(actor.role!==APP_ROLE.DELEGATE_MANAGER||actor.isActive!==1||Number(item.delegateId)!==actor.id||item.status!=="pending"
     ||["draft","revision_needed","rejected","closed"].includes(item.purchaseOrderStatus)
     ||!item.purchaseOrderStatus||item.batchId!=null||item.delegateChangeRequestedAt!=null
-    ||["estimatedUnitCost","estimatedTotalCost","estimatedById","estimatedAt","actualUnitCost","actualTotalCost","purchasedAt","purchasedById"].some(field=>item[field]!=null)
+    ||["estimatedUnitCost","estimatedTotalCost","estimatedById","actualUnitCost","actualTotalCost","purchasedAt","purchasedById"].some(field=>item[field]!=null)
     ||Number(item.hasPricingBundle)!==0||Number(item.hasExternalJob)!==0||Number(item.isSupplierReplacement)!==0) return false;
   if(isRoutedPurchaseItem(item)?!hasCommittedPurchaseItemReview(item):item.purchaseOrderStatus==="pending_review"||item.reviewRole!=null||!Number.isSafeInteger(item.orderReviewedById)||item.orderReviewedById<=0||!item.orderReviewedAt) return false;
   if(item.sourceTicketId!=null&&Number(item.sourceTicketExists)!==Number(item.sourceTicketId))return false;
@@ -67,7 +67,7 @@ export async function assignOwnDelegateItem(tx:Database,actor:Actor,input:{purch
   if(!canManagerAssignOwnItem({...actor,isActive:1},item))throw conflict();
   const [written]=await tx.execute(sql`UPDATE purchase_order_items SET delegateId=${input.delegateId},delegateAssignedAt=CURRENT_TIMESTAMP
     WHERE id=${input.itemId} AND purchaseOrderId=${input.purchaseOrderId} AND delegateId=${actor.id} AND status='pending'
-      AND batchId IS NULL AND estimatedUnitCost IS NULL AND estimatedTotalCost IS NULL AND estimatedById IS NULL AND estimatedAt IS NULL
+      AND batchId IS NULL AND estimatedUnitCost IS NULL AND estimatedTotalCost IS NULL AND estimatedById IS NULL
       AND delegateChangeRequestedAt IS NULL`);
   if(Number(written?.affectedRows)!==1)throw conflict();
   await tx.execute(sql`INSERT INTO purchase_order_item_history (purchaseOrderItemId,purchaseOrderId,eventType,previousStatus,newStatus,previousDelegateId,newDelegateId,actorUserId,actorName,note,metadata)

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import { z } from "zod";
-import { and,eq,isNull } from "drizzle-orm";
+import { and,eq,isNull,getTableColumns } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { purchaseOrderItems,purchaseOrders,users } from "../../drizzle/schema";
 import { router,protectedProcedure } from "../routers/_shared/procedures";
@@ -36,7 +36,7 @@ beforeEach(()=>{
     ALTER TABLE purchase_order_items ADD COLUMN delegateId INTEGER;ALTER TABLE purchase_order_items ADD COLUMN delegateAssignedAt TEXT;
     ALTER TABLE purchase_order_items ADD COLUMN batchId INTEGER;ALTER TABLE purchase_order_items ADD COLUMN delegateChangeRequestedAt TEXT;
     ALTER TABLE purchase_order_items ADD COLUMN estimatedUnitCost TEXT;ALTER TABLE purchase_order_items ADD COLUMN estimatedTotalCost TEXT;
-    ALTER TABLE purchase_order_items ADD COLUMN estimatedById INTEGER;ALTER TABLE purchase_order_items ADD COLUMN estimatedAt TEXT;
+    ALTER TABLE purchase_order_items ADD COLUMN estimatedById INTEGER;
     ALTER TABLE purchase_order_items ADD COLUMN actualUnitCost TEXT;ALTER TABLE purchase_order_items ADD COLUMN actualTotalCost TEXT;
     ALTER TABLE purchase_order_items ADD COLUMN purchasedAt TEXT;ALTER TABLE purchase_order_items ADD COLUMN purchasedById INTEGER;
     CREATE TABLE tickets(id INTEGER PRIMARY KEY,maintenancePath TEXT);CREATE TABLE ticket_items(id INTEGER PRIMARY KEY,ticketId INTEGER,maintenancePath TEXT);
@@ -52,6 +52,14 @@ beforeEach(()=>{
 afterEach(()=>f.close());
 
 describe("one-item delegation uses the existing reviewed purchase workflow",()=>{
+  it("assigns against the actual item schema without invented test-only columns",async()=>{
+    const allowed=new Set(Object.values(getTableColumns(purchaseOrderItems)).map(column=>column.name));
+    const columns=f.memory.prepare("PRAGMA table_info(purchase_order_items)").all().map((column:any)=>column.name);
+    expect(columns).not.toContain("estimatedAt");
+    expect(columns.filter(name=>!allowed.has(name))).toEqual([]);
+    expect(await call().assignOwnDelegateItem({purchaseOrderId:100,itemId:1,delegateId:22})).toEqual({itemId:1,delegateId:22,status:"pending"});
+    expect(item().delegateId).toBe(22);
+  });
   it("assigns two separate items to two delegates while the third remains with the manager and all source/financial fields stay exact",async()=>{
     const before=[item(1),item(2),item(3)],header=f.memory.prepare("SELECT * FROM purchase_orders").all();
     expect(await call().assignOwnDelegateItem({purchaseOrderId:100,itemId:1,delegateId:22})).toEqual({itemId:1,delegateId:22,status:"pending"});
@@ -91,7 +99,7 @@ describe("one-item delegation uses the existing reviewed purchase workflow",()=>
     await call().assignOwnDelegateItem({purchaseOrderId:100,itemId:1,delegateId:22});
     await expect(call().assignOwnDelegateItem({purchaseOrderId:100,itemId:1,delegateId:23})).rejects.toMatchObject({code:"FORBIDDEN"});expect(item().delegateId).toBe(22);
   });
-  it.each(["status='pending_review'","status='estimated'","status='approved'","status='purchased'","batchId=7","estimatedUnitCost='0'","estimatedTotalCost='0'","estimatedById=11","estimatedAt='now'","actualUnitCost='2'","purchasedAt='now'","delegateChangeRequestedAt='now'","reviewedById=NULL","reviewedAt=NULL"])("does not transfer an ineligible source: %s",async update=>{
+  it.each(["status='pending_review'","status='estimated'","status='approved'","status='purchased'","batchId=7","estimatedUnitCost='0'","estimatedTotalCost='0'","estimatedById=11","actualUnitCost='2'","purchasedAt='now'","delegateChangeRequestedAt='now'","reviewedById=NULL","reviewedAt=NULL"])("does not transfer an ineligible source: %s",async update=>{
     f.memory.exec(`UPDATE purchase_order_items SET ${update} WHERE id=1`);
     await expect(call().assignOwnDelegateItem({purchaseOrderId:100,itemId:1,delegateId:22})).rejects.toMatchObject({code:"CONFLICT"});
     expect(item().delegateId).toBe(11);expect(f.memory.prepare("SELECT COUNT(*) AS total FROM audit_logs").get()).toMatchObject({total:0});

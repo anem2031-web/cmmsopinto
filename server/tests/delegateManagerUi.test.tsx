@@ -49,7 +49,7 @@ describe("Manager single ordinary item assignment", () => {
   });
   it.each([
     { delegateId: 99 }, { managerAssignable: false }, { status: "estimated" }, { batchId: 1 }, { estimatedUnitCost: "0" },
-    { estimatedTotalCost: "1" }, { estimatedById: 7 }, { estimatedAt: "2026-11-04" }, { delegateChangeRequestedAt: "2026-11-04" },
+    { estimatedTotalCost: "1" }, { estimatedById: 7 }, { delegateChangeRequestedAt: "2026-11-04" },
     { ticketPath: "C" }, { isExternalMaintenance: true },
   ])("does not initialize assignment for a foreign/external/already priced item: %j", change => {
     expect(canManagerAssignOwnItem(state.actor, { ...item(), ...change })).toBe(false);
