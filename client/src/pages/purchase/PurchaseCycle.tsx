@@ -1,3 +1,4 @@
+import { SupplyWaitProvider, SupplyWaitExplanation } from "@/components/purchase/SupplyWaitExplanation";
 import { isDelegateRole } from "@shared/roles";
 import { ExternalWorkshopPricingFields, externalWorkshopForm, externalWorkshopIssue, externalWorkshopPayload, type ExternalWorkshopForm } from "@/components/purchase/ExternalWorkshopPricingFields";
 import { externalMaintenanceLabels } from "@/i18n/externalMaintenanceFollowup";
@@ -814,6 +815,8 @@ export default function PurchaseCycle() {
                 </div>
               )}
 
+              <SupplyWaitExplanation itemId={item.id} purchaseOrderId={item.purchaseOrderId} />
+
               {/* Show photos if available */}
               <div className="flex gap-2 flex-wrap">
                 {item.purchasedPhotoUrl && (
@@ -846,6 +849,7 @@ export default function PurchaseCycle() {
 
 
   return (
+    <SupplyWaitProvider items={[...pendingPurchase, ...pendingWarehouse, ...pendingDelivery]}>
     <div className="space-y-6" dir={isRTL ? "rtl" : "ltr"}>
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onFileSelect} />
@@ -1810,5 +1814,6 @@ export default function PurchaseCycle() {
         </DialogContent>
       </Dialog>
     </div>
+    </SupplyWaitProvider>
   );
 }

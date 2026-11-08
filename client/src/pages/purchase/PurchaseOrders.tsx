@@ -1,3 +1,4 @@
+import { SupplyWaitProvider, SupplyWaitExplanation } from "@/components/purchase/SupplyWaitExplanation";
 import { isDelegateRole } from "@shared/roles";
 import { canAccessReturnsCenter, returnsCenterLink } from "@shared/returns-center";
 import { canManagerAssignOwnItem, DelegateManagerAssignmentDialog } from "@/components/purchase/DelegateManagerAssignment";
@@ -734,6 +735,7 @@ export default function PurchaseOrders() {
   }, [currentPage, totalPages]);
 
   return (
+    <SupplyWaitProvider items={view === "items" ? filteredDelegateActionableItems : view === "tracking" ? myRequestedItems : view === "supply" ? filteredSupplyTrackingItems : []}>
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -1126,6 +1128,7 @@ export default function PurchaseOrders() {
                       {t.workflow.purchase.openOrder}
                     </Button>
                   </div>
+                <SupplyWaitExplanation itemId={item.id} purchaseOrderId={item.purchaseOrderId} />
                 </CardContent>
               </Card>
               );
@@ -1197,6 +1200,7 @@ export default function PurchaseOrders() {
                       {t.workflow.purchase.openOrder}
                     </Button>
                   </div>
+                <SupplyWaitExplanation itemId={item.id} purchaseOrderId={item.purchaseOrderId} />
                 </CardContent>
               </Card>
               );
@@ -1347,6 +1351,7 @@ export default function PurchaseOrders() {
                           <div className="flex items-start gap-2 justify-between">
                             <div className="min-w-0">
                               <div className="font-semibold text-sm truncate">{getLocalizedItemField(item, "itemName", language) || item.itemName || t.workflow.purchase.unnamedItem}</div>
+                              <SupplyWaitExplanation itemId={item.id} purchaseOrderId={item.purchaseOrderId} />
                               <div className="mt-1 flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
                                 <span className="font-mono font-medium text-foreground/80">{item.purchaseOrderNumber}</span>
                                 <span>{t.workflow.purchase.quantityColon} {item.quantity} {displayUnit(item.unit)}</span>
@@ -1742,5 +1747,6 @@ export default function PurchaseOrders() {
         </DialogContent>
       </Dialog>
     </div>
+    </SupplyWaitProvider>
   );
 }

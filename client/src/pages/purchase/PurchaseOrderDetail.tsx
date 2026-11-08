@@ -1,3 +1,4 @@
+import { SupplyWaitProvider, SupplyWaitExplanation } from "@/components/purchase/SupplyWaitExplanation";
 import { isDelegateRole } from "@shared/roles";
 import { ExternalWorkshopPricingFields, externalWorkshopForm, externalWorkshopIssue, externalWorkshopPayload, needsExternalWorkshop, type ExternalWorkshopForm } from "@/components/purchase/ExternalWorkshopPricingFields";
 import { externalMaintenanceLabels } from "@/i18n/externalMaintenanceFollowup";
@@ -729,6 +730,7 @@ const visibleItems = useMemo(() => {
   const pendingCount = visibleItems.filter((i: any) => !["purchased", "received"].includes(i.status)).length;
 
   return (
+    <SupplyWaitProvider items={visibleItems.map((item: any) => ({ id: item.id, purchaseOrderId: po.id }))}>
     <div className="space-y-6 max-w-5xl" dir={dir}>
       <ImprovementReference kind="purchase" documentId={po.id} />
       <div className="flex items-center gap-3">
@@ -1077,6 +1079,7 @@ const visibleItems = useMemo(() => {
                       )}
                     </div>
                     {item.notes && <p className="text-xs text-muted-foreground mt-1.5 bg-muted/50 rounded-lg p-2 break-words">{getField(item, "notes")}</p>}
+                    <SupplyWaitExplanation itemId={item.id} purchaseOrderId={po.id} />
 
                     {(isCancelled || isRejected) && item.managementRejectionReason && (
                       <p className={`text-xs mt-1 ${isRejected ? "text-red-500" : "text-gray-400"}`}>
@@ -2577,5 +2580,6 @@ const visibleItems = useMemo(() => {
         </DialogContent>
       </Dialog>
     </div>
+    </SupplyWaitProvider>
   );
 }

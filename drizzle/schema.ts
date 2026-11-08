@@ -1,4 +1,4 @@
-import { mysqlTable, mysqlSchema, AnyMySqlColumn, int, varchar, timestamp, decimal, text, mysqlEnum, index, uniqueIndex, json, foreignKey, date, smallint, tinyint } from "drizzle-orm/mysql-core"
+import { mysqlTable, mysqlSchema, AnyMySqlColumn, int, varchar, timestamp, datetime, decimal, text, mysqlEnum, index, uniqueIndex, json, foreignKey, date, smallint, tinyint } from "drizzle-orm/mysql-core"
 import { sql } from "drizzle-orm"
 
 export const assetCategories = mysqlTable("asset_categories", {
@@ -3560,3 +3560,19 @@ export const pmMaterialRequestItemStatuses = [
 ] as const;
 
 export type PMMaterialRequestItemStatus = typeof pmMaterialRequestItemStatuses[number];
+
+// Informational only. No purchase-order/item workflow column is modified.
+export const purchaseItemSupplyWait = mysqlTable("purchase_item_supply_wait", {
+  itemId: int().notNull().primaryKey().references(() => purchaseOrderItems.id, { onDelete: "cascade" }),
+  purchaseOrderId: int().notNull(),
+  kind: mysqlEnum(["waiting_availability", "preparing"]).notNull(),
+  expectedReceiptDate: date({ mode: "string" }).notNull(),
+  reason: text().notNull(),
+  createdById: int().notNull(),
+  createdByName: varchar({ length: 255 }).notNull(),
+  createdAt: datetime({ mode: "string", fsp: 3 }).notNull(),
+  updatedById: int().notNull(),
+  updatedByName: varchar({ length: 255 }).notNull(),
+  updatedAt: datetime({ mode: "string", fsp: 3 }).notNull(),
+  revision: int().notNull().default(0),
+}, table => [index("idx_supply_wait_order").on(table.purchaseOrderId, table.itemId)]);

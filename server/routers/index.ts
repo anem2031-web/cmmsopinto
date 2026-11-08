@@ -15,8 +15,9 @@ import { ticketsMergedRouter } from "./tickets/index";
 
 import { purchaseOrdersRouter } from "./purchase/purchase-orders.router";
 import { createPurchaseSpecificationsRouter } from "./purchase/specifications.router";
+import { createPurchaseSupplyWaitRouter } from "./purchase/supply-wait.router";
 import { getDb } from "../_core/db";
-import { createPurchaseOrderReadGuard } from "../_core/authz/guard";
+import { createPurchaseOrderReadGuard, createPurchaseOrderReadScope } from "../_core/authz/guard";
 import { deliveryDocumentsRouter } from "./purchase/delivery-documents.router";
 import { createWarehouseRequestDocumentsRouter } from "./inventory/warehouse-request-documents.router";
 import { warehouseRequestDocumentService } from "../_core/db/warehouse-request-documents";
@@ -99,6 +100,7 @@ export const appRouter = router({
   delegatePricingBundles: delegatePricingBundlesRouter,
   approvedPricingDocuments: approvedPricingDocumentsRouter,
   purchaseSpecifications: createPurchaseSpecificationsRouter({ database: getDb, readGuard: createPurchaseOrderReadGuard }),
+  purchaseSupplyWait: createPurchaseSupplyWaitRouter({ database: getDb, readScope: createPurchaseOrderReadScope }),
 
 purchaseOrders: router({
   ...purchaseOrdersRouter._def.procedures,

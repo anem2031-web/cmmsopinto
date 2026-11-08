@@ -21,6 +21,7 @@ export const isBusinessGuardedRole = (role?: string | null): role is BusinessRol
 const paths = (namespace: string, names: string) => names.trim().split(/\s+/).filter(Boolean).map(name => `${namespace}.${name}`);
 
 const sharedQueries = [
+  "purchaseSupplyWait.list",
   "auth.me", "notifications.summary", "notifications.list", "notifications.unreadCount", "push.getStatus", "push.getVapidPublicKey",
   "users.list", "users.byRole", "users.listTechnicians", "sites.list", "sections.list", "assets.list",
   "centerCategories.list", "purchaseCategories.list", "warehouse.list",
