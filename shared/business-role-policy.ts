@@ -179,7 +179,7 @@ export const BUSINESS_ROLE_CAPABILITIES: Record<BusinessRole, { query: readonly 
     mutation: [...sharedMutations, ...documentMutations, ...settlementReviewMutations, ...managementMutations, ...seniorCatalogMutations, ...paths("purchaseOrders", "reviewItems resolveDelegateChange approveManagement approveManagementBatch reject"), "purchasePackages.approveManagementSubmission", ...paths("delegatePricingBundles","pdf approveAccounting approveManagement resumeApproval")] },
   executive_director: { query: [...sharedQueries, ...documentQueries, ...costQueries, ...managementQueries, "technicians.list"],
     mutation: [...sharedMutations, ...documentMutations, ...managementMutations] },
-  warehouse: { query: [...sharedQueries, ...documentQueries, ...settlementReviewQueries, ...costQueries, ...warehouseQueries],
+  warehouse: { query: [...sharedQueries, ...documentQueries, ...settlementReviewQueries, ...costQueries, ...warehouseQueries, "purchaseOrders.supplyTracking"],
     mutation: [...sharedMutations, ...documentMutations, ...warehouseMutations] },
   food_warehouse_assistant: { query: [...sharedQueries, ...documentQueries], mutation: [...sharedMutations, ...documentMutations] },
 };

@@ -47,7 +47,7 @@ const caller = (role: string, isActive = 1, projected = false): any => {
 beforeEach(() => vi.clearAllMocks());
 
 describe("supply follow-up permissions", () => {
-  it.each(["senior_management", "admin", "owner"])("%s reads all delegate/creator items with one batch read", async role => {
+  it.each(["senior_management", "admin", "owner", "warehouse"])("%s reads all delegate/creator items with one batch read", async role => {
     expect(canRoleAccessPurchaseSupplyTracking(role)).toBe(true);
     expect(canRoleViewAllPurchaseSupplyTracking(role)).toBe(true);
     const result = await caller(role).purchaseOrders.supplyTracking();
@@ -60,7 +60,7 @@ describe("supply follow-up permissions", () => {
     expect(result.scope).toBe("delegate");
     expect(db.getPurchaseSupplyTrackingItems.mock.calls).toEqual([[11]]);
   });
-  it.each(["accountant", "executive_director", "warehouse", "purchase_requester", "operator"])("denies direct %s access", async role => {
+  it.each(["accountant", "executive_director", "purchase_requester", "operator", "food_warehouse_assistant", "food_warehouse_manager"])("denies direct %s access", async role => {
     await expect(caller(role).purchaseOrders.supplyTracking()).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(db.getPurchaseSupplyTrackingItems).not.toHaveBeenCalled();
   });
@@ -68,9 +68,15 @@ describe("supply follow-up permissions", () => {
     await expect(caller("senior_management", 0, projected).purchaseOrders.supplyTracking()).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(db.getPurchaseSupplyTrackingItems).not.toHaveBeenCalled();
   });
+  it.each([false, true])("denies inactive warehouse (projected=%s) before data access", async projected => {
+    await expect(caller("warehouse", 0, projected).purchaseOrders.supplyTracking()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(db.getPurchaseSupplyTrackingItems).not.toHaveBeenCalled();
+  });
   it("grants this query alone, without a corresponding mutation", () => {
     expect(businessRpcAllowed(identity("senior_management"), "query", "purchaseOrders.supplyTracking")).toBe(true);
     expect(businessRpcAllowed(identity("senior_management"), "mutation", "purchaseOrders.supplyTracking")).toBe(false);
+    expect(businessRpcAllowed(identity("warehouse"), "query", "purchaseOrders.supplyTracking")).toBe(true);
+    expect(businessRpcAllowed(identity("warehouse"), "mutation", "purchaseOrders.supplyTracking")).toBe(false);
     expect(businessRpcAllowed(identity("accountant"), "query", "purchaseOrders.supplyTracking")).toBe(false);
   });
   it("keeps requests independent and query count constant for repeated parents", async () => {
@@ -94,7 +100,7 @@ function filter(overrides: any = {}) {
   }).map((i: any) => i.id);
 }
 describe("actual follow-up filters", () => {
-  it.each(["senior_management", "admin", "owner"])("%s combines inclusive required dates and delegate", role => {
+  it.each(["senior_management", "admin", "owner", "warehouse"])("%s combines inclusive required dates and delegate", role => {
     expect(filter({ role, supplyRequiredFrom: "2026-11-06", supplyRequiredTo: "2026-11-08" })).toEqual([1, 2]);
     expect(filter({ role, supplyRequiredFrom: "2026-11-06", supplyRequiredTo: "2026-11-08", supplyDelegateFilter: "22" })).toEqual([2]);
     expect(filter({ role, supplyDelegateFilter: "11", supplyDelayFilter: "1" })).toEqual([1]);
@@ -124,7 +130,7 @@ describe("actual follow-up filters", () => {
       supplyRequiredFrom: "", supplyRequiredTo: "", setSupplyRequiredFrom: () => {}, setSupplyRequiredTo: () => {},
       supplyDelegateFilter: "all", setSupplyDelegateFilter: () => {}, supplyDelegates: [{ id: 11, name: "Delegate fixture" }],
     };
-    for (const role of ["senior_management", "admin", "owner"]) {
+    for (const role of ["senior_management", "admin", "owner", "warehouse"]) {
       const html = renderToStaticMarkup(<>{evaluate(dateControls, { ...common, canFilterSupplyRequiredDate: evaluate(datesAllowed, { user: identity(role) }) })}{evaluate(delegateControls, { ...common, canViewAllSupplyTracking: canRoleViewAllPurchaseSupplyTracking(role) })}</>);
       expect((html.match(/type="date"/g) || []).length).toBe(2);
       expect(html).toContain(t.purchaseOrders.requiredDate);

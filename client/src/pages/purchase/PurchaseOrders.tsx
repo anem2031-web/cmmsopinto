@@ -169,7 +169,7 @@ export default function PurchaseOrders() {
   }, [user?.role, view, canViewReturns]);
   const canAccessSupplyTracking = canRoleAccessPurchaseSupplyTracking(user?.role);
   const canViewAllSupplyTracking = canRoleViewAllPurchaseSupplyTracking(user?.role);
-  const canFilterSupplyRequiredDate = ["senior_management", "admin", "owner"].includes(user?.role || "");
+  const canFilterSupplyRequiredDate = ["senior_management", "admin", "owner", "warehouse"].includes(user?.role || "");
   const canAccessMyItemsTracking = ![
     "maintenance_manager",
     "general_maintenance_manager",
