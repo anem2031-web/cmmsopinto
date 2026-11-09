@@ -1,4 +1,4 @@
-import { isItTeamRole } from "@shared/roles";
+import { isItTeamRole, isTicketReporterRole } from "@shared/roles";
 import { TRPCError } from "@trpc/server";
 import {
   APP_ROLE,
@@ -12,12 +12,10 @@ const ROLES_DENIED_FROM_TICKETS = [
   APP_ROLE.ACCOUNTANT,
   APP_ROLE.PURCHASE_MANAGER,
   APP_ROLE.WAREHOUSE,
-  APP_ROLE.PURCHASE_REQUESTER,
   APP_ROLE.FOOD_WAREHOUSE_MANAGER,
   APP_ROLE.FOOD_WAREHOUSE_ASSISTANT,
 ];
 
-const REPORTER_SCOPED_ROLES = [APP_ROLE.OPERATOR];
 const ASSIGNEE_SCOPED_ROLES = [APP_ROLE.TECHNICIAN];
 
 export interface TicketAccessUser {
@@ -125,7 +123,7 @@ export function isTicketVisible(
     );
   }
 
-  if (REPORTER_SCOPED_ROLES.includes(user.role as any)) {
+  if (isTicketReporterRole(user.role)) {
     return ticket.reportedById === user.id;
   }
   if (ASSIGNEE_SCOPED_ROLES.includes(user.role as any)) {

@@ -1,5 +1,5 @@
 import { notifyItTeamArrival } from "./it-team.service";
-import { isItTeamRole } from "@shared/roles";
+import { isItTeamRole, isTicketReporterRole } from "@shared/roles";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure, ticketProcedure } from "../_shared/procedures";
@@ -235,7 +235,7 @@ export const ticketsRouter = router({
     // ✅ إغلاق فجوة الواجهة/الخادم: أدوار محجوبة عن البلاغات بالواجهة كانت ترى الكل هنا
     if (isRoleDeniedFromTickets(role)) return [];
     let filters: any = { ...(input || {}) };
-    if (role === APP_ROLE.OPERATOR) filters.reportedById = ctx.user.id;
+    if (isTicketReporterRole(role)) filters.reportedById = ctx.user.id;
     else if (role === APP_ROLE.TECHNICIAN) filters.assignedToId = ctx.user.id;
     else if (isItTeamRole(role)) filters.itManagerScopeUserId = ctx.user.id;
     // ⚠️ 2026-08-13: أُزيل فرع CONSTRUCTION_PROCUREMENT_MANAGER هنا عمدًا —
@@ -278,7 +278,7 @@ export const ticketsRouter = router({
     // قيود الرؤية وحدها تُمرَّر أيضًا لاستعلام أبناء العائلة، حتى لا يؤدي التجميع
     // إلى كشف بلاغ فرعي من جهة/فني خارج نطاق المستخدم.
     const childVisibilityFilters: any = {};
-    if (role === APP_ROLE.OPERATOR) {
+    if (isTicketReporterRole(role)) {
       filters.reportedById = ctx.user.id;
       childVisibilityFilters.reportedById = ctx.user.id;
     } else if (role === APP_ROLE.TECHNICIAN) {
@@ -321,7 +321,7 @@ export const ticketsRouter = router({
     // ✅ إغلاق فجوة الواجهة/الخادم (نفس قاعدة list)
     if (isRoleDeniedFromTickets(role)) return { all: 0, critical: 0, unassigned: 0, stale: 0, ready_for_closure: 0 } as any;
     let filters: any = { ...(input || {}) };
-    if (role === APP_ROLE.OPERATOR) filters.reportedById = ctx.user.id;
+    if (isTicketReporterRole(role)) filters.reportedById = ctx.user.id;
     else if (role === APP_ROLE.TECHNICIAN) filters.assignedToId = ctx.user.id;
     else if (isItTeamRole(role)) filters.itManagerScopeUserId = ctx.user.id;
     // ⚠️ 2026-08-13: أُزيل فرع CONSTRUCTION_PROCUREMENT_MANAGER هنا عمدًا —

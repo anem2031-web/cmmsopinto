@@ -126,6 +126,8 @@ export default function PurchaseOrders() {
   const [supplyDelayFilter, setSupplyDelayFilter] = useState<SupplyDelayFilter>("all");
   const [supplyCustomDays, setSupplyCustomDays] = useState("5");
   const [supplyDelegateFilter, setSupplyDelegateFilter] = useState("all");
+  const [supplyRequiredFrom, setSupplyRequiredFrom] = useState("");
+  const [supplyRequiredTo, setSupplyRequiredTo] = useState("");
 
   // ── تقسيم الصفحات (Pagination): 10 طلبات بكل صفحة ──
   const PAGE_SIZE = 10;
@@ -167,6 +169,7 @@ export default function PurchaseOrders() {
   }, [user?.role, view, canViewReturns]);
   const canAccessSupplyTracking = canRoleAccessPurchaseSupplyTracking(user?.role);
   const canViewAllSupplyTracking = canRoleViewAllPurchaseSupplyTracking(user?.role);
+  const canFilterSupplyRequiredDate = ["senior_management", "admin", "owner"].includes(user?.role || "");
   const canAccessMyItemsTracking = ![
     "maintenance_manager",
     "general_maintenance_manager",
@@ -552,6 +555,10 @@ export default function PurchaseOrders() {
       .filter((item: any) => {
         if (canViewAllSupplyTracking && supplyOwnershipFilter === "mine" && Number(item.requestedById) !== Number(user?.id)) return false;
         if (canViewAllSupplyTracking && supplyDelegateFilter !== "all" && Number(item.delegateId) !== Number(supplyDelegateFilter)) return false;
+        if (canFilterSupplyRequiredDate && (supplyRequiredFrom || supplyRequiredTo)) {
+          const requiredDate = String(item.requiredDate || "").slice(0, 10);
+          if (!requiredDate || (supplyRequiredFrom && requiredDate < supplyRequiredFrom) || (supplyRequiredTo && requiredDate > supplyRequiredTo)) return false;
+        }
         if (threshold != null) {
           if (completedStatuses.has(String(item.status))) return false;
           const overdueDays = getOverdueCalendarDays(item.requiredDate);
@@ -592,6 +599,9 @@ export default function PurchaseOrders() {
     supplyDelayFilter,
     supplyCustomDays,
     supplyDelegateFilter,
+    supplyRequiredFrom,
+    supplyRequiredTo,
+    canFilterSupplyRequiredDate,
     canViewAllSupplyTracking,
     user?.id,
     user?.role,
@@ -1092,8 +1102,8 @@ export default function PurchaseOrders() {
                 className="hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer"
                 onClick={() => setLocation(`/purchase-orders/${item.purchaseOrderId}?action=${item.actionMode}&itemId=${item.id}`)}
               >
-                <CardContent className="py-3 flex items-center justify-between gap-4 flex-wrap">
-                  <div className="min-w-0 flex-1">
+                <CardContent className="py-3 flex flex-col items-stretch justify-between gap-4 lg:flex-row lg:items-center lg:flex-wrap">
+                  <div className="min-w-0 w-full lg:w-auto lg:flex-1">
                     <div className="font-medium text-sm break-words">{getLocalizedItemField(item, "itemName", language) || item.itemName || t.workflow.purchase.unnamedItem}</div>
                     <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3 flex-wrap">
                       <span className="font-mono">{item.purchaseOrderNumber}</span>
@@ -1107,7 +1117,7 @@ export default function PurchaseOrders() {
                       {availableDays != null && <span className={availableDays < 0 ? "text-red-600" : ""}>{t.purchaseOrders.availableDuration}: {formatAvailableDuration(availableDays, language)}</span>}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto lg:shrink-0">
                     {canManagerAssignOwnItem(authenticatedUser, item) && <Button size="sm" variant="outline" onClick={event => { event.stopPropagation(); setManagerAssignmentItem(item); }}>{t.purchaseOrders.managerAssignToDelegate}</Button>}
                     {item.status === "estimated" && !item.batchId && !item.delegateChangeRequestedAt && <PricingBundleAddButton itemId={item.id} />}
                     <Badge variant={item.actionMode === "purchase" ? "default" : "outline"}>
@@ -1254,6 +1264,23 @@ export default function PurchaseOrders() {
                   </div>
                 )}
               </div>
+
+              {canFilterSupplyRequiredDate && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    <span>{t.purchaseOrders.requiredDate} — {t.common.fromDate}</span>
+                    <Input type="date" value={supplyRequiredFrom} max={supplyRequiredTo || undefined}
+                      aria-label={`${t.purchaseOrders.requiredDate} — ${t.common.fromDate}`}
+                      onChange={event => setSupplyRequiredFrom(event.target.value)} />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    <span>{t.purchaseOrders.requiredDate} — {t.common.toDate}</span>
+                    <Input type="date" value={supplyRequiredTo} min={supplyRequiredFrom || undefined}
+                      aria-label={`${t.purchaseOrders.requiredDate} — ${t.common.toDate}`}
+                      onChange={event => setSupplyRequiredTo(event.target.value)} />
+                  </label>
+                </div>
+              )}
 
               {canViewAllSupplyTracking && (
                 <div className="flex flex-wrap items-center gap-2">

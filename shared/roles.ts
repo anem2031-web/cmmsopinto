@@ -46,6 +46,11 @@ export const APP_ROLE = {
 
 export type AppRole = (typeof APP_ROLE)[keyof typeof APP_ROLE];
 
+/** Purchase requesters also report maintenance tickets, within their own reporter scope. */
+export function isTicketReporterRole(role?: string | null): boolean {
+  return role === APP_ROLE.OPERATOR || role === APP_ROLE.PURCHASE_REQUESTER;
+}
+
 /** PM V2 scoped roles. Keep technician execution separate from management. */
 export const PMV2_MANAGEMENT_ROLES = [
   APP_ROLE.OWNER,
@@ -223,6 +228,7 @@ export const PURCHASE_MAINTENANCE_MANAGER_ROLES = MAINTENANCE_MANAGER_FAMILY;
 export const PURCHASE_SUPPLY_TRACKING_MANAGER_ROLES = [
   APP_ROLE.OWNER,
   APP_ROLE.ADMIN,
+  APP_ROLE.SENIOR_MANAGEMENT,
   APP_ROLE.MAINTENANCE_MANAGER,
   APP_ROLE.GENERAL_MAINTENANCE_MANAGER,
   APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,

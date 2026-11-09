@@ -17,12 +17,12 @@ const ticket = (over: Partial<any> = {}) => ({
   ...over,
 });
 
-describe("operator — مقيّد ببلاغاته التي أبلغ عنها", () => {
+describe.each(["operator", "purchase_requester"])("%s — مقيّد ببلاغاته التي أبلغ عنها", (role) => {
   it("يرى بلاغه هو", () => {
-    expect(isTicketVisible({ id: 10, role: "operator" }, ticket())).toBe(true);
+    expect(isTicketVisible({ id: 10, role }, ticket())).toBe(true);
   });
   it("🔴 لا يرى بلاغ مشغّل آخر (الثغرة المُغلَقة)", () => {
-    expect(isTicketVisible({ id: 11, role: "operator" }, ticket())).toBe(false);
+    expect(isTicketVisible({ id: 11, role }, ticket())).toBe(false);
   });
 });
 
@@ -79,7 +79,7 @@ describe("باقي الأدوار — بلا تقييد (مطابقة حرفية
 describe("🔒 الأدوار المحجوبة عن البلاغات بالواجهة — ممنوعة الآن بالخادم أيضًا", () => {
   const denied = [
     "accountant", "purchase_manager", "warehouse", "gate_security",
-    "purchase_requester", "food_warehouse_manager", "food_warehouse_assistant",
+    "food_warehouse_manager", "food_warehouse_assistant",
   ];
   for (const role of denied) {
     it(`${role} ممنوع كليًا — حتى لو كان هو المُبلِّغ أو المسنَد له`, () => {

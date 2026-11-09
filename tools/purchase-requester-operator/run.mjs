@@ -1,0 +1,8 @@
+import { startVitest } from "vitest/node";
+import previous from "../documents-center-perf/vitest.config.mjs";
+const context = await startVitest("test", [], { config: false, watch: false }, {
+  ...previous,
+  test: { ...previous.test, include: ["server/tests/purchaseRequesterOperator.test.ts"] },
+});
+process.exitCode = !context || context.state.getFiles().some(file => file.result?.state === "fail") || context.state.getUnhandledErrors().length ? 1 : 0;
+await context?.close();
