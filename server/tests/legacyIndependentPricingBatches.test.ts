@@ -9,6 +9,7 @@ import { purchaseOrders, purchaseOrderItems, users, procurementComments } from "
 import { buildItemRevisionComment } from "../routers/purchase/item-revision-comment";
 import { assertCatalogItemNameUnchanged } from "../routers/purchase/catalog-item-name";
 import { summarizePurchasePricingStage } from "../../shared/purchasePricingStage";
+import { calculatePurchaseEstimate } from "../services/purchase-estimate";
 import { getDelegateItemActionMode } from "../routers/purchase/actionable";
 import { isDelegateRole } from "../../shared/delegate-role";
 import { isRoutedPurchaseItem } from "../../shared/purchase-item-review";
@@ -89,7 +90,7 @@ beforeEach(() => {
     createPOPricingBatch: async (values: any) => { f.insert("po_pricing_batches", { id: 44, ...values }); return 44; },
   };
   context = { z, TRPCError, sql, eq, purchaseOrders, purchaseOrderItems, users, procurementComments, buildItemRevisionComment, assertCatalogItemNameUnchanged, delegateProcedure: procedure, protectedProcedure: procedure, managementProcedure: procedure,
-    db: database, summarizePurchasePricingStage, assertPOItemAssignedToDelegate, assertCanResolveReturnedPOItem, assertCanPerformPurchaseItemReviewAction, isDelegateRole, isRoutedPurchaseItem,
+    db: database, summarizePurchasePricingStage, calculatePurchaseEstimate, assertPOItemAssignedToDelegate, assertCanResolveReturnedPOItem, assertCanPerformPurchaseItemReviewAction, isDelegateRole, isRoutedPurchaseItem,
     assertRoutedPurchaseItemReady: () => {}, assertItemOutsidePricingBundle: vi.fn(), pricingBundlesEnabled: () => false, reservedPricingItemIds: async () => new Set(), isItemAssignedToPODelegate: (actor: any, item: any) => actor.id === item.delegateId,
     queuePurchaseTranslation: vi.fn(), createTranslatedProcurementComment: vi.fn(), syncPathBTicketFromPurchaseOrder: vi.fn(),
     externalWorkshopInput: z.object({}), withExternalWorkshopPricing: async ({ write }: any) => write(),
@@ -157,7 +158,7 @@ describe("revision conversation from the actual combined save handler", () => {
     const comment = all("procurement_comments")[0];
     expect(comment).toMatchObject({ purchaseOrderId: 10, purchaseOrderItemId: 22, userId: 9, userName: "Creator", userRole: "warehouse", actionType: "item_revision_edited_and_resubmitted" });
     expect(comment.createdAt).toBeTruthy();
-    for (const value of ["اسم الصنف", "المواصفات", "الكمية", "الوحدة", "الصورة", "الملاحظات", "السعر التقديري للوحدة", "الإجمالي التقديري", "Old specification", "New specification", "قبل: «1»", "بعد: «3»", "بعد: «60»"]) expect(comment.note).toContain(value);
+    for (const value of ["اسم الصنف", "المواصفات", "الكمية", "الوحدة", "الصورة", "الملاحظات", "السعر التقديري للوحدة", "الإجمالي التقديري", "Old specification", "New specification", "قبل: «1»", "بعد: «3»", "بعد: «60.00»"]) expect(comment.note).toContain(value);
     expect(get("purchase_order_items", 22)).toMatchObject({ status: "pending", description: "New specification", quantity: 3 });
     expect(get("po_pricing_batches", 43)).toEqual(batch); expect(all("purchase_order_items").slice(0, 2)).toEqual(siblings);
     expect(context.createTranslatedProcurementComment).not.toHaveBeenCalled();

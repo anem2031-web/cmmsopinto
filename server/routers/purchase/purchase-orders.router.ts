@@ -9,6 +9,7 @@ import { isItTeamRole, isDelegateRole } from "@shared/roles";
 import { assignOwnDelegateItem, delegateAssignmentOptions, managerAssignableItemIds } from "../../services/delegate-manager-assignment";
 import { externalWorkshopInput, externalWorkshopForPurchaseItem, withExternalWorkshopPricing } from "../../services/external-maintenance-pricing";
 import { summarizePurchasePricingStage } from "../../../shared/purchasePricingStage";
+import { calculatePurchaseEstimate } from "../../services/purchase-estimate";
 import { assertLegacyTeamExecutionAllowed } from "../maintenance-teams/execution.guard";
 import { createTicketMaterialPurchase } from "../maintenance-teams/purchase-form";
 import { TeamTicketError } from "../../../shared/maintenance-team-tickets/model";
@@ -2115,10 +2116,9 @@ export const purchaseOrdersRouter = router({
     if (input.photoUrl !== undefined) updates.photoUrl = input.photoUrl;
     if (input.notes !== undefined) updates.notes = input.notes;
     if (input.estimatedUnitCost !== undefined) {
-      updates.estimatedUnitCost = input.estimatedUnitCost;
-      updates.estimatedTotalCost = String(parseFloat(input.estimatedUnitCost) * (input.quantity || oldItem.quantity));
+      Object.assign(updates, calculatePurchaseEstimate(input.estimatedUnitCost, input.quantity ?? oldItem.quantity));
     } else if (input.quantity !== undefined && oldItem.estimatedUnitCost) {
-      updates.estimatedTotalCost = String(parseFloat(oldItem.estimatedUnitCost) * input.quantity);
+      updates.estimatedTotalCost = calculatePurchaseEstimate(oldItem.estimatedUnitCost, input.quantity).estimatedTotalCost;
     }
     await withPendingReviewItemWrite(ctx.user, po, oldItem, "editItem", async tx => {
     const saveItem = async (writeTx?: any): Promise<void> => {
@@ -2235,12 +2235,9 @@ export const purchaseOrdersRouter = router({
     if (input.notes !== undefined) updates.notes = input.notes;
 
     if (input.estimatedUnitCost !== undefined) {
-      updates.estimatedUnitCost = input.estimatedUnitCost;
-      updates.estimatedTotalCost = String(
-        parseFloat(input.estimatedUnitCost) * (input.quantity || oldItem.quantity)
-      );
+      Object.assign(updates, calculatePurchaseEstimate(input.estimatedUnitCost, input.quantity ?? oldItem.quantity));
     } else if (input.quantity !== undefined && oldItem.estimatedUnitCost) {
-      updates.estimatedTotalCost = String(parseFloat(oldItem.estimatedUnitCost) * input.quantity);
+      updates.estimatedTotalCost = calculatePurchaseEstimate(oldItem.estimatedUnitCost, input.quantity).estimatedTotalCost;
     }
 
     if (wasRevisionRequest) {
@@ -2522,7 +2519,6 @@ export const purchaseOrdersRouter = router({
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
 
     for (const item of input.items) {
-      const cost = parseFloat(item.estimatedUnitCost);
       const poItem = (await db.getPOItems(input.purchaseOrderId)).find(i => i.id === item.id);
       // Guard: item must have a delegateId assigned before it can be estimated
       if (!poItem?.delegateId) {
@@ -2542,7 +2538,6 @@ export const purchaseOrdersRouter = router({
       }
       // ✅ الحارس المركزي: المندوب يسعّر أصنافه المخصَّصة له فقط (owner/admin يتجاوزان)
       assertPOItemAssignedToDelegate(ctx.user, poItem);
-      const totalCost = cost * (poItem?.quantity || 1);
 
       // ── دائمًا: حفظ السعر فقط يضع الصنف في "estimated" بانتظار إرساله ضمن دفعة ──
       // (سواء كان الطلب لسه pending_estimate، أو سبق واعتُمدت دفعات أخرى منه، أو حتى لو وصل الطلب لحالة approved)
@@ -2554,8 +2549,7 @@ export const purchaseOrdersRouter = router({
         authorize: current => { if (current.item.reviewRole != null) assertRoutedPurchaseItemReady(current.po, current.item); assertPOItemAssignedToDelegate(current.actor, current.item); },
         write: async (tx, current) => {
       const saved = await db.updatePOItemIfDelegateChangeUnlocked(item.id, {
-        estimatedUnitCost: item.estimatedUnitCost,
-        estimatedTotalCost: String(current ? cost * Number(current.item.quantity) : totalCost),
+        ...calculatePurchaseEstimate(item.estimatedUnitCost, Number(current?.item.quantity ?? poItem.quantity)),
         status: "estimated",
         batchId: null, // أي إعادة تسعير تفصل الصنف عن أي دفعة قديمة وتجعله جاهزًا لدفعة جديدة
       }, "pending", {

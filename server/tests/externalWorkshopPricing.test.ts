@@ -16,6 +16,8 @@ import { isDelegateRole } from "../../shared/delegate-role";
 import { isRoutedPurchaseItem } from "../../shared/purchase-item-review";
 import { assertRoutedPurchaseItemReady } from "../services/purchase-review-routing";
 import { summarizePurchasePricingStage } from "../../shared/purchasePricingStage";
+import { assertBundleItemEligible } from "../../shared/delegate-pricing-bundles";
+import { calculatePurchaseEstimate } from "../services/purchase-estimate";
 vi.mock("../_core/db", () => ({}));
 import { assertPOItemAssignedToDelegate, assertCanPerformPurchaseItemReviewAction, assertCanResolveReturnedPOItem } from "../_core/authz/guard";
 import { protectedProcedure, delegateProcedure, router } from "../routers/_shared/procedures";
@@ -242,7 +244,7 @@ describe("actual pricing API handlers cannot bypass workshop validation", () => 
     const context: any = { z, TRPCError, protectedProcedure, delegateProcedure, db: database, pricingBundlesEnabled: () => false,
       externalWorkshopInput, withExternalWorkshopPricing, isDelegateRole, isRoutedPurchaseItem, assertRoutedPurchaseItemReady,
       assertPOItemAssignedToDelegate, assertCanPerformPurchaseItemReviewAction, assertCanResolveReturnedPOItem,
-      summarizePurchasePricingStage, assertItemOutsidePricingBundle: async () => {},
+      summarizePurchasePricingStage, calculatePurchaseEstimate, assertItemOutsidePricingBundle: async () => {},
       purchaseOrders, purchaseOrderItems, users, procurementComments, buildItemRevisionComment, assertCatalogItemNameUnchanged, eq, queuePurchaseTranslation: vi.fn(), createTranslatedProcurementComment: vi.fn(), syncPathBTicketFromPurchaseOrder: vi.fn() };
     context.withPendingReviewItemWrite = vm.runInNewContext(expression("withPendingReviewItemWrite", true), context);
     context.syncIndependentPurchasePricingStage = vm.runInNewContext(expression("syncIndependentPurchasePricingStage", true), context);
@@ -258,8 +260,20 @@ describe("actual pricing API handlers cannot bypass workshop validation", () => 
     await expect(caller().estimateCost({ purchaseOrderId: 10, items: [{ id: 20, estimatedUnitCost: "50" }] })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(row("purchase_order_items", 20).status).toBe("pending");
     await caller().estimateCost({ purchaseOrderId: 10, items: [{ id: 20, estimatedUnitCost: "50", externalWorkshop: workshop }] });
-    expect(row("purchase_order_items", 20)).toMatchObject({ status: "estimated", estimatedTotalCost: "100" });
+    expect(row("purchase_order_items", 20)).toMatchObject({ status: "estimated", estimatedTotalCost: "100.00" });
     expect(row("external_maintenance_jobs", 40).workshopPhone).toBe(workshop.workshopPhone);
+  });
+  it("saves 12 units at the stored unit price and passes the unchanged DPB amount check", async () => {
+    f.memory.exec(`
+      UPDATE purchase_orders SET ticketId=NULL, ticketItemId=NULL WHERE id=10;
+      DELETE FROM external_maintenance_jobs WHERE purchaseOrderId=10;
+      UPDATE purchase_order_items SET quantity=12 WHERE id=20;
+    `);
+    await caller().estimateCost({ purchaseOrderId: 10, items: [{ id: 20, estimatedUnitCost: "3.8333333333" }] });
+
+    const saved = row("purchase_order_items", 20);
+    expect(saved).toMatchObject({ status: "estimated", estimatedUnitCost: "3.83", estimatedTotalCost: "45.96" });
+    expect(() => assertBundleItemEligible({ ...saved, purchaseOrderStatus: "pending_estimate" }, actor.id)).not.toThrow();
   });
   it("does not permit a quantity-only recalculation or price edit to avoid required workshop fields", async () => {
     f.memory.exec("UPDATE purchase_order_items SET status='estimated',estimatedUnitCost='50',estimatedTotalCost='100'");
@@ -267,7 +281,7 @@ describe("actual pricing API handlers cannot bypass workshop validation", () => 
     await expect(caller(owner).editItem({ id: 20, purchaseOrderId: 10, quantity: 3 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(row("purchase_order_items", 20).quantity).toBe(2);
     await caller(owner).editItem({ id: 20, purchaseOrderId: 10, quantity: 3, externalWorkshop: workshop });
-    expect(row("purchase_order_items", 20)).toMatchObject({ quantity: 3, estimatedTotalCost: "150" });
+    expect(row("purchase_order_items", 20)).toMatchObject({ quantity: 3, estimatedTotalCost: "150.00" });
   });
   it("does not make workshop data mandatory for a nonprice note edit", async () => {
     f.memory.exec("ALTER TABLE purchase_order_items ADD COLUMN notes TEXT");
@@ -282,7 +296,7 @@ describe("actual pricing API handlers cannot bypass workshop validation", () => 
     await expect(caller(creator).editAndResubmitReturnedItem(data)).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(row("purchase_order_items", 20).status).toBe("needs_item_revision");
     await caller(creator).editAndResubmitReturnedItem({ ...data, externalWorkshop: workshop });
-    expect(row("purchase_order_items", 20)).toMatchObject({ status: "pending", estimatedTotalCost: "110" });
+    expect(row("purchase_order_items", 20)).toMatchObject({ status: "pending", estimatedTotalCost: "110.00" });
     expect(row("external_maintenance_jobs", 40).expectedReturnDate).toBe(workshop.expectedReturnDate);
   });
 });
