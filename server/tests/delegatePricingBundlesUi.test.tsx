@@ -2,9 +2,13 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { pricingBundleText } from "../../client/src/i18n/pricingBundles";
+import ar from "../../client/src/i18n/ar";
+import en from "../../client/src/i18n/en";
+import ur from "../../client/src/i18n/ur";
+const translations = { ar, en, ur };
 const state = vi.hoisted(() => ({ language: "ar", role: "delegate", enabled: true, status: "open", member: false, pending: "", approved: false }));
 vi.mock("../../client/src/_core/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: 11, role: state.role, isActive: 1 } }) }));
-vi.mock("../../client/src/contexts/LanguageContext", () => ({ useTranslation: () => ({ language: state.language, dir: state.language === "en" ? "ltr" : "rtl" }) }));
+vi.mock("../../client/src/contexts/LanguageContext", () => ({ useTranslation: () => ({ language: state.language, dir: state.language === "en" ? "ltr" : "rtl", t: translations[state.language as keyof typeof translations] }) }));
 vi.mock("wouter", () => ({ useSearch: () => "", Link: ({ href, children, ...props }: any) => <a href={href} {...props}>{children}</a> }));
 vi.mock("../../client/src/lib/trpc", () => {
   const proxy = (path = ""): any => new Proxy(() => {}, { get(_target, key) {
