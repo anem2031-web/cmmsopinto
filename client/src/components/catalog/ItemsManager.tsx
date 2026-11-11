@@ -6,6 +6,7 @@ import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { isCatalogAdminRole, canManageCatalogItemLifecycle, canDeactivateCatalogItem, canCreateCatalogItem, canUpdateCatalogItem, canImportExportCatalog } from "@shared/roles";
+import { REQUIRE_CATALOG_IMAGE_ON_EDIT } from "@shared/catalog-item-image-policy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -441,7 +442,7 @@ export default function ItemsManager() {
       return;
     }
 
-    if (!selectedImage && !editingItem?.primaryImageUrl) {
+    if ((!editingItem || REQUIRE_CATALOG_IMAGE_ON_EDIT) && !selectedImage && !editingItem?.primaryImageUrl) {
       toast.error("صورة الصنف إلزامية؛ يرجى إضافة صورة قبل الحفظ");
       return;
     }
@@ -896,7 +897,11 @@ export default function ItemsManager() {
             <div className="space-y-1">
               <label className="text-sm font-medium">
                 صورة الصنف
-                <span className="text-destructive text-xs mr-2">(إلزامي)</span>
+                {!editingItem || REQUIRE_CATALOG_IMAGE_ON_EDIT ? (
+                  <span className="text-destructive text-xs mr-2">(إلزامي)</span>
+                ) : (
+                  <span className="text-muted-foreground text-xs mr-2">(اختياري)</span>
+                )}
               </label>
               <Input
                 type="file"

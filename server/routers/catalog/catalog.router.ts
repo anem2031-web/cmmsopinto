@@ -18,6 +18,7 @@ import { z } from "zod";
 import { getTableColumns, eq, and, or, like, ne, count, desc, asc, inArray, sql, gte, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { APP_ROLE } from "@shared/roles";
+import { REQUIRE_CATALOG_IMAGE_ON_EDIT } from "@shared/catalog-item-image-policy";
 import { getDb } from "../../_core/db";
 
 import {
@@ -1136,7 +1137,9 @@ create: catalogItemManagerProcedure
         }
 
         await (db as any).transaction(async (tx: any) => {
-          await saveRequiredCatalogImage(tx, id, ctx.user.id, image, false, catalogAuditRequestMeta(ctx));
+          if (image || REQUIRE_CATALOG_IMAGE_ON_EDIT) {
+            await saveRequiredCatalogImage(tx, id, ctx.user.id, image, false, catalogAuditRequestMeta(ctx));
+          }
           await tx.update(catalogItems).set(updateData).where(eq(catalogItems.id, id));
           await tx.insert(catalogAuditLogs).values({
             userId: ctx.user.id,

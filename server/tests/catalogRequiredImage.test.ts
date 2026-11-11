@@ -6,6 +6,7 @@ import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { router, catalogProcedure, catalogItemManagerProcedure, catalogItemUpdateProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure } from "../routers/_shared/procedures";
 import { APP_ROLE } from "../../shared/roles";
+import { REQUIRE_CATALOG_IMAGE_ON_EDIT } from "../../shared/catalog-item-image-policy";
 import { catalogItems, attachments, auditLogs, catalogAuditLogs } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { catalogItemImageSchema, assertCatalogImageUpload, saveRequiredCatalogImage } from "../routers/catalog/item-image";
@@ -51,7 +52,7 @@ function actualItemProcedure(name: string) {
   if (!code) throw Error(`Missing catalog items ${name}`);
   return vm.runInNewContext(ts.transpileModule(`(${code})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText,
     { z, TRPCError, catalogProcedure, catalogItemManagerProcedure, catalogItemUpdateProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure, APP_ROLE, eq, catalogItems, catalogAuditLogs,
-      catalogItemImageSchema, assertCatalogImageUpload, saveRequiredCatalogImage, getDb: async () => db,
+      catalogItemImageSchema, assertCatalogImageUpload, saveRequiredCatalogImage, REQUIRE_CATALOG_IMAGE_ON_EDIT, getDb: async () => db,
       assertActiveCatalogMasterUnit: async (_db: any, unit: string) => unit,
       assertActiveCatalogNodePath: async () => {},
       getLeafCategoryCodeState: async () => ({ node: { code: "7" }, code: "7-001" }),
@@ -68,7 +69,7 @@ function caller(role = "admin", id = 9, isActive = 1) {
 }
 beforeEach(() => { rows = []; files = []; audits = []; failImage = false; });
 
-describe("manual catalog item save with required image", () => {
+describe("manual catalog item save and image handling", () => {
   it("rejects create without image before any item is persisted", async () => {
     const { image: _, ...without } = input;
     await expect(caller().create(without as any)).rejects.toMatchObject({ code: "BAD_REQUEST" });
@@ -151,16 +152,21 @@ describe("manual catalog item save with required image", () => {
     expect(rows).toEqual([]); expect(files).toEqual([]); expect(audits).toEqual([]);
     failImage = false; await caller().create(input); expect(rows).toHaveLength(1);
   });
-  it("rejects editing old imageless item and keeps its data unchanged", async () => {
+  it("saves an existing item without an image and attaches an optional image when provided", async () => {
     rows = [{ id: 1, nodeId: 7, nameAr: "الأصل", code: "7-001" }];
-    await expect(caller().update({ id: 1, nameAr: "غير محفوظ" })).rejects.toThrow("صورة الصنف إلزامية");
-    expect(rows[0].nameAr).toBe("الأصل");
+    await caller().update({ id: 1, nameAr: "تعديل بدون صورة" });
+    expect(rows[0].nameAr).toBe("تعديل بدون صورة");
+    expect(files).toHaveLength(0);
+    expect(audits.at(-1)).toMatchObject({ action: "update", entityId: 1 });
     await caller().update({ id: 1, nameAr: "محفوظ", image });
     expect(rows[0].nameAr).toBe("محفوظ"); expect(rows[0]).not.toHaveProperty("image");
+    expect(files).toHaveLength(1);
   });
-  it("does not count an existing PDF as an image", async () => {
+  it("preserves an existing PDF when saving an item without an image", async () => {
     rows = [{ id: 1, nodeId: 7 }]; files = [{ fileName: "manual.pdf", mimeType: "application/pdf" }];
-    await expect(caller().update({ id: 1, nameAr: "edit" })).rejects.toThrow("صورة الصنف إلزامية");
+    await caller().update({ id: 1, nameAr: "edit" });
+    expect(rows[0].nameAr).toBe("edit");
+    expect(files).toEqual([{ fileName: "manual.pdf", mimeType: "application/pdf" }]);
   });
   it("accepts historical image with absent mime without rewriting it", async () => {
     rows = [{ id: 1, nodeId: 7 }]; files = [{ fileName: "old.JPG", mimeType: null }];
@@ -193,7 +199,7 @@ describe("actual catalog dialog save handler", () => {
     const state: any = {
       selectedNode: { id: 7, code: "7" }, catalogNodes: [{ id: 7, code: "7" }],
       formData: { nameAr: "صنف", nameEn: "Item", unit: "piece" }, customCode: "", codeEdited: false,
-      editingItem: null, selectedImage: null, codePreviewQuery: {},
+      editingItem: null, selectedImage: null, codePreviewQuery: {}, REQUIRE_CATALOG_IMAGE_ON_EDIT,
       t: { catalog: { validation: { requiredFields: "required" } } },
       toast: { error: vi.fn(), success: vi.fn() },
       setIsSavingItem: vi.fn(), setImageSaveStage: vi.fn(), setImageUploadProgress: vi.fn(), setImageSaveMessage: vi.fn(),
@@ -206,12 +212,15 @@ describe("actual catalog dialog save handler", () => {
       compilerOptions: { target: ts.ScriptTarget.ES2022 },
     }).outputText, state) };
   }
-  it("blocks imageless create/edit without upload or mutation", async () => {
-    for (const editingItem of [null, { id: 1 }]) {
-      const u = ui({ editingItem }); await u.save();
-      expect(u.state.toast.error).toHaveBeenCalledWith(expect.stringContaining("إلزامية"));
-      expect(u.events).toEqual([]);
-    }
+  it("blocks creation without an image and saves an existing imageless item without uploading", async () => {
+    const create = ui(); await create.save();
+    expect(create.state.toast.error).toHaveBeenCalledWith(expect.stringContaining("إلزامية"));
+    expect(create.events).toEqual([]);
+
+    const edit = ui({ editingItem: { id: 1 } }); await edit.save();
+    expect(edit.events).toEqual(["update"]);
+    expect(edit.state.updateMut.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: 1, image: undefined }));
+    expect(edit.state.setIsDialogOpen).toHaveBeenCalledWith(false);
   });
   it("uploads before creating and passes image in the same item mutation", async () => {
     const u = ui({ selectedImage: { name: "photo.png", type: "image/png", size: 100 } });
