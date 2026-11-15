@@ -22,14 +22,16 @@ import {
 import TaxonomyManager from "@/components/catalog/TaxonomyManager";
 import ItemsManager from "@/components/catalog/ItemsManager";
 import CatalogSettings from "@/components/catalog/CatalogSettings";
+import CatalogIntegrationTokens from "@/components/catalog/CatalogIntegrationTokens";
 import CatalogItemCandidatesManager from "@/components/catalog/CatalogItemCandidatesManager";
 import UnitsManager from "@/components/catalog/UnitsManager";
 import SmartSearch from "@/components/catalog/SmartSearch";
 
 export default function CatalogDashboard() {
   const { t } = useTranslation();
-  const { user, loading } = useAuth();
+  const { user, authenticatedUser, loading } = useAuth();
   const canViewAdministrationTabs = isOwnerOrAdminRole(user?.role);
+  const canManageIntegrationTokens = authenticatedUser?.isActive === 1 && isOwnerOrAdminRole(authenticatedUser.role);
   const itemsOnly = user?.role === "it_manager";
   const [activeTab, setActiveTab] = useState(!user || canViewAdministrationTabs ? "overview" : "items");
   const [searchQuery, setSearchQuery] = useState("");
@@ -181,7 +183,8 @@ export default function CatalogDashboard() {
 
         {/* Settings Tab — owner/admin only */}
         {canViewAdministrationTabs && (
-          <TabsContent value="settings">
+          <TabsContent value="settings" className="space-y-6">
+            {canManageIntegrationTokens && <CatalogIntegrationTokens key={authenticatedUser?.id} />}
             <CatalogSettings />
           </TabsContent>
         )}

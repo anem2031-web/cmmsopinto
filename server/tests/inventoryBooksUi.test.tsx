@@ -230,6 +230,25 @@ it("supplier return offers only the selected receipt lot and retains supplier/da
     })
   );
 });
+it("offers printing only when requested and passes the selected lot's own tracking token", () => {
+  const print = vi.fn();
+  const view = <InventoryBooks layout="table" warehouseId={1} onPrintLot={print} />;
+  render(view);
+  state.buttons
+    .find(button => button["aria-label"] === "تفاصيل دفتر دجاج 1100 جم")
+    .onClick();
+  render(view);
+  const buttons = state.buttons.filter(button => button.children === "عرض / طباعة QR");
+  expect(buttons.map(button => button.disabled)).toEqual([true, false, true]);
+  buttons[1].onClick();
+  expect(print).toHaveBeenCalledWith(expect.objectContaining({
+    lot: expect.objectContaining({ lotId: 2, lotCode: "LOT-NEW", trackingToken: "new-token" }),
+    page: expect.objectContaining({ id: 200 }),
+  }));
+  state.values = [];
+  render(<InventoryBookPages catalogItemId={9} />);
+  expect(state.buttons.some(button => button.children === "عرض / طباعة QR")).toBe(false);
+});
 it("passes the catalog unit and stock record to the opt-in warehouse unit action", () => {
   const actions = vi.fn(() => <span>إجراء الوحدة</span>);
   const view = (

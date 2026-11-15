@@ -548,7 +548,7 @@ export default function Inventory() {
   }, [searchQuery, searchMode, selectedWarehouseId, selectedCatalogNodeId, sortBy, dateFrom, dateTo, hideZeroStock]);
 
   if (printLotQr) {
-    return <LotLabelsPrintScreen items={[printLotQr]} onDone={() => setPrintLotQr(null)} />;
+    return <LotLabelsPrintScreen items={[printLotQr]} hideLotDetails onDone={() => setPrintLotQr(null)} />;
   }
 
   // ── بحث تزايدي: يطابق أي حقل ظاهر في صف الصنف ──
@@ -785,6 +785,16 @@ export default function Inventory() {
 
       {selectedWarehouseId && lotsEnabled && <InventoryBooks layout="table" warehouseId={Number(selectedWarehouseId)} search={searchQuery} includeZero={!hideZeroStock} sort={sortBy} dateFrom={dateFrom} dateTo={dateTo}
         nodeIds={bookNodeIds}
+        onPrintLot={({ lot, page }) => setPrintLotQr({
+          lotId: Number(lot.lotId),
+          lotCode: lot.lotCode,
+          trackingToken: lot.trackingToken,
+          itemName: lot.supplierItemName || page.itemName,
+          quantity: Number(lot.originalQuantity || 0),
+          unit: lot.issueUnit || lot.purchaseUnit || page.unit || undefined,
+          sourceType: lot.sourceType,
+          receiptNumber: lot.receiptNumber || undefined,
+        })}
         renderIssueUnitActions={canManageIssueUnit ? renderIssueUnitActions : undefined}
         onFifo={isOwnerOrAdminRole(user?.role) && Number(user?.isActive) === 1 && lotsEnabled ? openBookDelivery : undefined}
         onPick={isWarehouse && lotsEnabled ? async ({lot,page,master}) => {

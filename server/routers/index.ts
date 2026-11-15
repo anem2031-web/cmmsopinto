@@ -79,6 +79,7 @@ import { backupsRouter } from "./system/backups.router";
 import { preventiveRouter } from "./system/preventive.router";
 import { pmPlansRouter } from "./system/pmPlans.router";
 import { catalogRouter } from "./catalog/catalog.router";
+import { catalogIntegrationTokensRouter } from "./catalog/integration-tokens.router";
 import { improvementIdeasRouter } from "./improvement-ideas/improvement-ideas.router";
 import { constructionRouter } from "./construction/index";
 import { externalMaintenanceRouter } from "./external-maintenance/external-maintenance.router";
@@ -166,6 +167,7 @@ purchaseOrders: router({
 
   // ── وحدة الكتالوج المستقلة ──
   catalog: catalogRouter,
+  catalogIntegrationTokens: catalogIntegrationTokensRouter,
 
   // ── مركز التحسين والتطوير ──
   improvementIdeas: improvementIdeasRouter,

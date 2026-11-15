@@ -34,9 +34,11 @@ function QRCodeCanvas({ value, size = 110 }: { value: string; size?: number }) {
 export default function LotLabelsPrintScreen({
   items,
   onDone,
+  hideLotDetails = false,
 }: {
   items: LotLabelItem[];
   onDone: () => void;
+  hideLotDetails?: boolean;
 }) {
   return (
     <div className="min-h-screen bg-gray-100 p-4" dir="rtl">
@@ -47,7 +49,7 @@ export default function LotLabelsPrintScreen({
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => void printInventoryLabels(items).catch(error => toast.error(error.message))}
+            onClick={() => void (hideLotDetails ? printInventoryLabels(items, { hideLotDetails: true }) : printInventoryLabels(items)).catch(error => toast.error(error.message))}
             className="bg-black text-white px-4 py-2 rounded-lg text-sm font-medium"
           >
             🖨️ طباعة الملصقات
@@ -86,12 +88,14 @@ export default function LotLabelsPrintScreen({
                 {item.lotCode}
               </div>
               <div style={{ fontSize: "10px", lineHeight: 1.25, marginTop: "3px" }}>{item.itemName}</div>
-              <div style={{ fontSize: "9px", marginTop: "3px" }}>
-                {item.quantity} {item.unit || ""}
-              </div>
-              <div style={{ fontSize: "8px", color: "#555", marginTop: "2px" }}>
-                {item.sourceType === "opening_balance" ? "رصيد افتتاحي" : "دفعة استلام"}
-              </div>
+              {!hideLotDetails && <>
+                <div style={{ fontSize: "9px", marginTop: "3px" }}>
+                  {item.quantity} {item.unit || ""}
+                </div>
+                <div style={{ fontSize: "8px", color: "#555", marginTop: "2px" }}>
+                  {item.sourceType === "opening_balance" ? "رصيد افتتاحي" : "دفعة استلام"}
+                </div>
+              </>}
             </div>
           </div>
         ))}

@@ -11,12 +11,14 @@ export function InventoryBookPages({
   catalogItemId,
   warehouseId,
   onPick,
+  onPrintLot,
   renderIssueUnitActions,
   supplierReturn = false,
 }: {
   catalogItemId: number;
   warehouseId?: number;
   onPick?: (selection: BookLotSelection) => void;
+  onPrintLot?: (selection: BookLotSelection) => void;
   renderIssueUnitActions?: (item: InventoryIssueUnitItem) => ReactNode;
   supplierReturn?: boolean;
 }) {
@@ -91,6 +93,16 @@ export function InventoryBookPages({
                   الاستلام: {lot.receiptNumber || "—"}
                 </p>
               </div>
+              {onPrintLot && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!lot.trackingToken}
+                  onClick={() => onPrintLot({ lot, page, master: result.data?.master })}
+                >
+                  عرض / طباعة QR
+                </Button>
+              )}
               {onPick && (
                 <Button
                   size="sm"
@@ -155,6 +167,7 @@ export function InventoryBooks({
   search: externalSearch,
   includeZero = false,
   onPick,
+  onPrintLot,
   onFifo,
   renderIssueUnitActions,
   supplierReturn = false,
@@ -174,6 +187,7 @@ export function InventoryBooks({
   includeZero?: boolean;
   supplierReturn?: boolean;
   onPick?: (selection: BookLotSelection) => void;
+  onPrintLot?: (selection: BookLotSelection) => void;
   onFifo?: (book: any, unit: string) => void;
   renderIssueUnitActions?: (item: InventoryIssueUnitItem) => ReactNode;
 }) {
@@ -390,6 +404,7 @@ export function InventoryBooks({
                             catalogItemId={book.id}
                             warehouseId={warehouseId}
                             onPick={onPick}
+                            onPrintLot={onPrintLot}
                             renderIssueUnitActions={renderIssueUnitActions}
                             supplierReturn={supplierReturn}
                           />
@@ -457,6 +472,7 @@ export function InventoryBooks({
                 catalogItemId={book.id}
                 warehouseId={warehouseId}
                 onPick={onPick}
+                onPrintLot={onPrintLot}
                 renderIssueUnitActions={renderIssueUnitActions}
                 supplierReturn={supplierReturn}
               />

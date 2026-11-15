@@ -17,6 +17,7 @@ const serverEnvSchema = z.object({
   DEEPSEEK_API_URL: z.string().url().optional(),
   DEEPSEEK_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
+  CATALOG_INTEGRATION_PUBLIC_ORIGIN: z.string().trim().optional(),
   VITE_APP_ID: z.string().optional(),
 });
 

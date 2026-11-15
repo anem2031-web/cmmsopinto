@@ -13,7 +13,7 @@ export type PrintableInventoryLabel = {
 const escape = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!));
 
 /** The print document contains labels only; app layout and global print CSS cannot add pages. */
-export function inventoryLabelsHtml(labels: Array<PrintableInventoryLabel & { qrImage: string }>) {
+export function inventoryLabelsHtml(labels: Array<PrintableInventoryLabel & { qrImage: string }>, options?: { hideLotDetails?: boolean }) {
   return `<!doctype html><html lang="ar"><head><meta charset="utf-8"><title>ملصقات المخزون</title><style>
     @page { size: 58mm 38mm; margin: 0; }
     * { box-sizing: border-box; }
@@ -25,10 +25,10 @@ export function inventoryLabelsHtml(labels: Array<PrintableInventoryLabel & { qr
     .code { font-family: monospace; font-weight: bold; font-size: 10px; direction: ltr; }
     .name { font-size: 10px; line-height: 1.3; max-height: 18mm; overflow: hidden; margin-top: 2px; }
     .meta { font-size: 8px; margin-top: 3px; }
-  </style></head><body>${labels.map(label => `<section class="label"><img src="${escape(label.qrImage)}" alt="QR"><div class="text"><div class="code">${escape(label.lotCode || label.manufacturerBarcode || label.internalCode)}</div><div class="name">${escape(label.itemName)}</div>${label.trackingToken ? `<div class="meta">${label.sourceType === "opening_balance" ? "رصيد افتتاحي" : "دفعة استلام"} — ${escape(label.quantity)} ${escape(label.unit)}</div>` : ""}</div></section>`).join("")}</body></html>`;
+  </style></head><body>${labels.map(label => `<section class="label"><img src="${escape(label.qrImage)}" alt="QR"><div class="text"><div class="code">${escape(label.lotCode || label.manufacturerBarcode || label.internalCode)}</div><div class="name">${escape(label.itemName)}</div>${label.trackingToken && !options?.hideLotDetails ? `<div class="meta">${label.sourceType === "opening_balance" ? "رصيد افتتاحي" : "دفعة استلام"} — ${escape(label.quantity)} ${escape(label.unit)}</div>` : ""}</div></section>`).join("")}</body></html>`;
 }
 
-export async function printInventoryLabels(items: PrintableInventoryLabel[]) {
+export async function printInventoryLabels(items: PrintableInventoryLabel[], options?: { hideLotDetails?: boolean }) {
   if (items.length === 0) return;
   // Open synchronously from the user's click, before asynchronous QR generation.
   const target = window.open("", "_blank");
@@ -36,7 +36,7 @@ export async function printInventoryLabels(items: PrintableInventoryLabel[]) {
   target.opener = null;
   try {
     const labels = await Promise.all(items.map(async (item, index) => ({ ...item, qrImage: await QRCode.toDataURL(item.trackingToken || item.manufacturerBarcode || item.internalCode || String(index), { width: 240, margin: 1, errorCorrectionLevel: "M" }) })));
-    target.document.open(); target.document.write(inventoryLabelsHtml(labels)); target.document.close();
+    target.document.open(); target.document.write(inventoryLabelsHtml(labels, options)); target.document.close();
     await Promise.all(Array.from(target.document.images).map(image => image.decode()));
     target.addEventListener("afterprint", () => target.close(), { once: true });
     target.focus(); target.print();

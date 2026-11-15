@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import ar from "../../client/src/i18n/ar";
 import { canDeactivateCatalogItem, canManageCatalogItemLifecycle, canRoleAccessPath, isCatalogAdminRole } from "../../shared/roles";
-const fixture = vi.hoisted(() => ({ role: "it_manager", queries: [] as any[], authLoading: false, authenticated: true,
+const fixture = vi.hoisted(() => ({ role: "it_manager", queries: [] as any[], authLoading: false, authenticated: true, isActive: 1,
   lifecycle: false, values: [] as any[], stateIndex: 0, effects: [] as Array<() => void> }));
 vi.mock("react", async original => {
   const react = await original<typeof import("react")>();
@@ -21,11 +21,23 @@ vi.mock("react", async original => {
     },
   };
 });
-vi.mock("../../client/src/_core/hooks/useAuth", () => ({ useAuth: () => ({ user: fixture.authenticated ? { id: 9, role: fixture.role, isActive: 1 } : null, loading: fixture.authLoading }) }));
+vi.mock("../../client/src/_core/hooks/useAuth", () => ({ useAuth: () => {
+  const authenticatedUser = fixture.authenticated ? { id: 9, role: fixture.role, isActive: fixture.isActive } : null;
+  const user = authenticatedUser && fixture.role === "observer" ? { ...authenticatedUser, role: "admin" } : authenticatedUser;
+  return { user, authenticatedUser, loading: fixture.authLoading };
+} }));
 vi.mock("../../client/src/contexts/LanguageContext", () => ({ useTranslation: () => ({ t: ar, language: "ar" }) }));
 vi.mock("../../client/src/lib/trpc", () => {
   const proxy = (path = ""): any => new Proxy({}, { get(_, key) {
-    if (key === "useQuery") return (_input: any, options: any) => { fixture.queries.push({ path, options }); return { data: undefined }; };
+    if (key === "useUtils") return () => proxy();
+    if (key === "useMutation") return () => ({ isPending: false });
+    if (key === "useQuery") return (_input: any, options: any) => {
+      fixture.queries.push({ path, options });
+      return { data: path === "catalogIntegrationTokens.list" ? [
+        { id: 1, name: "PSCM", createdAt: "2026-11-15T06:00:00Z", revokedAt: null, token: "secret-must-not-render" },
+        { id: 2, name: "ERP", createdAt: "2026-11-14T06:00:00Z", revokedAt: "2026-11-15T06:00:00Z" },
+      ] : undefined };
+    };
     return proxy(path ? `${path}.${String(key)}` : String(key));
   } }); return { trpc: proxy() };
 });
@@ -105,6 +117,37 @@ describe("IT manager item-only Catalog presentation", () => {
     expect(html.includes('data-tab="overview"')).toBe(isCatalogAdminRole(role));
     expect(html.includes('data-tab="settings"')).toBe(isCatalogAdminRole(role));
     expect(canManageCatalogItemLifecycle(role)).toBe(true);
+  });
+  it.each(["owner", "admin"])("shows %s token metadata and one revoke action without rendering secrets", role => {
+    fixture.role = role;
+    fixture.queries = [];
+    const html = renderToStaticMarkup(<CatalogDashboard />);
+    expect(html).toContain("ربط الكتالوج");
+    expect(html).toContain("إنشاء رمز ربط");
+    expect(html).toContain("PSCM");
+    expect(html).toContain("ERP");
+    expect(html).toContain("ملغى");
+    expect(html.match(/إلغاء الرمز/g)).toHaveLength(1);
+    expect(html).not.toContain("secret-must-not-render");
+    expect(fixture.queries.filter(row => row.path === "catalogIntegrationTokens.list")).toHaveLength(1);
+  });
+  it.each(["senior_management", "maintenance_manager", "warehouse", "it_manager", "observer"])("avoids mounting integration queries for %s", role => {
+    fixture.role = role;
+    fixture.queries = [];
+    const html = renderToStaticMarkup(<CatalogDashboard />);
+    expect(html).not.toContain("ربط الكتالوج");
+    expect(fixture.queries.some(row => row.path === "catalogIntegrationTokens.list")).toBe(false);
+  });
+  it("avoids mounting integration queries for an inactive administrator", () => {
+    fixture.role = "admin";
+    fixture.queries = [];
+    fixture.isActive = 0;
+    try {
+      expect(renderToStaticMarkup(<CatalogDashboard />)).not.toContain("ربط الكتالوج");
+      expect(fixture.queries.some(row => row.path === "catalogIntegrationTokens.list")).toBe(false);
+    } finally {
+      fixture.isActive = 1;
+    }
   });
   it.each(["it_member", "technician", "operator", "accountant", "delegate"])("does not grant %s catalog or item deactivation access", role => {
     expect(canRoleAccessPath(role, "/catalog")).toBe(false);

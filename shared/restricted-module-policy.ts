@@ -20,6 +20,7 @@ export function isOwnerAdminOnlyPage(rawPath: string): boolean {
 
 export function isOwnerAdminOnlyRpc(path: string): boolean {
   return path === "warehouseReceiptsV2.receiveStandaloneV2"
+    || path === "catalogIntegrationTokens" || path.startsWith("catalogIntegrationTokens.")
     || path === "construction" || path.startsWith("construction.")
     || path === "preventive" || path.startsWith("preventive.");
 }

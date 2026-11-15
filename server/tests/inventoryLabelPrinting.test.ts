@@ -6,6 +6,13 @@ import fs from "node:fs";
 afterEach(()=>{vi.unstubAllGlobals();vi.clearAllMocks();});
 const item={itemName:"فلتر <script>bad()</script>",lotCode:"LOT-2026-00001",trackingToken:"CMMS-LOT-canonical",quantity:2,unit:"حبة"};
 describe("Standalone inventory label printing",()=>{
+  it("prints only the code and name when inventory requests a simplified lot label",()=>{
+    const label={...item,sourceType:"opening_balance",qrImage:"data:image/png;base64,AA=="};
+    const html=inventoryLabelsHtml([label],{hideLotDetails:true});
+    expect(html).toContain(item.lotCode);expect(html).toContain("فلتر");expect(html).toContain('alt="QR"');
+    expect(html).not.toContain('<div class="meta">');expect(html).not.toContain("رصيد افتتاحي");
+    expect(inventoryLabelsHtml([label])).toContain("رصيد افتتاحي");
+  });
   it.each([1,2,10])("renders %i labels with breaks only between them",count=>{
     const html=inventoryLabelsHtml(Array.from({length:count},()=>({...item,qrImage:"data:image/png;base64,AA=="})));
     expect(html.match(/<section /g)).toHaveLength(count);expect(html).toContain("size: 58mm 38mm; margin: 0");expect(html).toContain(".label + .label");expect(html).not.toContain("break-after: always");expect(html).not.toContain("<script>");expect(html).toContain("&lt;script&gt;");

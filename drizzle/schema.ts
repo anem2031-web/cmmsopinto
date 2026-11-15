@@ -536,6 +536,18 @@ export const catalogUnits = mysqlTable("catalog_units", {
 	createdAt: timestamp({ mode: 'string' }).default('CURRENT_TIMESTAMP').notNull(),
 });
 
+export const catalogIntegrationTokens = mysqlTable("catalog_integration_tokens", {
+	id: int().autoincrement().primaryKey(),
+	name: varchar({ length: 100 }).notNull(),
+	tokenHash: varchar({ length: 64 }).notNull(),
+	createdById: int().notNull(),
+	createdAt: timestamp({ mode: "string" }).defaultNow().notNull(),
+	revokedById: int(),
+	revokedAt: timestamp({ mode: "string" }),
+}, table => [
+	uniqueIndex("catalog_integration_token_hash_uq").on(table.tokenHash),
+]);
+
 export const constructionActivities = mysqlTable("construction_activities", {
 	id: int().autoincrement().notNull(),
 	phaseId: int().notNull().references(() => constructionPhases.id, { onDelete: "cascade" } ),
