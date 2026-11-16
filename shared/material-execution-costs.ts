@@ -32,6 +32,40 @@ function roundedDivide(value: bigint, divisor: bigint): bigint {
 }
 const money = (cents: bigint) => Number(cents) / 100;
 
+function cumulativeReturnCost(returnedQuantity: bigint, quantity: bigint, price: bigint, allocated: bigint) {
+  // A full return absorbs the fractional-cent remainder of the recorded allocation.
+  return returnedQuantity === quantity ? allocated : roundedDivide(returnedQuantity * price, BigInt(100000));
+}
+
+export function materialAllocationCents(snapshot: {
+  quantity: number | string;
+  allocations: { quantity: number | string; lotUnitCost: number | string | null; allocatedValue: number | string | null }[];
+  returnedQuantity: number | string;
+}) {
+  const quantity = scaled(snapshot.quantity, 3);
+  const returned = scaled(snapshot.returnedQuantity, 3);
+  const zero = BigInt(0);
+  if (quantity == null || quantity <= zero || returned == null || returned > quantity) return null;
+  let allocated = zero;
+  let allocatedQuantity = zero;
+  let price: bigint | null = null;
+  for (const allocation of snapshot.allocations) {
+    const amount = scaled(allocation.allocatedValue, 2);
+    const allocatedUnits = scaled(allocation.quantity, 3);
+    const unitPrice = scaled(allocation.lotUnitCost, 4);
+    if (amount == null || allocatedUnits == null || allocatedUnits <= zero || unitPrice == null ||
+      (price != null && unitPrice !== price)) return null;
+    price = unitPrice;
+    allocatedQuantity += allocatedUnits;
+    allocated += amount;
+  }
+  if (price == null || allocatedQuantity !== quantity) return null;
+  const credit = cumulativeReturnCost(returned, quantity, price, allocated);
+  const issuedCents = Number(allocated);
+  if (!Number.isSafeInteger(issuedCents) || credit > allocated) return null;
+  return { issuedCents, returnedCents: Number(credit) };
+}
+
 /** One movement is counted once even if multiple workflow references return it.
  * Returns use the ORIGINAL allocation snapshot, not today's lot/average cost.
  * Period filters apply to each physical event, never to the PO or ticket date.
@@ -66,8 +100,7 @@ export function materialCostEvents(issues: MaterialCostIssue[], period: { from?:
       let delta = BigInt(0);
       if (validReturn) {
         returnedQuantity += qty!;
-        // Last return absorbs fractional-cent residue so a full return nets zero.
-        const cumulativeValue = returnedQuantity === quantity ? allocated! : roundedDivide(returnedQuantity * price!, BigInt(100000));
+        const cumulativeValue = cumulativeReturnCost(returnedQuantity, quantity!, price!, allocated!);
         delta = cumulativeValue - returnedValue;
         returnedValue = cumulativeValue;
       }

@@ -60,19 +60,26 @@ const createFulfillment = () => vi.fn(async (_instance: string, _requisitions: n
   items: [{ requisitionId: 21, sequence: 1, unit: "قطعة", receivedQuantity: 5,
     readyQuantity: 3, issuedQuantity: 2, deliveries: [{ number: "DLV-2026-0001", quantity: 2 }] }],
 }));
+const createMaterialCosts = () => vi.fn(async (_instance: string, _requisitions: number[]) => ({
+  requisitions: [{ requisitionId: 21, complete: true, deliveries: [
+    { number: "DLV-2026-0001", sequence: 1, issuedCents: 240, returnedCents: 60 },
+  ] }],
+}));
 
 async function withHttpServer(
   check: (
     url: string,
     ingest: ReturnType<typeof createIngest>,
-    fulfillment: ReturnType<typeof createFulfillment>
+    fulfillment: ReturnType<typeof createFulfillment>,
+    materialCosts: ReturnType<typeof createMaterialCosts>
   ) => Promise<void>,
   config: Parameters<typeof registerPscmPurchaseRequestRoutes>[1] = settings
 ) {
   const app = express();
   const ingest = createIngest();
   const fulfillment = createFulfillment();
-  registerPscmPurchaseRequestRoutes(app, config, ingest, fulfillment);
+  const materialCosts = createMaterialCosts();
+  registerPscmPurchaseRequestRoutes(app, config, ingest, fulfillment, materialCosts);
   app.use(express.json({ limit: "1mb" }));
   const server = await new Promise<ReturnType<typeof app.listen>>(
     (resolve, reject) => {
@@ -85,7 +92,8 @@ async function withHttpServer(
     await check(
       `http://127.0.0.1:${port}/api/v1/pscm/purchase-requests`,
       ingest,
-      fulfillment
+      fulfillment,
+      materialCosts
     );
   } finally {
     await new Promise<void>((resolve, reject) =>
@@ -118,6 +126,25 @@ async function expectError(response: Response, status: number, error: string) {
 }
 
 describe("PSCM purchase request HTTP API", () => {
+  it("keeps material cost data private and scopes it to the configured integration", async () => {
+    await withHttpServer(async (url, ingest, fulfillment, materialCosts) => {
+      const path = new URL("material-costs", url).href;
+      const payload = { instanceId: settings.instanceId, requisitionIds: [21] };
+      await expectError(await send(path, "{", { Authorization: "" }), 401, "invalid_purchase_token");
+      await expectError(await send(path, JSON.stringify({ ...payload, instanceId: "another" })), 403, "invalid_source_instance");
+      await expectError(await send(path, JSON.stringify({ ...payload, requisitionIds: Array(101).fill(21) })), 400, "invalid_payload");
+      expect(materialCosts).not.toHaveBeenCalled();
+      const response = await send(path, JSON.stringify(payload), { "Idempotency-Key": "" });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(response.headers.get("Vary")).toContain("Authorization");
+      expect(await response.json()).toMatchObject({ requisitions: [{ deliveries: [{ issuedCents: 240, returnedCents: 60 }] }] });
+      expect(materialCosts).toHaveBeenCalledWith(settings.instanceId, [21]);
+      expect(ingest).not.toHaveBeenCalled();
+      expect(fulfillment).not.toHaveBeenCalled();
+    });
+  });
+
   it("returns fulfillment only for the authenticated PSCM instance", async () => {
     await withHttpServer(async (url, ingest, fulfillment) => {
       const path = new URL("fulfillment", url).href;
