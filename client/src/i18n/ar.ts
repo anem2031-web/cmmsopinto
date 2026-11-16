@@ -449,6 +449,7 @@ const ar = {
     justification: "المبررات",
     requestedBy: "مقدم الطلب",
     relatedTicket: "البلاغ المرتبط",
+    relatedPscmRequisition: "طلب الاحتياج المرتبط من PSCM",
     requestContext: "بيانات الموقع والتصنيف",
     locationSectionRequired: "يجب اختيار الموقع والقسم",
     validationSiteRequired: "يرجى اختيار الموقع.",

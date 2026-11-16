@@ -361,8 +361,16 @@ export async function updateUserRole(userId: number, role: string) {
 // ============================================================
 // PURCHASE ORDERS
 // ============================================================
-export async function getNextPONumber() {
-  const db = await getDb();
+const {
+  sourceInstanceId: _sourceInstanceId,
+  sourceRequestId: _sourceRequestId,
+  sourcePayloadHash: _sourcePayloadHash,
+  sourceRequesterName: sourceRequesterNameColumn,
+  ...purchaseOrderReadColumns
+} = getTableColumns(purchaseOrders);
+
+export async function getNextPONumber(tx?: any) {
+  const db = tx || await getDb();
   if (!db) return "PR-2026-0001";
   const year = new Date().getFullYear();
   const prefix = `PR-${year}-`;
@@ -459,6 +467,8 @@ export async function getPurchaseOrders(filters?: {
 .select({
       id: purchaseOrders.id,
       poNumber: purchaseOrders.poNumber,
+      sourceSystem: purchaseOrders.sourceSystem,
+      sourceReference: purchaseOrders.sourceReference,
       ticketId: purchaseOrders.ticketId,
       status: purchaseOrders.status,
       requestedById: purchaseOrders.requestedById,
@@ -631,7 +641,8 @@ export async function getPurchaseOrderById(id: number, tx?: any) {
   const managementApprover = alias(users, "managementApprover");
   const result = await db
     .select({
-      ...getTableColumns(purchaseOrders),
+      ...purchaseOrderReadColumns,
+      sourceRequesterName: sourceRequesterNameColumn,
       reviewedByName: reviewer.name,
       accountingApprovedByName: accountingApprover.name,
       managementApprovedByName: managementApprover.name,
@@ -1775,7 +1786,8 @@ export async function getPurchasePackageById(id: number) {
 export async function getPurchaseOrdersByPackage(packageId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(purchaseOrders).where(eq(purchaseOrders.packageId, packageId)).orderBy(purchaseOrders.id);
+  return db.select(purchaseOrderReadColumns).from(purchaseOrders)
+    .where(eq(purchaseOrders.packageId, packageId)).orderBy(purchaseOrders.id);
 }
 
 export async function getPurchasePackagesList() {
@@ -2335,7 +2347,7 @@ export async function getPurchaseCards(filters?: { delegateId?: number }) {
   // 1) الطلبات ذات الصلة: كل الطلبات، أو (لو دُعم لاحقًا) طلبات مفلترة
   //    بحسب صلاحية المستدعي — الفلترة بحسب الدور تبقى في طبقة الراوتر
   //    كما هي اليوم؛ هذه الدالة تجمع فقط ما يُمرَّر إليها.
-  const allOrders = await db.select().from(purchaseOrders).orderBy(desc(purchaseOrders.id));
+  const allOrders = await db.select(purchaseOrderReadColumns).from(purchaseOrders).orderBy(desc(purchaseOrders.id));
 
   const orderIds = allOrders.map((o: any) => o.id);
   const allItems = orderIds.length ? await getPOItemsForPOs(orderIds) : [];

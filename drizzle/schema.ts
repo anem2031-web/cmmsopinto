@@ -1,4 +1,4 @@
-import { mysqlTable, mysqlSchema, AnyMySqlColumn, int, varchar, timestamp, datetime, decimal, text, mysqlEnum, index, uniqueIndex, json, foreignKey, date, smallint, tinyint } from "drizzle-orm/mysql-core"
+import { mysqlTable, mysqlSchema, AnyMySqlColumn, int, varchar, char, timestamp, datetime, decimal, text, mysqlEnum, index, uniqueIndex, json, foreignKey, date, smallint, tinyint } from "drizzle-orm/mysql-core"
 import { sql } from "drizzle-orm"
 
 export const assetCategories = mysqlTable("asset_categories", {
@@ -2267,6 +2267,14 @@ export const purchaseOrders = mysqlTable("purchase_orders", {
 	// بلا مفتاح خارجي فعلي — بنفس اتفاقية ticketId ذاته (غير مفروض بقاعدة
 	// البيانات في هذا المشروع، راجع ملاحظة "3 مواضع فقط بها FK فعلي" بـCLAUDE.md).
 	ticketItemId: int(),
+	// Requests created by a connected system keep a permanent source identity.
+	// Existing orders and orders created directly in CMMS leave these fields null.
+	sourceSystem: varchar({ length: 32 }),
+	sourceInstanceId: varchar({ length: 64 }),
+	sourceRequestId: int(),
+	sourceReference: varchar({ length: 64 }),
+	sourceRequesterName: varchar({ length: 255 }),
+	sourcePayloadHash: char({ length: 64 }),
 	requestedById: int().notNull(),
 	status: mysqlEnum(['draft','pending_review','pending_estimate','pending_accounting','pending_management','approved','partial_purchase','purchased','received','closed','rejected','revision_needed']).default('draft').notNull(),
 	totalEstimatedCost: decimal({ precision: 12, scale: 2 }),
@@ -2308,6 +2316,8 @@ export const purchaseOrders = mysqlTable("purchase_orders", {
 	index("idx_purchase_orders_packageId").on(table.packageId),
 	index("idx_purchase_orders_assetId").on(table.assetId),
 	index("idx_purchase_orders_categoryId").on(table.categoryId),
+	uniqueIndex("uq_purchase_orders_source_request").on(table.sourceSystem, table.sourceInstanceId, table.sourceRequestId),
+	uniqueIndex("uq_purchase_orders_source_reference").on(table.sourceSystem, table.sourceInstanceId, table.sourceReference),
 ]);
 
 export const purchaseOrdersLegacyOrphans = mysqlTable("purchase_orders_legacy_orphans", {

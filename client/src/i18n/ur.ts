@@ -440,6 +440,7 @@ const ur: TranslationKeys = {
     justification: "جواز",
     requestedBy: "درخواست گزار",
     relatedTicket: "متعلقہ ٹکٹ",
+    relatedPscmRequisition: "PSCM کی متعلقہ مواد کی درخواست",
     requestContext: "مقام اور درجہ بندی",
     locationSectionRequired: "مقام اور سیکشن منتخب کرنا ضروری ہے",
     validationSiteRequired: "براہ کرم مقام منتخب کریں۔",

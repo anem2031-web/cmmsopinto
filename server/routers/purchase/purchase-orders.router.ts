@@ -1,5 +1,6 @@
 import { purchaseReviewRoleSchema, isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
 import { requirePurchaseReviewSelection, purchaseReviewRecipients, assertNoWholeOrderRevisionOfRoutedItems, assertRoutedPurchaseItemReady } from "../../services/purchase-review-routing";
+import { queuePOItemsTranslation } from "../../services/purchase-item-translations";
 import { pricingBundlesEnabled, reservedPricingItemIds, assertItemOutsidePricingBundle } from "../../services/delegate-pricing-bundles/reservations";
 import { isDelegateSupplyItemOpen } from "../../../shared/delegateSupplyStage";
 import { delegateCompletedInput } from "../../../shared/delegate-completed";
@@ -139,25 +140,6 @@ async function resolveRoutedDelegateChange(actor: any, po: any, item: any, newDe
     return db.resolvePOItemDelegateChangeAtomic({ itemId: currentItem.id, newDelegateId, actorUserId: currentActor.id, actorName: currentActor.name,
       reviewRole: currentItem.reviewRole, reviewedById: currentItem.reviewedById }, tx);
   });
-}
-
-// ── دالة مشتركة: ترجمة أصناف طلب الشراء في الخلفية ──────────────────────────
-async function queuePOItemsTranslation(items: any[], userId: number): Promise<void> {
-  for (const item of items) {
-    if (!item.itemName || !item.id) continue;
-    const fields = [
-      { fieldName: "itemName", text: item.itemName },
-      ...(item.description ? [{ fieldName: "description", text: item.description }] : []),
-      ...(item.notes ? [{ fieldName: "notes", text: item.notes }] : []),
-    ];
-    queueTranslation({
-      entityType: "PO_ITEM",
-      entityId: item.id,
-      fields,
-      sourceLanguage: await detectLanguage(item.itemName).catch(() => "ar" as const),
-      userId,
-    }).catch(e => console.error("[PO_ITEM] Queue translation failed:", e));
-  }
 }
 
 // ── دالة مشتركة: ترجمة ملاحظات طلب الشراء في الخلفية ────────────────────────
@@ -1970,6 +1952,9 @@ export const purchaseOrdersRouter = router({
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
     // ✅ الحارس المركزي: owner/admin فقط (لا بند إضافي بالسياسة لأي دور آخر)
     assertCanPerformPOAction("deleteOrder", ctx.user);
+    if (po.sourceSystem === "PSCM") {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "طلب الشراء مرتبط باحتياج PSCM. استخدم إجراءات الرفض أو الإلغاء لحفظ مرجع الربط." });
+    }
     // ملاحظة: القيد التالي (منع الحذف بعد مرحلة معيّنة) قاعدة عمل/سلامة بيانات
     // عامة تنطبق على الجميع (حتى owner/admin) — ليست قاعدة صلاحية تختلف بين
     // الأدوار، لذلك تبقى هنا بدل نقلها لسياسة الحارس (التي تتجاوزها owner/admin

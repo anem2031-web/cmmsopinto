@@ -19,6 +19,9 @@ const serverEnvSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   CATALOG_INTEGRATION_PUBLIC_ORIGIN: z.string().trim().optional(),
   PSCM_REFERENCE_READ_TOKEN: z.string().trim().optional(),
+  PSCM_PURCHASE_WRITE_TOKEN: z.string().trim().optional(),
+  PSCM_PURCHASE_REQUESTER_ID: z.string().trim().optional(),
+  PSCM_PURCHASE_SOURCE_ID: z.string().trim().optional(),
   VITE_APP_ID: z.string().optional(),
 });
 

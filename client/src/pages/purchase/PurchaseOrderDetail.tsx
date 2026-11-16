@@ -5,6 +5,7 @@ import { externalMaintenanceLabels } from "@/i18n/externalMaintenanceFollowup";
 import { defaultDelegateManagerId, reviewDelegateId, reviewBulkDelegateValue } from "@/lib/delegateReviewDefaults";
 import { PricingBundleLink, PricingBundleAddButton } from "@/components/purchase/PricingBundleActions";
 import { ReplacementRepriceButton } from "@/components/purchase/ReplacementRepriceButton";
+import { PurchaseOrderSourceReference } from "@/components/purchase/PurchaseOrderSourceReference";
 import { isDelegateOwnPurchaseDraft } from "@shared/purchaseDraftVisibility";
 import { ImprovementReference } from "@/components/improvement/ImprovementReference";
 import { trpc } from "@/lib/trpc";
@@ -713,6 +714,8 @@ const visibleItems = useMemo(() => {
   if (!po) return <div className="text-center py-12 text-muted-foreground">{t.common.noData}</div>;
 
   const requestedBy = users?.find((u: any) => u.id === po.requestedById);
+  const sourceRequesterName = po.sourceSystem === "PSCM" ? po.sourceRequesterName?.trim() : undefined;
+  const requestedByName = sourceRequesterName || requestedBy?.name || "-";
 
   const pendingReviewCount = (po.items || []).filter(isPendingPurchaseItemReview).length;
   const steps = [
@@ -875,12 +878,18 @@ const visibleItems = useMemo(() => {
           </CardContent>
         </Card>
       )}
+      <PurchaseOrderSourceReference order={po} detail />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card><CardContent className="p-3 flex items-center gap-2.5">
-          <User className="w-4 h-4 text-muted-foreground shrink-0" />
-          <div><p className="text-[10px] text-muted-foreground">{t.purchaseOrders.requestedBy}</p><p className="text-sm font-medium">{requestedBy?.name || "-"}</p></div>
-        </CardContent></Card>
+        <Card>
+          <CardContent className="p-3 flex items-center gap-2.5">
+            <User className="w-4 h-4 text-muted-foreground shrink-0" />
+            <div className="min-w-0">
+              <p className="text-[10px] text-muted-foreground">{t.purchaseOrders.requestedBy}</p>
+              <p className="text-sm font-medium break-words" dir="auto">{requestedByName}</p>
+            </div>
+          </CardContent>
+        </Card>
         <Card><CardContent className="p-3 flex items-center gap-2.5">
           <Clock className="w-4 h-4 text-muted-foreground shrink-0" />
           <div><p className="text-[10px] text-muted-foreground">{t.tickets.timeline}</p><p className="text-sm font-medium">{formatPurchaseSubmissionTime(po, locale)}</p></div>

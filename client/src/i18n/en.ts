@@ -440,6 +440,7 @@ const en: TranslationKeys = {
     justification: "Justification",
     requestedBy: "Requested By",
     relatedTicket: "Related Ticket",
+    relatedPscmRequisition: "Related PSCM material requisition",
     requestContext: "Location & Category",
     locationSectionRequired: "Site and section are required",
     validationSiteRequired: "Please select the site.",

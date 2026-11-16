@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PurchaseOrderSourceReference } from "./PurchaseOrderSourceReference";
 import { Boxes, ChevronDown, ChevronLeft, ChevronRight, Package, User } from "lucide-react";
 import { useState } from "react";
 import { useStaticLabels } from "@/hooks/useContentTranslation";
@@ -36,6 +37,8 @@ export interface PackageOrder {
   status: string;
   createdAt: string | Date;
   items?: any[];
+  sourceSystem?: string | null;
+  sourceReference?: string | null;
   [key: string]: any;
 }
 
@@ -127,20 +130,23 @@ export function PurchaseBatchCard({
                   onOpenOrder?.(po.id);
                 }}
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-xs font-mono text-muted-foreground shrink-0">
-                    {po.poNumber}
-                  </span>
-                  {po.requestedByName && (
-                    <span className="flex items-center gap-1 text-xs text-muted-foreground truncate">
-                      <User className="w-3 h-3 shrink-0" />
-                      {po.requestedByName}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-xs font-mono text-muted-foreground shrink-0">
+                      {po.poNumber}
                     </span>
-                  )}
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
-                    <Package className="w-3 h-3" />
-                    {po.items?.length ?? 0}
-                  </span>
+                    {po.requestedByName && (
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground truncate">
+                        <User className="w-3 h-3 shrink-0" />
+                        {po.requestedByName}
+                      </span>
+                    )}
+                    <span className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+                      <Package className="w-3 h-3" />
+                      {po.items?.length ?? 0}
+                    </span>
+                  </div>
+                  <PurchaseOrderSourceReference order={po} />
                 </div>
                 <Badge
                   className={`status-badge shrink-0 ${

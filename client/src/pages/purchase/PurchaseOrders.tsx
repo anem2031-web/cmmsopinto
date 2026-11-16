@@ -40,6 +40,7 @@ import { toast } from "sonner";
 import { ExportButton } from "@/components/common/ExportButton";
 import { PurchaseCardList } from "@/components/purchase/PurchaseCardList";
 import { PurchaseBatchCard } from "@/components/purchase/PurchaseBatchCard";
+import { PurchaseOrderSourceReference } from "@/components/purchase/PurchaseOrderSourceReference";
 import { Boxes } from "lucide-react";
 import { localizeApiError } from "@/i18n/apiError";
 import { getLocalizedCatalogUnitName } from "@/i18n/catalogMasterData";
@@ -622,6 +623,7 @@ export default function PurchaseOrders() {
       (po.itemNames ?? []);
     const haystack: string[] = [
       po.poNumber,
+      po.sourceSystem === "PSCM" ? po.sourceReference : "",
       po.requestedByName,
       String(po.itemCount ?? ""),
       ...localizedNames,
@@ -1588,6 +1590,7 @@ export default function PurchaseOrders() {
                       )}
                       <span className="text-xs font-mono text-muted-foreground">{po.poNumber}</span>
                     </div>
+                    <PurchaseOrderSourceReference order={po} />
                     <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1 flex-wrap">
                       {/* منشئ الطلب */}
                       {po.requestedByName && (
@@ -1643,7 +1646,7 @@ export default function PurchaseOrders() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    {canDelete && !["funded", "partially_purchased", "completed"].includes(po.status) && (
+                    {canDelete && po.sourceSystem !== "PSCM" && !["funded", "partially_purchased", "completed"].includes(po.status) && (
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={(e) => openDelete(po, e)}>
                         <Trash2 className="w-4 h-4" />
                       </Button>

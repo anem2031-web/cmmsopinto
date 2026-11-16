@@ -24,6 +24,7 @@ import { assertMediaAccess } from "./authz/media-access";
 import { requireCatalogIntegrationToken } from "./db/catalog-integration-tokens";
 import { registerCatalogIntegrationRoutes } from "../services/catalog/catalogIntegrationRoutes";
 import { registerPscmReferenceRoutes } from "../services/pscm/reference-routes";
+import { registerPscmPurchaseRequestRoutes } from "../services/pscm/purchase-request-routes";
 import { authorizePurchaseDocument } from "./authz/purchase-document";
 import sharp from "sharp";
 import { transcodeVideoToCompatibleMp4 } from "./videoTranscode";
@@ -343,6 +344,11 @@ async function startServer() {
   app.use(sessionCheckLimiter);
   app.use("/api/", apiLimiter);
   app.use("/api/oauth/", authLimiter);
+  registerPscmPurchaseRequestRoutes(app, {
+    token: env.PSCM_PURCHASE_WRITE_TOKEN,
+    requesterId: env.PSCM_PURCHASE_REQUESTER_ID,
+    instanceId: env.PSCM_PURCHASE_SOURCE_ID,
+  });
 
   // ============================================================
   // H-03 FIX: تقليل Body Parser limit إلى 1MB لمنع هجمات DoS
