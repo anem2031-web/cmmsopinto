@@ -13,7 +13,7 @@ export function requirePurchaseReviewSelection(items: Array<{ reviewRole?: strin
 }
 
 /** One user-directory read per submission; no per-item or per-recipient authorization reads. */
-export function purchaseReviewRecipients(users: Array<{ id: number; role: string; isActive?: unknown }>, items: Array<{ reviewRole?: string | null }>, actorId: number) {
+export function purchaseReviewRecipients(users: Array<{ id: number; role: string; isActive?: unknown }>, items: Array<{ reviewRole?: string | null }>, actorId?: number) {
   const roles = new Set(items.filter(isRoutedPurchaseItem).map(item => item.reviewRole));
   return users.filter(user => user.id !== actorId && Number(user.isActive) === 1 &&
     (roles.has(user.role as typeof PURCHASE_REVIEW_ROLES[number]) || ["owner", "admin"].includes(user.role)));

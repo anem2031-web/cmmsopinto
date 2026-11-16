@@ -100,7 +100,8 @@ async function lockPurchaseRequester(tx: Tx, requesterId: number) {
   if (
     !requester ||
     requester.active !== 1 ||
-    requester.role !== APP_ROLE.PURCHASE_REQUESTER
+    (requester.role !== APP_ROLE.PURCHASE_REQUESTER &&
+      requester.role !== APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER)
   ) {
     throw new PscmPurchaseError("requester_unavailable");
   }
@@ -263,15 +264,11 @@ function toPurchaseItem(item: Item, submittedAt: Date) {
 
 async function notifyReviewers(
   purchase: PscmPurchaseConfirmation,
-  requesterId: number,
   sourceReference: string,
   items: Item[]
 ) {
-  const recipients = purchaseReviewRecipients(
-    await getAllUsers(),
-    items,
-    requesterId
-  );
+  // An automated submission may be assigned to the configured requester's review role.
+  const recipients = purchaseReviewRecipients(await getAllUsers(), items);
   const results = await Promise.allSettled(
     recipients.map(user =>
       createNotification({
@@ -380,12 +377,9 @@ export async function importApprovedPscmPurchase(
       .catch(() =>
         console.error("[PSCM purchase] Failed to queue item translations.")
       );
-    void notifyReviewers(
-      result,
-      requesterId,
-      source.requisitionNumber,
-      items
-    ).catch(() => console.error("[PSCM purchase] Failed to notify reviewers."));
+    void notifyReviewers(result, source.requisitionNumber, items).catch(() =>
+      console.error("[PSCM purchase] Failed to notify reviewers.")
+    );
   }
   return result;
 }

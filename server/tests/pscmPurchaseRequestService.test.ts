@@ -141,7 +141,9 @@ function fixture() {
     CREATE TABLE purchase_order_number_counter (id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER);
     CREATE UNIQUE INDEX source_id ON purchase_orders (sourceSystem, sourceInstanceId, sourceRequestId);
     CREATE UNIQUE INDEX source_reference ON purchase_orders (sourceSystem, sourceInstanceId, sourceReference);
-    INSERT INTO users (id,role,isActive) VALUES (1,'purchase_requester',1),(2,'admin',1),(3,'purchase_requester',0);
+    INSERT INTO users (id,role,isActive) VALUES
+      (1,'purchase_requester',1),(2,'admin',1),(3,'construction_procurement_manager',1),
+      (6,'purchase_requester',0),(7,'construction_procurement_manager',0);
     INSERT INTO sites (id,isActive) VALUES (11,1),(12,1);
     INSERT INTO sections (id,siteId,isActive) VALUES (21,11,1),(22,12,1);
     INSERT INTO assets (id,siteId,sectionId,status) VALUES (31,11,21,'active'),(32,11,21,'disposed');
@@ -383,8 +385,31 @@ describe("PSCM approved purchase transaction", () => {
     }
   );
 
-  it("requires the configured actor to be active and to have the purchase requester role", async () => {
-    for (const id of [2, 3, 4]) {
+  it("uses a configured construction and procurement manager as requester and still routes their review notice", async () => {
+    const result = await send(rawPayload(31, "أحمد وائل"), 3);
+    const order = data.sqlite
+      .prepare("SELECT requestedById, sourceRequesterName FROM purchase_orders")
+      .get();
+    expect(order).toMatchObject({
+      requestedById: 3,
+      sourceRequesterName: "أحمد وائل",
+    });
+    await vi.waitFor(() => expect(ports.translate).toHaveBeenCalledOnce());
+    expect(
+      ports.notify.mock.calls.map(
+        ([notice]) => (notice as { userId: number }).userId
+      )
+    ).toEqual([2, 3]);
+    expect(ports.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 3,
+        relatedPoId: result.purchaseRequestId,
+      })
+    );
+  });
+
+  it("requires a configured requester to be active and hold one of the supported roles", async () => {
+    for (const id of [2, 4, 6, 7]) {
       await expect(send(rawPayload(), id)).rejects.toMatchObject({
         code: "requester_unavailable",
       });
