@@ -2320,6 +2320,29 @@ export const purchaseOrders = mysqlTable("purchase_orders", {
 	uniqueIndex("uq_purchase_orders_source_reference").on(table.sourceSystem, table.sourceInstanceId, table.sourceReference),
 ]);
 
+export const pscmPurchaseItems = mysqlTable("pscm_purchase_items", {
+	purchaseOrderItemId: int().primaryKey(),
+	purchaseOrderId: int().notNull(),
+	sequence: int().notNull(),
+	taskId: int().notNull(),
+	taskName: varchar({ length: 255 }).notNull(),
+	projectId: int().notNull(),
+	projectName: varchar({ length: 255 }).notNull(),
+	requestedQuantity: int().notNull(),
+	orderUnit: varchar({ length: 50 }).notNull(),
+}, table => [uniqueIndex("uq_pscm_purchase_order_sequence").on(table.purchaseOrderId, table.sequence)]);
+
+export const pscmFulfillmentIssues = mysqlTable("pscm_fulfillment_issues", {
+	operationKey: char({ length: 36 }).primaryKey(),
+	purchaseOrderItemId: int().notNull(),
+	lotId: int().notNull(),
+	quantity: int().notNull(),
+	deliveredToId: int().notNull(),
+	deliveryDocumentId: int(),
+	deliveryNumber: varchar({ length: 20 }).notNull(),
+	orderQuantity: decimal({ precision: 18, scale: 6 }).notNull(),
+}, table => [index("idx_pscm_issues_item_lot").on(table.purchaseOrderItemId, table.lotId)]);
+
 export const purchaseOrdersLegacyOrphans = mysqlTable("purchase_orders_legacy_orphans", {
 	id: int().autoincrement().notNull(),
 	poNumber: varchar({ length: 20 }).notNull(),

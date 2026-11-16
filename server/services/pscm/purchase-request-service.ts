@@ -7,6 +7,7 @@ import {
   catalogCodeAliases,
   catalogItems,
   centerCategories,
+  pscmPurchaseItems,
   purchaseOrders,
   sections,
   sites,
@@ -352,6 +353,22 @@ export async function importApprovedPscmPurchase(
         })),
         tx
       );
+      if (source.task) {
+        const task = source.task;
+        const created: Array<{ id: number }> = await getPOItems(purchaseRequestId, tx);
+        if (created.length !== items.length) throw new Error("Missing imported purchase items");
+        await tx.insert(pscmPurchaseItems).values(created.map((line, index) => ({
+          purchaseOrderItemId: line.id,
+          purchaseOrderId: purchaseRequestId,
+          sequence: items[index].sequence,
+          taskId: task.id,
+          taskName: task.name,
+          projectId: source.project.id,
+          projectName: source.project.name,
+          requestedQuantity: purchaseItems[index].quantity,
+          orderUnit: purchaseItems[index].unit,
+        })));
+      }
       await tx.insert(auditLogs).values({
         userId: requesterId,
         action: "create_po",

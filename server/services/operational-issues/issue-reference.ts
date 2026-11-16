@@ -8,17 +8,27 @@ export async function executionRows(tx: any, query: any): Promise<any[]> {
   const result = await tx.execute(query); return Array.isArray(result[0]) ? result[0] : [];
 }
 
-/** Runs in the existing physical writer transaction. No new table read when disabled. */
+/** Runs in the physical writer transaction. Normal stock paths skip the operational tables when disabled. */
 export async function assertOperationalIssueReference(tx: any, input: {
   operationalIssueItemId?: number; ticketId?: number; ticketItemId?: number; pmv2TaskItemId?: number; selectedTicketItemId?: number;
+  pscmPurchaseOrderItemId?: number;
   deliveredToId?: number; performedById: number; catalogItemId: number | null; quantity: number; operationKey?: string; operationalBatchKey?: string;
   lotTrackingToken?: string; unit?: string; operationalReplacementAware?: boolean;
 }) {
+  const other = input.ticketId || input.ticketItemId || input.pmv2TaskItemId || input.selectedTicketItemId;
+  if (input.pscmPurchaseOrderItemId) {
+    if (other || input.operationalIssueItemId) throw new Error("يجب تحديد مرجع تنفيذ واحد للصرف");
+    const [taskLine] = await executionRows(tx, sql`SELECT i.id FROM pscm_purchase_items s
+      INNER JOIN purchase_order_items i ON i.id=s.purchaseOrderItemId AND i.purchaseOrderId=s.purchaseOrderId
+      INNER JOIN purchase_orders p ON p.id=i.purchaseOrderId
+      WHERE i.id=${input.pscmPurchaseOrderItemId} AND p.sourceSystem='PSCM' AND s.taskId>0 FOR UPDATE`);
+    if (!taskLine) throw new Error("مرجع احتياج مهمة PSCM غير صالح للصرف");
+    return null;
+  }
   if (!operationalIssuesEnabled()) {
     if (input.operationalIssueItemId) throw new Error("الصرف التشغيلي غير متاح حاليًا");
     return null;
   }
-  const other = input.ticketId || input.ticketItemId || input.pmv2TaskItemId || input.selectedTicketItemId;
   if (!input.operationalIssueItemId) {
     if (!other) throw new Error("الصرف يتطلب بلاغ صيانة أو مهمة أو أمر صرف تشغيلي معتمد");
     return null;

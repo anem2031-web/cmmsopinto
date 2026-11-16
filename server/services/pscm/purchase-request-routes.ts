@@ -4,6 +4,7 @@ import express, {
   type ErrorRequestHandler,
   type RequestHandler,
 } from "express";
+import { z } from "zod";
 import {
   PscmPurchaseError,
   pscmPurchaseInstance,
@@ -34,11 +35,17 @@ const invalidJson: ErrorRequestHandler = (error, _req, res, next) => {
     .status(tooLarge ? 413 : 400)
     .json({ error: tooLarge ? "body_too_large" : "invalid_json" });
 };
+const fulfillmentInput = z.strictObject({
+  instanceId: z.string().regex(pscmPurchaseInstance),
+  requisitionIds: z.array(z.number().int().min(1).max(2_147_483_647)).min(1).max(100),
+});
 
 export function registerPscmPurchaseRequestRoutes(
   app: Application,
   settings: { token?: string; requesterId?: string; instanceId?: string },
-  ingest: ImportPurchase = importPurchase
+  ingest: ImportPurchase = importPurchase,
+  fulfillment = async (instanceId: string, requisitionIds: number[]) =>
+    (await import("./fulfillment-read")).getPscmFulfillment(instanceId, requisitionIds)
 ) {
   const { token, requesterId: rawId, instanceId = "pscm" } = settings;
   const requesterId = Number(rawId);
@@ -125,4 +132,18 @@ export function registerPscmPurchaseRequestRoutes(
     receive,
     invalidJson
   );
+  const read: RequestHandler = async (req, res) => {
+    const parsed = fulfillmentInput.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "invalid_payload" });
+    if (parsed.data.instanceId !== instanceId)
+      return res.status(403).json({ error: "invalid_source_instance" });
+    try {
+      const payload = await fulfillment(instanceId, parsed.data.requisitionIds);
+      return res.json(payload);
+    } catch {
+      console.error("[PSCM purchase] Could not load warehouse fulfillment.");
+      return res.status(503).json({ error: "integration_unavailable" });
+    }
+  };
+  app.all("/api/v1/pscm/fulfillment", authorize, express.json({ limit: 8_192, inflate: false }), read, invalidJson);
 }

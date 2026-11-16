@@ -84,6 +84,7 @@ import { improvementIdeasRouter } from "./improvement-ideas/improvement-ideas.ro
 import { constructionRouter } from "./construction/index";
 import { externalMaintenanceRouter } from "./external-maintenance/external-maintenance.router";
 import { pmv2Router } from "./pmv2";
+import { pscmFulfillmentRouter } from "./purchase/pscm-fulfillment.router";
 
 export const appRouter = router({
   system: systemRouter,
@@ -101,6 +102,7 @@ export const appRouter = router({
   delegatePricingBundles: delegatePricingBundlesRouter,
   approvedPricingDocuments: approvedPricingDocumentsRouter,
   purchaseSpecifications: createPurchaseSpecificationsRouter({ database: getDb, readGuard: createPurchaseOrderReadGuard }),
+  pscmFulfillment: pscmFulfillmentRouter,
   purchaseSupplyWait: createPurchaseSupplyWaitRouter({ database: getDb, readScope: createPurchaseOrderReadScope }),
 
 purchaseOrders: router({

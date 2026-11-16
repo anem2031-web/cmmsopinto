@@ -7,7 +7,7 @@ import ts from "typescript";
 import ar from "../../client/src/i18n/ar";
 import en from "../../client/src/i18n/en";
 import ur from "../../client/src/i18n/ur";
-const state = vi.hoisted(() => ({ language: "en", section: "waiting", role: "warehouse", creator: "Original creator", sentAt: "2026-11-05 09:15:00" }));
+const state = vi.hoisted(() => ({ language: "en", section: "waiting", role: "warehouse", creator: "Original creator", sentAt: "2026-11-05 09:15:00", pscmReady: false }));
 vi.mock("react", async load => ({ ...await load<typeof import("react")>(), useState: (initial: any) => [initial === "waiting" ? state.section : initial, vi.fn()] }));
 vi.mock("../../client/src/_core/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: 2, role: state.role, isActive: 1 }, loading: false }) }));
 vi.mock("../../client/src/contexts/LanguageContext", () => ({ useTranslation: () => ({ language: state.language, dir: "ltr", t: ({ar,en,ur} as any)[state.language] }) }));
@@ -25,6 +25,12 @@ vi.mock("../../client/src/lib/trpc", () => {
       const meta = { requestCreatorName: state.creator, requestCreatedAt: state.sentAt };
       const data = path === "pmv2.warehouse.waitingMaterialQueue" ? { total: 1, mainWarehouse: { nameAr: "Main" }, items: [{ ...meta, requestId: 1, requestItemId: 10, itemNameSnapshot: "Material", requestedQuantity: 2, remainingQuantity: 2, availabilityStatus: "unlisted", purchaseLinks: [] }] }
         : path === "pmv2.warehouse.readyToIssueQueue" ? [{ ...meta, routeDecisionActionId: 12, itemName: "Material", canIssue: false, remainingQuantity: 2, technicians: [], fulfillmentAllocations: [], lotAllocations: [] }]
+        : path === "pscmFulfillment.ready" && state.pscmReady ? {
+          items: [{ purchaseOrderItemId: 51, purchaseOrderNumber: "PR-2026-0051", requisitionNumber: "MR-51",
+            projectName: "City Library", taskName: "Paint reception", itemName: "Acrylic paint",
+            lots: [{ id: 22, code: "LOT-22", quantity: 3, unit: "litre" }] }], nextCursor: null,
+        }
+        : path === "pscmFulfillment.recipients" ? [{ id: 50, name: "Warehouse recipient" }]
         : path === "pmv2.warehouse.pendingReturns" && state.section === "returns" ? [{ declarationActionId: 13, itemName: "Return material", taskNumber: "PM-13", taskItemTitle: "Maintenance", issuedQuantity: 3, usedQuantity: 1, remainingReturnQuantity: 2, unit: "piece", singleLot: false, lots: [{ lotId: 1, lotCode: "LOT-1", returnableQuantity: 2 }] }]
         : path === "ticketTeamAssignments.warehouseRequests" ? [{ assignmentId: 1, ticketId: 11, ticketNumber: "MT-11", title: "Ticket", teamName: "Team", materialNeeds: [{ ...meta, needId: 10, name: "Material", unit: "piece", section: state.section, requestedQuantity: 2, issuedQuantity: 1, returnedQuantity: 0, availableQuantity: 3 }] }]
         : path === "operationalIssues.list" ? { enabled: true, orders: [{ id: 1, orderNumber: "OPR-1", creatorName: state.creator, createdAt: state.sentAt, collectorName: "Different recipient", status: "pending" }] }
@@ -39,7 +45,7 @@ import { MaterialRequestMeta } from "../../client/src/components/inventory/Mater
 import TicketWarehouseRequests from "../../client/src/pages/maintenance-teams/TicketWarehouseRequests";
 import Pmv2WarehouseQueue from "../../client/src/pages/pmv2/Pmv2WarehouseQueue";
 import { OperationalIssueQueue } from "../../client/src/pages/operational-issues/OperationalIssueQueue";
-beforeEach(() => Object.assign(state, { language: "en", section: "waiting", role: "warehouse", creator: "Original creator", sentAt: "2026-11-05 09:15:00" }));
+beforeEach(() => Object.assign(state, { language: "en", section: "waiting", role: "warehouse", creator: "Original creator", sentAt: "2026-11-05 09:15:00", pscmReady: false }));
 describe("request identity and original sending time on warehouse cards", () => {
   it.each(["waiting", "ready", "returns"])("renders senior ticket materials without warehouse execution controls in %s", section => {
     state.role = "senior_management"; state.section = section;
@@ -69,6 +75,16 @@ describe("request identity and original sending time on warehouse cards", () => 
     const html = renderToStaticMarkup(<Pmv2WarehouseQueue />);
     expect(html).toContain("Original creator"); expect(html).toContain("12:15");
     expect(html.indexOf("Original creator")).toBeLessThan(html.indexOf("<details"));
+  });
+  it.each([false, true])("shows the PSCM source in the ready tab with read-only = %s", readOnly => {
+    state.section = "ready";
+    state.pscmReady = true;
+    const html = renderToStaticMarkup(<Pmv2WarehouseQueue readOnly={readOnly} />);
+    for (const text of ["Material", "Acrylic paint", "City Library", "Paint reception", "MR-51", "PR-2026-0051", "LOT-22"]) {
+      expect(html).toContain(text);
+    }
+    expect(html.includes("Warehouse recipient")).toBe(!readOnly);
+    expect(html.includes(en.workflow.pmv2.pscmIssueAction)).toBe(!readOnly);
   });
   it("shows the operational creator separately from the recipient", () => {
     const html = renderToStaticMarkup(<OperationalIssueQueue process />);

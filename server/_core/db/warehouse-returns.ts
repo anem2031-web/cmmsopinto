@@ -1308,6 +1308,7 @@ export async function issueDelivery(params: {
   performedById:        number;
   deliveredToId?:       number;
   purchaseOrderItemId?: number;
+  pscmFulfillment?:     true;
   ticketId?:            number;
   ticketItemId?:        number;
   pmv2TaskItemId?:      number;
@@ -1330,8 +1331,11 @@ export async function issueDelivery(params: {
   // تؤخذ Snapshot من issueUnitCost للـLot المصروف.
   costAllocations?:      IssueCostAllocationInput[];
 }, existingTx?: any) {
-  const db = await getDb();
+  const db = existingTx || await getDb();
   if (!db) throw new Error("تعذر الاتصال بقاعدة البيانات");
+  if (params.pscmFulfillment && (!existingTx || !params.purchaseOrderItemId)) {
+    throw new Error("صرف مواد PSCM يتطلب بند شراء ومعاملة مرتبطة");
+  }
 
   if (params.quantity < 0.001) throw new Error("الكمية المسلّمة يجب أن تكون 0.001 أو أكثر");
   const deliveryQuantity = normalizeInventoryQuantity(params.quantity);
@@ -1344,20 +1348,22 @@ export async function issueDelivery(params: {
     throw new Error("توزيع تكلفة الصرف حسب اللوت يتطلب تفعيل تتبع الدفعات");
   }
 
-  const performer = await getUserById(params.performedById);
-  const receiver = params.deliveredToId ? await getUserById(params.deliveredToId) : null;
+  const referenceTx = params.pscmFulfillment ? existingTx : undefined;
+  const performer = await getUserById(params.performedById, referenceTx);
+  const receiver = params.deliveredToId ? await getUserById(params.deliveredToId, referenceTx) : null;
 
   let poNumber: string | undefined;
   let supplierName: string | undefined;
   let actualUnitCost: string | undefined;
   let purchaseOrderId: number | undefined;
   if (params.purchaseOrderItemId) {
-    const poItem = await getPOItemById(params.purchaseOrderItemId);
+    const poItem = await getPOItemById(params.purchaseOrderItemId, referenceTx);
     if (poItem) {
       supplierName = (poItem as any).supplierName;
       actualUnitCost = (poItem as any).actualUnitCost;
-      purchaseOrderId = (poItem as any).purchaseOrderId;
-      const po = await getPurchaseOrderById(purchaseOrderId);
+      const linkedPurchaseOrderId = Number(poItem.purchaseOrderId);
+      purchaseOrderId = linkedPurchaseOrderId;
+      const po = await getPurchaseOrderById(linkedPurchaseOrderId, referenceTx);
       poNumber = (po as any)?.poNumber;
     }
   }
@@ -1375,6 +1381,7 @@ export async function issueDelivery(params: {
     const operational = await assertOperationalIssueReference(tx, {
       ...params, selectedTicketItemId: params.costAllocations?.[0]?.ticketItemId,
       operationKey: params.operationalOperationKey, catalogItemId: (item as any).linkedItemId ?? null,
+      pscmPurchaseOrderItemId: params.pscmFulfillment ? params.purchaseOrderItemId : undefined,
     });
     if (operational && !lotsEnabled) throw new Error("الصرف التشغيلي يتطلب تتبع الدفعات");
     const effectiveUnit = operational ? String((item as any).issueUnit || item.unit || "") : params.unit || item.unit || "";
@@ -1403,6 +1410,10 @@ export async function issueDelivery(params: {
           quantity: deliveryQuantity,
         })
       : null;
+    if (params.pscmFulfillment && (consumedLot?.purchaseOrderItemId !== params.purchaseOrderItemId ||
+      consumedLot?.purchaseOrderId !== purchaseOrderId || consumedLot?.sourceType !== "receipt")) {
+      throw new Error("الدفعة المصروفة لا تخص استلام احتياج PSCM");
+    }
 
     const normalizedCostAllocations = lotsEnabled
       ? await normalizeIssueCostAllocations({

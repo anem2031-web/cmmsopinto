@@ -97,6 +97,7 @@ const warehouseQueries = [
   ...paths("ticketTeamAssignments", "queue warehouseRequests"),
   ...paths("ticketTeamExecution", "details balances searchMaterialIdentityCandidates preview catalog warehouseTicket"),
   ...paths("pmv2.warehouse", "waitingMaterialQueue searchMaterialIdentityCandidates readyToIssueQueue pendingReturns"),
+  ...paths("pscmFulfillment", "ready recipients"),
   "materialCosts.issueTargets",
   "externalMaintenance.listForWarehouse", "technicians.list",
   ...paths("catalog.nodes", "getById getChildren"),
@@ -114,6 +115,7 @@ const warehouseQueries = [
 const warehouseOversightQueries = [
   ...paths("warehouseRequestDocuments", "list detail"),
   ...paths("pmv2.warehouse", "waitingMaterialQueue readyToIssueQueue pendingReturns"),
+  "pscmFulfillment.ready",
   "ticketTeamAssignments.warehouseRequests",
   ...paths("operationalIssues", "list detail availability"),
   ...paths("inventory", "list books bookPages taxonomy lotSummaries listLots getTransactions issueCostAllocations getItemSummary getPurchaseHistory getLedger"),
@@ -142,6 +144,7 @@ const warehouseMutations = [
   ...paths("operationalIssues", "addToPurchaseDraft approve issue returnMaterial createPrepared issuePrepared"),
   ...paths("ticketTeamExecution", "prepareSupply issue transferFromForm request resolve provide purchaseReceipt returnMaterial"),
   ...paths("pmv2.warehouse", "resolveMaterialIdentity prepareTransferHandoff preparePurchaseHandoff linkPurchaseOrder linkConfirmedTransfers issueReadyRequirement linkConfirmedDelivery confirmPendingReturn"),
+  "pscmFulfillment.issue",
   ...paths("catalog.nodes", "create update"),
   ...paths("catalog.items", "create update delete reactivate"),
   ...paths("catalog.itemCandidates", "suggestExisting markSameItem markNotSameItem linkExisting approveNew"),

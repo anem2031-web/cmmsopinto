@@ -53,6 +53,10 @@ vi.mock("../../client/src/lib/trpc", () => {
       searchMaterialIdentityCandidates: query("identity", () => ({ items: [] })), prepareTransferHandoff: mutation(), preparePurchaseHandoff: mutation(), resolveMaterialIdentity: mutation(),
       issueReadyRequirement: mutation(), linkConfirmedDelivery: mutation(), confirmPendingReturn: mutation(input => { fixture.pmv2Input = input; }),
     } },
+    pscmFulfillment: {
+      ready: query("pscmReady", () => ({ items: [], nextCursor: null })),
+      recipients: query("pscmRecipients", () => []),
+    },
     ticketTeamAssignments: { warehouseRequests: query("tickets", () => fixture.tickets) },
     operationalIssues: {
       list: query("operationalList", () => ({ enabled: true, orders: fixture.orders })), detail: query("operationalDetail", () => fixture.detail),
@@ -85,6 +89,8 @@ describe("returns-only embeds reuse their original source panels", () => {
     expect(html).toContain("PM-101"); expect(html).not.toContain("PM-102"); expect(html).not.toContain("warehouseQueueTitle"); expect(html).not.toContain("IDENTITY-DIALOG");
     expect(fixture.queries.find(row => row.name === "waiting").options.enabled).toBe(false);
     expect(fixture.queries.find(row => row.name === "ready").options.enabled).toBe(false);
+    expect(fixture.queries.find(row => row.name === "pscmReady").options.enabled).toBe(false);
+    expect(fixture.queries.find(row => row.name === "pscmRecipients").options.enabled).toBe(false);
     expect(fixture.queries.find(row => row.name === "pmv2Returns").options.enabled).not.toBe(false);
     await button("confirmReturnReceipt").onClick();
     expect(fixture.pmv2Input).toEqual({ declarationActionId: 9, lotAllocations: [{ lotId: 3, quantity: 2 }] });

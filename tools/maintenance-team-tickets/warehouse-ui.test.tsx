@@ -97,6 +97,10 @@ vi.mock("../../client/src/lib/trpc", () => ({
         ])
       ),
     },
+    pscmFulfillment: {
+      ready: { useQuery: () => ({ data: { items: [], nextCursor: null } }) },
+      recipients: { useQuery: () => ({ data: [] }) },
+    },
     useUtils: () => ({
       ticketTeamExecution: {
         details: { invalidate: vi.fn() },

@@ -15,6 +15,7 @@ import { localizeApiError } from "@/i18n/apiError";
 import { getPmv2MaterialQuantityValidationMessage, pmv2MaterialUnitRequiresWholeQuantity } from "@shared/pmv2MaterialQuantity";
 import { matchesReturnSearch } from "@/lib/returnSearch";
 import { MaterialRequestMeta } from "@/components/inventory/MaterialRequestMeta";
+import { PscmReadyIssueCard } from "./PscmReadyIssueCard";
 
 function buildStatusView(t: any): Record<string, { label: string; className: string }> {
   return {
@@ -61,8 +62,12 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
   const fmt = (template: string, values: Record<string, string | number>) => Object.entries(values).reduce((out, [key, value]) => out.replaceAll(`{${key}}`, String(value)), template);
   const localizedName = (value: any) => language === "ar" ? (value?.nameAr || value?.nameEn || "—") : (value?.nameEn || value?.nameAr || "—");
   const [, navigate] = useLocation();
+  const utils = trpc.useUtils();
+  const [pscmCursors, setPscmCursors] = useState<number[]>([]);
+  const pscmCursor = pscmCursors.at(-1);
   const queue = trpc.pmv2.warehouse.waitingMaterialQueue.useQuery(undefined, { enabled: !returnsOnly, refetchOnWindowFocus: false });
   const readyIssue = trpc.pmv2.warehouse.readyToIssueQueue.useQuery(undefined, { enabled: !returnsOnly, refetchOnWindowFocus: false });
+  const pscmReadyIssue = trpc.pscmFulfillment.ready.useQuery({ after: pscmCursor }, { enabled: !returnsOnly, refetchOnWindowFocus: false });
   const pendingReturns = trpc.pmv2.warehouse.pendingReturns.useQuery(undefined, { refetchOnWindowFocus: false });
   const prepareTransfer = trpc.pmv2.warehouse.prepareTransferHandoff.useMutation();
   const preparePurchase = trpc.pmv2.warehouse.preparePurchaseHandoff.useMutation();
@@ -75,6 +80,12 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
   const [sectionState, setActiveSection] = useState<"waiting" | "ready" | "returns">(section ?? "waiting");
   const activeSection = returnsOnly ? "returns" : sectionState;
   const [lotSelections,setLotSelections]=useState<Record<number,LotSelection>>({});
+  const pscmItems = pscmReadyIssue.data?.items ?? [];
+  const nextPscmCursor = pscmReadyIssue.data?.nextCursor;
+  const hasPscmPages = pscmCursors.length > 0 || nextPscmCursor != null;
+  const pscmRecipients = trpc.pscmFulfillment.recipients.useQuery(undefined, {
+    enabled: activeSection === "ready" && !readOnly && pscmItems.length > 0,
+  });
 
   const identityCandidates = trpc.pmv2.warehouse.searchMaterialIdentityCandidates.useQuery(
     { requestItemId: Number(identityRequest?.requestItemId || 1), search: identitySearch },
@@ -82,7 +93,12 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
   );
 
   const refreshOperationalQueues = async () => {
-    await Promise.all([...(returnsOnly ? [] : [queue.refetch(), readyIssue.refetch()]), pendingReturns.refetch()]);
+    await Promise.all([...(returnsOnly ? [] : [queue.refetch(), readyIssue.refetch(), utils.pscmFulfillment.ready.invalidate()]), pendingReturns.refetch()]);
+  };
+
+  const refreshAfterPscmIssue = async () => {
+    setPscmCursors([]);
+    await refreshOperationalQueues();
   };
 
   const resolveMaterialIdentity = trpc.pmv2.warehouse.resolveMaterialIdentity.useMutation({
@@ -183,7 +199,9 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
     }
   }
 
-  const readyIssueCount = Array.isArray(readyIssue.data) ? readyIssue.data.length : 0;
+  const readyIssueCount = (readyIssue.data?.length ?? 0) + pscmItems.length;
+  const readyIssueCountLabel = hasPscmPages ? `${readyIssueCount}+` : readyIssueCount;
+  const loadingReadyIssue = readyIssue.isLoading || pscmReadyIssue.isLoading;
   const pendingReturnsCount = Array.isArray(pendingReturns.data) ? pendingReturns.data.length : 0;
   const visibleReturns = (Array.isArray(pendingReturns.data) ? pendingReturns.data : []).filter((item: any) => matchesReturnSearch(
     search, item.itemName, item.taskNumber, item.taskItemTitle, item.previousRecipientName,
@@ -200,8 +218,8 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
             {t.workflow.pmv2.warehouseQueueHelp}
           </p>
         </div>
-        <Button variant="outline" onClick={refreshOperationalQueues} disabled={queue.isFetching || readyIssue.isFetching || pendingReturns.isFetching}>
-          {(queue.isFetching || readyIssue.isFetching || pendingReturns.isFetching) ? <Loader2 className={dir === "rtl" ? "ml-2 h-4 w-4 animate-spin" : "mr-2 h-4 w-4 animate-spin"} /> : <RefreshCw className={dir === "rtl" ? "ml-2 h-4 w-4" : "mr-2 h-4 w-4"} />}
+        <Button variant="outline" onClick={refreshOperationalQueues} disabled={queue.isFetching || readyIssue.isFetching || pscmReadyIssue.isFetching || pendingReturns.isFetching}>
+          {(queue.isFetching || readyIssue.isFetching || pscmReadyIssue.isFetching || pendingReturns.isFetching) ? <Loader2 className={dir === "rtl" ? "ml-2 h-4 w-4 animate-spin" : "mr-2 h-4 w-4 animate-spin"} /> : <RefreshCw className={dir === "rtl" ? "ml-2 h-4 w-4" : "mr-2 h-4 w-4"} />}
           {t.common.refresh}
         </Button>
       </div>
@@ -225,7 +243,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
             </div>
             <div className="rounded-lg border bg-muted/20 p-3">
               <p className="text-xs text-muted-foreground">{t.workflow.pmv2.readyTaskIssue}</p>
-              <p className="mt-1 flex items-center gap-2 font-semibold"><PackageCheck className="h-4 w-4" />{readyIssueCount}</p>
+              <p className="mt-1 flex items-center gap-2 font-semibold"><PackageCheck className="h-4 w-4" />{readyIssueCountLabel}</p>
               <p className="mt-1 text-xs text-muted-foreground">{t.workflow.pmv2.waitingActualIssue}</p>
             </div>
             <div className="rounded-lg border bg-muted/20 p-3">
@@ -256,7 +274,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
           className={`flex items-center justify-between gap-2 rounded-lg px-4 py-3 text-start text-sm font-semibold transition-colors ${activeSection === "ready" ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted"}`}
         >
           <span className="flex items-center gap-2"><PackageCheck className="h-4 w-4" />{t.workflow.pmv2.readyForIssue}</span>
-          <span className={`rounded-full px-2 py-0.5 text-xs ${activeSection === "ready" ? "bg-primary-foreground/15" : "bg-muted"}`}>{readyIssueCount}</span>
+          <span className={`rounded-full px-2 py-0.5 text-xs ${activeSection === "ready" ? "bg-primary-foreground/15" : "bg-muted"}`}>{readyIssueCountLabel}</span>
         </button>
         <button
           type="button"
@@ -482,18 +500,19 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
       <section className="space-y-3" role="tabpanel">
         <div className="flex flex-col gap-1 border-b pb-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-lg font-semibold">{t.workflow.pmv2.readyIssueSectionTitle}</h2>
-            <p className="text-sm text-muted-foreground">{t.workflow.pmv2.readyIssueHelp}</p>
+            <h2 className="text-lg font-semibold">{pscmItems.length || hasPscmPages ? t.workflow.pmv2.pscmReadyTitle : t.workflow.pmv2.readyIssueSectionTitle}</h2>
+            {!pscmItems.length && !hasPscmPages && <p className="text-sm text-muted-foreground">{t.workflow.pmv2.readyIssueHelp}</p>}
           </div>
-          {!readyIssue.isLoading && !readyIssue.error && <Badge variant="secondary">{fmt(t.workflow.pmv2.materialCount, { count: readyIssueCount })}</Badge>}
+          {!loadingReadyIssue && !readyIssue.error && !pscmReadyIssue.error && <Badge variant="secondary">{fmt(t.workflow.pmv2.materialCount, { count: readyIssueCountLabel })}</Badge>}
         </div>
-        {readyIssue.isLoading ? (
+        {loadingReadyIssue ? (
           <Card><CardContent className="flex items-center justify-center gap-2 py-8 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> {t.workflow.pmv2.checkingReadyIssue}</CardContent></Card>
-        ) : readyIssue.error ? (
-          <Card className="border-red-200"><CardContent className="py-6 text-center text-red-700">{localizeApiError(readyIssue.error.message)}</CardContent></Card>
-        ) : !(readyIssue.data as any[] | undefined)?.length ? (
+        ) : !readyIssueCount && !readyIssue.error && !pscmReadyIssue.error && !hasPscmPages ? (
           <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">{t.workflow.pmv2.noReadyIssue}</CardContent></Card>
-        ) : (
+        ) : null}
+        {readyIssue.error ? (
+          <Card className="border-red-200"><CardContent className="py-6 text-center text-red-700">{localizeApiError(readyIssue.error.message)}</CardContent></Card>
+        ) : !!readyIssue.data?.length && (
           <div className="space-y-3">
             {(readyIssue.data as any[]).map((item: any) => {
               const selectedRecipient = recipientByRequirement[item.routeDecisionActionId] || String(item.defaultRecipientUserId || "");
@@ -570,6 +589,26 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
                 </Card>
               );
             })}
+          </div>
+        )}
+        {pscmReadyIssue.error && (
+          <Card className="border-red-200"><CardContent className="py-6 text-center text-red-700">{t.workflow.pmv2.pscmReadyFailure}</CardContent></Card>
+        )}
+        {!!pscmItems.length && !readOnly && pscmRecipients.error && (
+          <p className="text-sm text-destructive" role="alert">{t.workflow.pmv2.pscmRecipientFailure}</p>
+        )}
+        {pscmItems.map(item => (
+          <PscmReadyIssueCard key={item.purchaseOrderItemId} item={item} recipients={pscmRecipients.data ?? []}
+            readOnly={readOnly} onIssued={refreshAfterPscmIssue} />
+        ))}
+        {hasPscmPages && (
+          <div className="flex justify-end gap-2" aria-label="PSCM">
+            <Button variant="outline" size="sm" disabled={!pscmCursors.length || pscmReadyIssue.isFetching}
+              onClick={() => setPscmCursors(current => current.slice(0, -1))}>{t.common.previous}</Button>
+            <Button variant="outline" size="sm" disabled={nextPscmCursor == null || pscmReadyIssue.isFetching}
+              onClick={() => { if (nextPscmCursor != null) setPscmCursors(current => [...current, nextPscmCursor]); }}>
+              {t.common.next}
+            </Button>
           </div>
         )}
       </section>

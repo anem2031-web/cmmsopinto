@@ -146,8 +146,8 @@ export async function getInventoryItemById(id: number, tx?: any) {
   return result.length > 0 ? result[0] : null;
 }
 
-export async function getUserById(id: number) {
-  const db = await getDb();
+export async function getUserById(id: number, tx?: any) {
+  const db = tx || await getDb();
   if (!db) return null;
   const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
   return result.length > 0 ? result[0] : null;
