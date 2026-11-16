@@ -18,6 +18,7 @@ const serverEnvSchema = z.object({
   DEEPSEEK_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
   CATALOG_INTEGRATION_PUBLIC_ORIGIN: z.string().trim().optional(),
+  PSCM_REFERENCE_READ_TOKEN: z.string().trim().optional(),
   VITE_APP_ID: z.string().optional(),
 });
 

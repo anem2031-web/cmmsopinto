@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import { documentSearchPattern } from "../../../shared/document-list";
 import { normalizePmv2MaterialUnit } from "../../../shared/pmv2MaterialQuantity";
+import {
+  groupReadRows,
+  READ_SCOPE_CHUNK_SIZE,
+} from "../../_core/authz/read-batch";
 
 type Locale = "ar" | "en" | "ur";
 export type CatalogIntegrationQuery = {
@@ -10,6 +14,7 @@ export type CatalogIntegrationQuery = {
   pageSize: number;
   locale: Locale;
   ids?: number[];
+  nodeId?: number;
 };
 
 export interface CatalogIntegrationDatabase {
@@ -26,6 +31,14 @@ type ItemRow = {
   total?: number | string;
 };
 type UnitRow = { id: number; nameAr: string; nameEn: string };
+type CatalogNodeRow = {
+  id: number;
+  parentId: number | null;
+  code: string | null;
+  nameAr: string;
+  nameEn: string;
+  nameUr: string | null;
+};
 type ImageRow = { itemId: number; attachmentId: number };
 type SpecificationRow = {
   itemId: number;
@@ -184,14 +197,85 @@ function appendSpecification(existing: string, line: string) {
   return bytes.subarray(0, limit).toString("utf8");
 }
 
+async function activeCatalogNodeGroups(db: CatalogIntegrationDatabase) {
+  const activeNodes = await rows<CatalogNodeRow>(
+    db,
+    sql`SELECT id,parentId,code,nameAr,nameEn,nameUr FROM catalog_nodes
+      WHERE isActive=1 AND id>0 ORDER BY sortOrder,id`
+  );
+  return groupReadRows(activeNodes, node => node.parentId ?? 0);
+}
+
+function catalogDescendants(
+  nodesByParent: Map<number, CatalogNodeRow[]>,
+  parentId: number
+) {
+  const pending = [...(nodesByParent.get(parentId) ?? [])];
+  for (const node of pending) {
+    for (const child of nodesByParent.get(node.id) ?? []) pending.push(child);
+  }
+  return pending;
+}
+
+export async function readCatalogIntegrationTree(
+  db: CatalogIntegrationDatabase,
+  locale: Locale
+) {
+  const nodesByParent = await activeCatalogNodeGroups(db);
+  const nodes = catalogDescendants(nodesByParent, 0).map(
+    ({ id, parentId, code: recordedCode, nameAr, nameEn, nameUr }) => {
+      const code = recordedCode?.trim() || null;
+      return {
+        id,
+        parentId: parentId || null,
+        code,
+        name: localized(nameAr, nameEn, nameUr, locale) ?? code ?? String(id),
+      };
+    }
+  );
+  return { nodes };
+}
+
+async function catalogBranchFilter(
+  db: CatalogIntegrationDatabase,
+  nodeId: number
+) {
+  const nodesByParent = await activeCatalogNodeGroups(db);
+  // As in the picker, an active category needs a visible path from a root.
+  if (!catalogDescendants(nodesByParent, 0).some(node => node.id === nodeId))
+    return null;
+  const ids = [
+    nodeId,
+    ...catalogDescendants(nodesByParent, nodeId).map(node => node.id),
+  ];
+  const chunks: SQL[] = [];
+  for (let start = 0; start < ids.length; start += READ_SCOPE_CHUNK_SIZE) {
+    const values = ids.slice(start, start + READ_SCOPE_CHUNK_SIZE);
+    chunks.push(
+      sql`i.nodeId IN (${sql.join(
+        values.map(id => sql`${id}`),
+        sql`, `
+      )})`
+    );
+  }
+  return sql`(${sql.join(chunks, sql` OR `)})`;
+}
+
 export async function readCatalogIntegration(
   db: CatalogIntegrationDatabase,
   input: CatalogIntegrationQuery,
   requireCompleteItems: boolean,
   origin: string
 ) {
+  const page = input.ids ? 1 : input.page;
+  const pageSize = input.ids?.length ?? input.pageSize;
   const filters = [sql`i.isActive=1`];
   if (requireCompleteItems) filters.push(usableInPscm);
+  if (input.nodeId !== undefined) {
+    const branch = await catalogBranchFilter(db, input.nodeId);
+    if (!branch) return { items: [], total: 0, page, pageSize };
+    filters.push(branch);
+  }
   if (input.ids)
     filters.push(
       sql`i.id IN (${sql.join(
@@ -207,8 +291,6 @@ export async function readCatalogIntegration(
         WHERE aliases.entityType='item' AND aliases.entityId=i.id AND aliases.oldCode LIKE ${pattern} ESCAPE '='))`);
   }
   const where = sql.join(filters, sql` AND `);
-  const page = input.ids ? 1 : input.page;
-  const pageSize = input.ids?.length ?? input.pageSize;
   const countQuery = sql`SELECT COUNT(*) AS total FROM catalog_items i WHERE ${where}`;
   // A populated page and its total must see the same active catalog snapshot.
   const totalColumn = input.ids ? sql`` : sql`,matches.total`;

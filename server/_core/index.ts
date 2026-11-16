@@ -23,6 +23,7 @@ import { gateSecurityHttpAllowed } from "../../shared/gate-security-policy";
 import { assertMediaAccess } from "./authz/media-access";
 import { requireCatalogIntegrationToken } from "./db/catalog-integration-tokens";
 import { registerCatalogIntegrationRoutes } from "../services/catalog/catalogIntegrationRoutes";
+import { registerPscmReferenceRoutes } from "../services/pscm/reference-routes";
 import { authorizePurchaseDocument } from "./authz/purchase-document";
 import sharp from "sharp";
 import { transcodeVideoToCompatibleMp4 } from "./videoTranscode";
@@ -350,6 +351,7 @@ async function startServer() {
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ limit: "1mb", extended: true }));
   registerCatalogIntegrationRoutes(app, requireCatalogIntegrationToken, env.CATALOG_INTEGRATION_PUBLIC_ORIGIN);
+  registerPscmReferenceRoutes(app, env.PSCM_REFERENCE_READ_TOKEN);
 
   // ============================================================
   // C-02 FIX: تأمين Upload endpoint بمصادقة إلزامية

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { normalizeMediaKey } from "../../_core/authz/media-access";
 import {
   readCatalogIntegration,
+  readCatalogIntegrationTree,
   resolveCatalogIntegrationImage,
   type CatalogIntegrationDatabase,
 } from "./integration-reader";
@@ -34,11 +35,13 @@ const integerString = (max: number) =>
     .pipe(z.number().int().max(max));
 const itemId = integerString(2147483647);
 const requestSchema = z.object({
-  q: z.string().trim().max(150).optional().default(""),
-  page: integerString(2147483647).optional().default(1),
-  pageSize: integerString(100).optional().default(20),
+  view: z.literal("tree").optional(),
+  q: z.string().trim().max(150).optional(),
+  page: integerString(2147483647).optional(),
+  pageSize: integerString(100).optional(),
   locale: z.enum(["ar", "en", "ur"]).optional().default("ar"),
   ids: z.string().max(400).optional(),
+  nodeId: itemId.optional(),
 });
 const idsSchema = z
   .array(itemId)
@@ -50,9 +53,22 @@ const imageParamsSchema = z.object({ itemId, attachmentId: itemId });
 function parseCatalogQuery(values: unknown) {
   const parsed = requestSchema.safeParse(values);
   if (!parsed.success) return null;
-  const { ids: rawIds, ...query } = parsed.data;
+  const { view, q, page, pageSize, locale, ids: rawIds, nodeId } = parsed.data;
+  if (view === "tree") {
+    if ([q, page, pageSize, rawIds, nodeId].some(value => value !== undefined))
+      return null;
+    return { view, locale };
+  }
+  const query = {
+    view: "items" as const,
+    q: q ?? "",
+    page: page ?? 1,
+    pageSize: pageSize ?? 20,
+    locale,
+    nodeId,
+  };
   if (rawIds === undefined) return query;
-  if (query.q) return null;
+  if (query.q || nodeId !== undefined) return null;
   try {
     const selected = idsSchema.safeParse(JSON.parse(rawIds));
     return selected.success ? { ...query, ids: selected.data } : null;
@@ -147,14 +163,14 @@ export function registerCatalogIntegrationRoutes(
       if (!query)
         return res.status(400).json({ error: "Invalid catalog query" });
       if (!origin)
-        return res
-          .status(503)
-          .json({
-            error: "Catalog integration public origin is not configured",
-          });
+        return res.status(503).json({
+          error: "Catalog integration public origin is not configured",
+        });
       try {
         const db = await dependencies.database();
         if (!db) return res.status(503).json({ error: "Catalog unavailable" });
+        if (query.view === "tree")
+          return res.json(await readCatalogIntegrationTree(db, query.locale));
         const result = await readCatalogIntegration(
           db,
           query,

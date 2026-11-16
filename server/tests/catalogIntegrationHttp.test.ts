@@ -35,17 +35,26 @@ function fixture() {
       : 0
   );
   sqlite.exec(`
-    CREATE TABLE catalog_items(id INTEGER PRIMARY KEY, code TEXT, nameAr TEXT, nameEn TEXT, nameUr TEXT, unit TEXT, isActive INTEGER);
+    CREATE TABLE catalog_items(id INTEGER PRIMARY KEY, code TEXT, nameAr TEXT, nameEn TEXT, nameUr TEXT, unit TEXT, isActive INTEGER, nodeId INTEGER);
+    CREATE TABLE catalog_nodes(id INTEGER PRIMARY KEY, parentId INTEGER, code TEXT, nameAr TEXT, nameEn TEXT, nameUr TEXT, isActive INTEGER, sortOrder INTEGER);
     CREATE TABLE catalog_code_aliases(entityType TEXT, entityId INTEGER, oldCode TEXT);
     CREATE TABLE catalog_units(id INTEGER PRIMARY KEY, nameAr TEXT, nameEn TEXT, isActive INTEGER);
     CREATE TABLE catalog_item_specs(id INTEGER PRIMARY KEY, itemId INTEGER, specKeyAr TEXT, specKeyEn TEXT, specKeyUr TEXT, specValue TEXT, specUnit TEXT, sortOrder INTEGER);
     CREATE TABLE attachments(id INTEGER PRIMARY KEY, entityId INTEGER, entityType TEXT, fileKey TEXT, mimeType TEXT, fileName TEXT);
     INSERT INTO catalog_items VALUES
-      (1, '0001-A', 'أنبوب', 'Pipe', 'پائپ', 'متر', 1),
-      (2, '0002-B', 'صندوق', 'Box', NULL, 'كرتون', 1),
-      (3, 'HIDDEN', 'غير نشط', 'Inactive', NULL, 'متر', 0),
-      (4, NULL, 'صنف قديم', 'Legacy', NULL, NULL, 1),
-      (5, '0005-E', 'علبة', 'Carton', NULL, 'علبة', 1);
+      (1, '0001-A', 'أنبوب', 'Pipe', 'پائپ', 'متر', 1, 4),
+      (2, '0002-B', 'صندوق', 'Box', NULL, 'كرتون', 1, 1),
+      (3, 'HIDDEN', 'غير نشط', 'Inactive', NULL, 'متر', 0, 2),
+      (4, NULL, 'صنف قديم', 'Legacy', NULL, NULL, 1, 2),
+      (5, '0005-E', 'علبة', 'Carton', NULL, 'علبة', 1, 8);
+    INSERT INTO catalog_nodes VALUES
+      (1, NULL, '01', 'السباكة', 'Plumbing', 'پلمبنگ', 1, 5),
+      (2, 1, '01-01', 'الأنابيب', 'Pipes', NULL, 1, 5),
+      (4, 2, '01-01-01', 'البلاستيك', 'Plastic', NULL, 1, 5),
+      (6, 1, '01-02', 'فرع غير نشط', 'Inactive branch', NULL, 0, 1),
+      (7, 6, '01-02-01', 'فرع محجوب', 'Hidden branch', NULL, 1, 0),
+      (8, NULL, NULL, 'مواد عامة', 'General materials', NULL, 1, 1),
+      (9, 100, '01-03', 'فرع بلا أصل', 'Orphan branch', NULL, 1, 3);
     INSERT INTO catalog_units VALUES (9, 'متر', 'Metre', 1), (10, 'كرتون', 'Box', 1), (11, 'علبة', 'Carton', 1);
     INSERT INTO catalog_code_aliases VALUES ('item', 1, 'OLD_001'), ('item', 3, 'OLD_003');
     INSERT INTO catalog_item_specs VALUES (1, 1, 'القطر', 'Diameter', 'قطر', '110', 'mm', 0);
@@ -119,7 +128,14 @@ const selected = (ids: (string | number)[]) =>
 describe("CMMS catalog integration", () => {
   it("authenticates both lists and image reads before touching catalog data or storage", async () => {
     await withServer(async (request, fixture, images) => {
-      for (const path of [generic, pscm, generic + "/1/image/9"]) {
+      for (const path of [
+        generic,
+        pscm,
+        generic + "?view=tree",
+        pscm + "?view=tree",
+        pscm + "?nodeId=1",
+        generic + "/1/image/9",
+      ]) {
         expect(
           (await request(path, { headers: { Cookie: "session=unrelated" } }))
             .status
@@ -192,6 +208,113 @@ describe("CMMS catalog integration", () => {
     });
   });
 
+  it("returns the same localized, reachable active tree on both protected endpoints", async () => {
+    await withServer(async (request, data) => {
+      for (const path of [generic, pscm]) {
+        const response = await request(
+          path + "?view=tree&locale=ur",
+          authenticated
+        );
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({
+          nodes: [
+            { id: 8, parentId: null, code: null, name: "مواد عامة" },
+            { id: 1, parentId: null, code: "01", name: "پلمبنگ" },
+            { id: 2, parentId: 1, code: "01-01", name: "الأنابيب" },
+            { id: 4, parentId: 2, code: "01-01-01", name: "البلاستيك" },
+          ],
+        });
+      }
+      expect(data.queries).toHaveLength(2);
+      expect(data.queries[0].sql).toContain("WHERE isActive=1");
+    });
+  });
+
+  it("filters the entire chosen branch before counting and paging", async () => {
+    await withServer(async (request, data) => {
+      const first = await request(pscm + "?nodeId=1&pageSize=1", authenticated);
+      expect(await first.json()).toMatchObject({
+        items: [{ id: "2" }],
+        total: 2,
+        page: 1,
+        pageSize: 1,
+      });
+      expect(data.queries[1].sql).toContain("i.nodeId IN (?, ?, ?)");
+      expect(data.queries[1].params.slice(0, 3)).toEqual([1, 2, 4]);
+      const second = await request(
+        pscm + "?nodeId=1&page=2&pageSize=1",
+        authenticated
+      );
+      expect(await second.json()).toMatchObject({
+        items: [{ id: "1" }],
+        total: 2,
+        page: 2,
+        pageSize: 1,
+      });
+      const searched = await request(
+        generic + "?nodeId=2&q=OLD_001",
+        authenticated
+      );
+      expect(await searched.json()).toMatchObject({
+        items: [{ id: "1" }],
+        total: 1,
+      });
+      const wrongBranch = await request(
+        pscm + "?nodeId=8&q=OLD_001",
+        authenticated
+      );
+      expect(await wrongBranch.json()).toMatchObject({ items: [], total: 0 });
+    });
+  });
+
+  it("handles invisible branches and rejects conflicting tree or selection parameters", async () => {
+    await withServer(async (request, data) => {
+      data.sqlite.exec("UPDATE catalog_items SET nodeId=7 WHERE id=1");
+      for (const nodeId of [6, 7, 9, 100]) {
+        const response = await request(
+          pscm + "?nodeId=" + nodeId,
+          authenticated
+        );
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ items: [], total: 0 });
+      }
+      expect(data.queries).toHaveLength(4);
+      for (const query of [
+        "?view=tree&nodeId=1",
+        "?view=tree&page=3",
+        "?view=tree&q=pipe",
+        selected(["1"]) + "&nodeId=1",
+        "?nodeId=0",
+        "?nodeId=2147483648",
+      ]) {
+        expect((await request(pscm + query, authenticated)).status).toBe(400);
+      }
+      expect(data.queries).toHaveLength(4);
+    });
+  });
+
+  it("keeps branch IDs in bounded groups while querying and enriching one item page", async () => {
+    await withServer(async (request, data) => {
+      const insert = data.sqlite.prepare(
+        "INSERT INTO catalog_nodes VALUES (?, 1, NULL, 'فرع', 'Branch', NULL, 1, 0)"
+      );
+      for (let id = 1000; id < 1520; id++) insert.run(id);
+      data.sqlite.exec("UPDATE catalog_items SET nodeId=1519 WHERE id=1");
+      const response = await request(pscm + "?nodeId=1", authenticated);
+      expect(await response.json()).toMatchObject({
+        items: [{ id: "2" }, { id: "1" }],
+        total: 2,
+      });
+      expect(data.queries).toHaveLength(5);
+      const groups = [
+        ...data.queries[1].sql.matchAll(/i\.nodeId IN \(([^)]+)\)/g),
+      ];
+      expect(groups.map(group => group[1].split(",").length)).toEqual([
+        500, 23, 500, 23,
+      ]);
+    });
+  });
+
   it("returns exactly the requested item ids in order and fails unavailable or invalid batches atomically", async () => {
     await withServer(async (request, data) => {
       const response = await request(
@@ -234,7 +357,7 @@ describe("CMMS catalog integration", () => {
   it("populates a wide page with bounded batched reads after SQL filtering and paging", async () => {
     await withServer(async (request, data) => {
       const insert = data.sqlite.prepare(
-        "INSERT INTO catalog_items VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO catalog_items(id,code,nameAr,nameEn,nameUr,unit,isActive) VALUES (?, ?, ?, ?, ?, ?, ?)"
       );
       for (let id = 30; id < 140; id++)
         insert.run(id, "code" + id, "أنبوب", "Pipe", null, "متر", 1);

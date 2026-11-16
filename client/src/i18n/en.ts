@@ -1,4 +1,5 @@
 import type { TranslationKeys } from "@/i18n/ar";
+import { purchaseReviewRoleLabels } from "@shared/purchase-review-role-labels";
 
 const en: TranslationKeys = {
   appName: "Computerized Maintenance Management System",
@@ -446,9 +447,9 @@ const en: TranslationKeys = {
     validationCategoryRequired: "Please select the category.",
     reviewRoleLabel: "Item review department",
     reviewRolePlaceholder: "Select review department",
-    reviewRoleGeneral: "General maintenance and operations",
-    reviewRoleConstruction: "Construction",
-    reviewRoleOther: "Other — Senior management",
+    reviewRoleGeneral: purchaseReviewRoleLabels.en.general_maintenance_manager,
+    reviewRoleConstruction: purchaseReviewRoleLabels.en.construction_procurement_manager,
+    reviewRoleOther: purchaseReviewRoleLabels.en.senior_management,
     validationReviewRoleRequired: "Select the review department for item {item}.",
     selectReviewItem: "Select item for review",
     approveSelected: "Approve selected",

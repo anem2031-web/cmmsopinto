@@ -1,3 +1,5 @@
+import { purchaseReviewRoleLabels } from "@shared/purchase-review-role-labels";
+
 const ar = {
   // App
   appName: "نظام إدارة الصيانة المتكامل",
@@ -454,9 +456,9 @@ const ar = {
     validationCategoryRequired: "يرجى اختيار التصنيف.",
     reviewRoleLabel: "جهة مراجعة الصنف",
     reviewRolePlaceholder: "اختر جهة المراجعة",
-    reviewRoleGeneral: "الصيانة العامة والتشغيل",
-    reviewRoleConstruction: "الإنشاءات",
-    reviewRoleOther: "أخرى — الإدارة العليا",
+    reviewRoleGeneral: purchaseReviewRoleLabels.ar.general_maintenance_manager,
+    reviewRoleConstruction: purchaseReviewRoleLabels.ar.construction_procurement_manager,
+    reviewRoleOther: purchaseReviewRoleLabels.ar.senior_management,
     validationReviewRoleRequired: "اختر جهة المراجعة للصنف {item}.",
     selectReviewItem: "تحديد الصنف للمراجعة",
     approveSelected: "قبول المحدد",

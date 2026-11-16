@@ -1,4 +1,5 @@
 import type { TranslationKeys } from "@/i18n/ar";
+import { purchaseReviewRoleLabels } from "@shared/purchase-review-role-labels";
 
 const ur: TranslationKeys = {
   appName: "مربوط دیکھ بھال انتظامی نظام",
@@ -446,9 +447,9 @@ const ur: TranslationKeys = {
     validationCategoryRequired: "براہ کرم درجہ بندی منتخب کریں۔",
     reviewRoleLabel: "آئٹم کا جائزہ لینے والا شعبہ",
     reviewRolePlaceholder: "جائزے کا شعبہ منتخب کریں",
-    reviewRoleGeneral: "عمومی دیکھ بھال اور آپریشنز",
-    reviewRoleConstruction: "تعمیرات",
-    reviewRoleOther: "دیگر — اعلیٰ انتظامیہ",
+    reviewRoleGeneral: purchaseReviewRoleLabels.ur.general_maintenance_manager,
+    reviewRoleConstruction: purchaseReviewRoleLabels.ur.construction_procurement_manager,
+    reviewRoleOther: purchaseReviewRoleLabels.ur.senior_management,
     validationReviewRoleRequired: "آئٹم {item} کے لیے جائزے کا شعبہ منتخب کریں۔",
     selectReviewItem: "جائزے کے لیے آئٹم منتخب کریں",
     approveSelected: "منتخب کو منظور کریں",
