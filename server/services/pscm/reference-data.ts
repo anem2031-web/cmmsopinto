@@ -8,6 +8,12 @@ export type ReferenceQuery = { locale: Locale } & (
   | { type: "sites" | "purchaseOptions" }
   | { type: "sections"; siteId: number }
   | { type: "assets"; siteId: number; sectionId: number }
+  | {
+      type: "projectLocation";
+      siteId: number;
+      sectionId: number;
+      assetId?: number;
+    }
 );
 export interface ReferenceDatabase {
   execute(statement: SQL): PromiseLike<unknown>;
@@ -20,6 +26,18 @@ type ReferenceRow = {
   nameUr?: string | null;
 };
 type TranslationRow = { entityId: number; translatedText: string | null };
+type ProjectLocationRow = {
+  siteId: number;
+  siteName: string;
+  siteNameEn: string | null;
+  siteNameUr: string | null;
+  sectionId: number;
+  sectionName: string;
+  sectionNameEn: string | null;
+  sectionNameUr: string | null;
+  assetId: number | null;
+  assetName: string | null;
+};
 type Entity = "SITE" | "SECTION" | "ASSET" | "CENTER_CATEGORY";
 const maxReferences = 10_000;
 
@@ -46,7 +64,15 @@ async function readOptions(
   );
   if (rows.length > maxReferences)
     throw new Error("Reference list exceeds capacity");
+  return localizeOptions(db, rows, entity, locale);
+}
 
+async function localizeOptions(
+  db: ReferenceDatabase,
+  rows: ReferenceRow[],
+  entity: Entity,
+  locale: Locale
+) {
   // Use stored translations only; a reference fetch never queues or writes one.
   const translations = await readScopeChunks(
     rows.map(row => row.id),
@@ -82,6 +108,80 @@ async function readOptions(
       name: name.slice(0, 255).replace(/[\uD800-\uDBFF]$/, ""),
     };
   });
+}
+
+async function readProjectLocation(
+  db: ReferenceDatabase,
+  {
+    siteId,
+    sectionId,
+    assetId,
+    locale,
+  }: Extract<ReferenceQuery, { type: "projectLocation" }>
+) {
+  const assetColumns =
+    assetId === undefined
+      ? sql`NULL AS assetId, NULL AS assetName`
+      : sql`a.id AS assetId, a.name AS assetName`;
+  const assetJoin =
+    assetId === undefined
+      ? sql``
+      : sql`
+    JOIN assets a ON a.id = ${assetId} AND a.siteId = p.id AND a.sectionId = s.id
+      AND a.status <> 'disposed'
+  `;
+  const [row] = await selectRows<ProjectLocationRow>(
+    db,
+    sql`
+    SELECT p.id AS siteId, p.name AS siteName, p.nameEn AS siteNameEn, p.nameUr AS siteNameUr,
+      s.id AS sectionId, s.name AS sectionName, s.nameEn AS sectionNameEn, s.nameUr AS sectionNameUr,
+      ${assetColumns}
+    FROM sites p
+    JOIN sections s ON s.id = ${sectionId} AND s.siteId = p.id AND s.isActive = 1
+    ${assetJoin}
+    WHERE p.id = ${siteId} AND p.isActive = 1
+    LIMIT 1
+  `
+  );
+  if (!row) return null;
+
+  const [[site], [section], [asset]] = await Promise.all([
+    localizeOptions(
+      db,
+      [
+        {
+          id: row.siteId,
+          name: row.siteName,
+          nameEn: row.siteNameEn,
+          nameUr: row.siteNameUr,
+        },
+      ],
+      "SITE",
+      locale
+    ),
+    localizeOptions(
+      db,
+      [
+        {
+          id: row.sectionId,
+          name: row.sectionName,
+          nameEn: row.sectionNameEn,
+          nameUr: row.sectionNameUr,
+        },
+      ],
+      "SECTION",
+      locale
+    ),
+    row.assetId !== null && row.assetName !== null
+      ? localizeOptions(
+          db,
+          [{ id: row.assetId, name: row.assetName }],
+          "ASSET",
+          locale
+        )
+      : [],
+  ]);
+  return { site, section, asset: asset ?? null };
 }
 
 export async function readPscmReferences(
@@ -129,6 +229,8 @@ export async function readPscmReferences(
         "ASSET",
         locale
       );
+    case "projectLocation":
+      return readProjectLocation(db, query);
     case "purchaseOptions":
       return {
         categories: await readOptions(

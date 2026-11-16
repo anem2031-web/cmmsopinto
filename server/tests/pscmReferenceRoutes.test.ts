@@ -189,6 +189,11 @@ describe("PSCM reference HTTP API", () => {
         "?type=sections&siteId=1&siteId=2",
         "?type=sections&siteId=1.5",
         "?type=assets&siteId=1&sectionId=1%20OR%201=1",
+        "?type=projectLocation&siteId=1",
+        "?type=projectLocation&sectionId=11",
+        "?type=projectLocation&siteId=1&sectionId=11&assetId=",
+        "?type=projectLocation&siteId=1&sectionId=11&assetId=1&assetId=2",
+        "?type=projectLocation&siteId=1&sectionId=11&assetId=2147483648",
       ])
         expect((await read(query)).status).toBe(400);
       expect(open).not.toHaveBeenCalled();
@@ -218,6 +223,88 @@ describe("PSCM reference HTTP API", () => {
       expect(await json("?type=assets&siteId=4&sectionId=41")).toEqual([]);
       data.sqlite.exec("UPDATE sites SET isActive = 0 WHERE id = 1");
       expect(await json("?type=assets&siteId=1&sectionId=11")).toEqual([]);
+    });
+  });
+
+  it("resolves one localized project location with or without an asset", async () => {
+    await withServer(async (read, data) => {
+      const location = "?type=projectLocation&siteId=1&sectionId=11";
+      const denied = await read(location, { headers: {} });
+      expect(denied.status).toBe(401);
+      expect(data.queries).toHaveLength(0);
+
+      const without = await read(location + "&locale=en");
+      expect(without.status).toBe(200);
+      expect(await without.json()).toEqual({
+        site: { id: 1, name: "First site" },
+        section: { id: 11, name: "First section" },
+        asset: null,
+      });
+      expect(data.queries).toHaveLength(3);
+      expect(data.queries[0].sql).not.toMatch(/JOIN assets/);
+      expect(data.queries.slice(1).map(query => query.params)).toEqual([
+        ["SITE", "en", 1],
+        ["SECTION", "en", 11],
+      ]);
+
+      const withAsset = await read(location + "&assetId=101&locale=ar");
+      expect(withAsset.status).toBe(200);
+      expect(await withAsset.json()).toEqual({
+        site: { id: 1, name: "موقع أول" },
+        section: { id: 11, name: "قسم أول" },
+        asset: { id: 101, name: "المضخة" },
+      });
+      const eligibleInactiveAsset = await read(location + "&assetId=103");
+      expect((await eligibleInactiveAsset.json()).asset).toEqual({
+        id: 103,
+        name: "Inactive asset",
+      });
+    });
+  });
+
+  it("returns null for a project location with a missing or invalid ancestor or asset", async () => {
+    await withServer(async (read, data) => {
+      const invalidSelections = [
+        "siteId=1&sectionId=21",
+        "siteId=1&sectionId=12&assetId=108",
+        "siteId=3&sectionId=31&assetId=107",
+        "siteId=4&sectionId=41&assetId=109",
+        "siteId=1&sectionId=11&assetId=104",
+        "siteId=1&sectionId=11&assetId=105",
+        "siteId=1&sectionId=11&assetId=106",
+        "siteId=1&sectionId=11&assetId=999",
+      ];
+      for (const selection of invalidSelections) {
+        const response = await read("?type=projectLocation&" + selection);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toBeNull();
+      }
+      expect(data.queries).toHaveLength(invalidSelections.length);
+    });
+  });
+
+  it("validates a chosen asset by ID even when the section has more assets than a list can return", async () => {
+    await withServer(async (read, data) => {
+      data.sqlite.exec(`
+        WITH RECURSIVE n(id) AS (SELECT 1000 UNION ALL SELECT id + 1 FROM n WHERE id < 11099)
+        INSERT INTO assets SELECT id, 'Asset ' || id, 'active', 1, 11 FROM n;
+      `);
+      const response = await read(
+        "?type=projectLocation&siteId=1&sectionId=11&assetId=11099"
+      );
+      expect(response.status).toBe(200);
+      expect((await response.json()).asset).toEqual({
+        id: 11099,
+        name: "Asset 11099",
+      });
+      expect(data.queries).toHaveLength(4);
+      expect(data.queries[0].params).toEqual([11, 11099, 1]);
+      expect(data.queries[0].sql).toMatch(/LIMIT 1\s*$/);
+      expect(data.queries.slice(1).map(query => query.params)).toEqual([
+        ["SITE", "ar", 1],
+        ["SECTION", "ar", 11],
+        ["ASSET", "ar", 11099],
+      ]);
     });
   });
 

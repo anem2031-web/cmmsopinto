@@ -21,6 +21,13 @@ const referenceQuery = z.discriminatedUnion("type", [
     sectionId: id,
     locale,
   }),
+  z.strictObject({
+    type: z.literal("projectLocation"),
+    siteId: id,
+    sectionId: id,
+    assetId: id.optional(),
+    locale,
+  }),
   z.strictObject({ type: z.literal("purchaseOptions"), locale }),
 ]);
 
