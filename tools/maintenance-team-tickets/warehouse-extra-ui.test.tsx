@@ -235,11 +235,26 @@ function panel(
 describe("warehouse extra quantity with isolated UI/API boundaries", () => {
   it("shows actual replacement delivery usage separately from the retained original need", async () => {
     await initPanel(); fixture.state.assignments[0].stage = "ready_to_repair";
+    fixture.state.actions.push({
+      id: 93,
+      assignmentId: fixture.state.assignments[0].id,
+      actorId: 3,
+      kind: "execution_started",
+      note: '{"version":1,"visitKey":"replacement-visit"}',
+      revision: 3,
+      operationKey: "replacement-visit",
+      at: "2026-10-13T10:00:00Z",
+    });
     fixture.state.deliveries = [{ id: 1, needId: 12, deliveryId: 91, deliveryNumber: "DLV-ACTUAL", lotId: 14,
       quantity: 6, returned: 0, used: null, originalEquivalent: 5, replacementPlanId: 9, replacementName: "صنف بديل", physicalUnit: "متر" }];
-    fixture.index = 0;
-    const html = renderToStaticMarkup(<TicketExecutionControls state={fixture.state} assignment={fixture.state.assignments[0]} actorId={3} language="ar" busy={false}
-      onStart={async () => true} onEndVisit={async () => true} onNeedsMaterial={async () => true} onOutcome={async () => true} />);
+    const render = () => {
+      fixture.index = 0;
+      return renderToStaticMarkup(<TicketExecutionControls state={fixture.state} assignment={fixture.state.assignments[0]} actorId={3} language="ar" busy={false}
+        onStart={async () => true} onEndVisit={async () => true} onSaveMaterial={async () => true} onOutcome={async () => true} />);
+    };
+    render();
+    fixture.buttons.get("تم الإصلاح — حفظ الاستخدام").onClick();
+    const html = render();
     expect(html).toContain("حساس"); expect(html).toContain("صنف بديل"); expect(html).toContain("6 متر");
     expect(fixture.inputs.has("physical-used-91")).toBe(true);
     expect(fixture.inputs.has("used-12")).toBe(false);

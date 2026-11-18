@@ -2,7 +2,17 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
-const f = vi.hoisted(() => ({ values: [] as any[], index: 0, buttons: new Map<string, any>(), fields: new Map<string, any>(), commandItems: new Map<string, any>(), search: null as any, navigate: vi.fn() }));
+import type { NeedInput } from "../../shared/maintenance-team-tickets/model";
+const f = vi.hoisted(() => ({
+  values: [] as any[],
+  index: 0,
+  buttons: new Map<string, any>(),
+  fields: new Map<string, any>(),
+  commandItems: new Map<string, any>(),
+  search: null as any,
+  materialSubmit: undefined as ((need: NeedInput, confirmReceipt: boolean) => Promise<boolean>) | undefined,
+  navigate: vi.fn(),
+}));
 vi.mock("react", async original => {
   const actual = await original<typeof import("react")>();
   return { ...actual, useState: (initial: any) => {
@@ -11,6 +21,16 @@ vi.mock("react", async original => {
   } };
 });
 vi.mock("../../client/src/pages/maintenance-teams/team-execution-navigation", () => ({ useOpenTeamExecution: () => f.navigate }));
+vi.mock("../../client/src/pages/maintenance-teams/TicketMaterialNeedPanel", async original => {
+  const actual = await original<typeof import("../../client/src/pages/maintenance-teams/TicketMaterialNeedPanel")>();
+  return {
+    ...actual,
+    TicketMaterialNeedPanel: ({ onSubmit }: { onSubmit: NonNullable<typeof f.materialSubmit> }) => {
+      f.materialSubmit = onSubmit;
+      return <div aria-label="تحديد الاحتياج" />;
+    },
+  };
+});
 const text = (x: any): string => x == null || typeof x === "boolean" ? "" : Array.isArray(x) ? x.map(text).join("") : typeof x === "object" ? text(x.props?.children) : String(x);
 vi.mock("../../client/src/components/ui/button", async original => {
   const actual = await original<any>();
@@ -48,34 +68,120 @@ function state(started = false): Snapshot {
 }
 let s: Snapshot, calls: any[], language: string, actorId: number;
 function renderControls() {
-  f.index = 0; f.buttons.clear(); f.fields.clear();
-  return renderToStaticMarkup(<TicketExecutionControls state={s} assignment={s.assignments[0]} actorId={actorId} language={language} busy={false} onStart={async resume => { calls.push({ start: resume }); return true; }} onEndVisit={async () => { calls.push({ end: true }); return true; }} onNeedsMaterial={async () => { calls.push({ materials: true }); return true; }} onOutcome={async (outcome, input) => { calls.push({ outcome, input }); return true; }} />);
+  f.index = 0;
+  f.buttons.clear();
+  f.fields.clear();
+  f.materialSubmit = undefined;
+  return renderToStaticMarkup(
+    <TicketExecutionControls
+      state={s}
+      assignment={s.assignments[0]}
+      actorId={actorId}
+      language={language}
+      busy={false}
+      onStart={async resume => { calls.push({ start: resume }); return true; }}
+      onEndVisit={async () => { calls.push({ end: true }); return true; }}
+      onSaveMaterial={async (need, confirmReceipt) => { calls.push({ need, confirmReceipt }); return true; }}
+      onOutcome={async (outcome, input) => { calls.push({ outcome, input }); return true; }}
+    />
+  );
 }
 async function click(label: string) { const p = f.buttons.get(label); expect(p).toBeDefined(); expect(p.disabled).toBeFalsy(); p.onClick({ preventDefault() {} }); await Promise.resolve(); await Promise.resolve(); }
 beforeEach(() => { f.values = []; f.index = 0; f.commandItems.clear(); s = state(); calls = []; language = "ar"; actorId = 3; });
 describe("ticket execution PMV2 UI boundaries", () => {
   it("renders the five choices in native theme but prevents results until start", async () => {
-    const html = renderControls(); for (const label of ["سليم", "تم الإصلاح", "تحتاج مواد", "يوجد عائق", "صيانة خارجية"]) { expect(html).toContain(label); expect(f.buttons.get(label).disabled).toBe(true); }
-    expect(html).toContain('data-slot="button"'); await click("بدء التنفيذ"); expect(calls).toEqual([{ start: false }]);
+    renderControls();
+    const labels = ["سليم", "تم الإصلاح", "تحتاج مواد", "يوجد عائق", "صيانة خارجية"];
+    for (const label of labels) expect(f.buttons.get(label)?.disabled ?? true).toBe(true);
+    await click("بدء التنفيذ"); expect(calls).toEqual([{ start: false }]);
+    s = state(true);
+    expect(renderControls()).toContain('data-slot="button"');
+    for (const label of labels) expect(f.buttons.get(label)?.disabled).toBe(false);
   });
-  it("working technician records OK immediately through the ticket callback", async () => { s = state(true); renderControls(); await click("سليم"); expect(calls[0]).toEqual({ outcome: "ok", input: { note: "", otherMaterials: undefined, usages: [] } }); });
+  it("backs out of an accidental OK and records blocked only when explicitly saved", async () => {
+    s = state(true);
+    renderControls();
+    await click("سليم");
+    renderControls();
+    expect(calls).toEqual([]);
+    expect(f.buttons.get("حفظ النتيجة")?.disabled).toBe(false);
+    f.fields.get("ملاحظات الفحص").onChange({ target: { value: "ملاحظة من مسودة سليم" } });
+    renderControls();
+    await click("رجوع للخلف");
+    renderControls();
+    expect(calls).toEqual([]);
+    expect(f.buttons.has("حفظ النتيجة")).toBe(false);
+    await click("يوجد عائق");
+    renderControls();
+    const field = f.fields.get("سبب العائق (إلزامي)");
+    expect(field.value).toBe("");
+    field.onChange({ target: { value: "تعذّر الوصول إلى الأصل" } });
+    renderControls();
+    await click("حفظ وإرسال للمسؤول");
+    expect(calls).toEqual([{ outcome: "blocked", input: { note: "تعذّر الوصول إلى الأصل", usages: [] } }]);
+  });
+  it("records OK only after the technician saves the draft", async () => {
+    s = state(true); renderControls(); await click("سليم"); renderControls();
+    expect(calls).toEqual([]);
+    await click("حفظ النتيجة");
+    expect(calls).toMatchObject([{ outcome: "ok", input: { note: "", usages: [] } }]);
+  });
   it("repair needs details even though PMV2's original note is optional", async () => {
-    s = state(true); renderControls(); await click("تم الإصلاح"); expect(calls).toEqual([]); expect(renderControls()).toContain("تفاصيل الإصلاح إلزامية");
-    const field = [...f.fields.values()].find(p => p.placeholder?.startsWith("ملاحظات الفحص")); field.onChange({ target: { value: "إصلاح المكيف" } }); renderControls(); await click("تم الإصلاح"); expect(calls[0].input.note).toBe("إصلاح المكيف");
+    s = state(true); renderControls(); await click("تم الإصلاح"); renderControls();
+    if (!f.buttons.get("تم الإصلاح").disabled) await click("تم الإصلاح");
+    expect(calls).toEqual([]);
+    const field = [...f.fields.values()].find(p => typeof p.onChange === "function");
+    field.onChange({ target: { value: "إصلاح المكيف" } }); renderControls(); await click("تم الإصلاح"); expect(calls[0].input.note).toBe("إصلاح المكيف");
   });
-  it("needs materials routes only through its dedicated ticket callback", async () => { s = state(true); renderControls(); await click("تحتاج مواد"); expect(calls).toEqual([{ materials: true }]); });
+  it("backs out of the materials picker to request external maintenance without registering material", async () => {
+    s = state(true);
+    renderControls();
+    await click("تحتاج مواد");
+    renderControls();
+    expect(f.materialSubmit).toBeTypeOf("function");
+    expect(f.buttons.get("رجوع للخلف")?.className).toContain("bg-amber-100");
+    expect(calls).toEqual([]);
+    await click("رجوع للخلف");
+    renderControls();
+    expect(f.materialSubmit).toBeUndefined();
+    expect(calls).toEqual([]);
+    await click("صيانة خارجية");
+    renderControls();
+    const field = f.fields.get("المطلوب من الصيانة الخارجية (إلزامي)");
+    field.onChange({ target: { value: "فحص اللوحة خارج الموقع" } });
+    renderControls();
+    await click("حفظ وإرسال للمسؤول");
+    expect(calls).toEqual([{ outcome: "external", input: { note: "فحص اللوحة خارج الموقع", usages: [] } }]);
+  });
+  it("registers the chosen material only when it is saved", async () => {
+    s = state(true); renderControls(); await click("تحتاج مواد"); renderControls();
+    expect(calls).toEqual([]);
+    const need = { catalogItemId: 101, quantity: 3, unit: "قطعة" };
+    await f.materialSubmit!(need, false);
+    expect(calls).toEqual([{ need, confirmReceipt: false }]);
+    s.assignments[0].stage = "waiting_material";
+    renderControls();
+    expect(f.materialSubmit).toBeTypeOf("function");
+    expect(f.buttons.has("رجوع للخلف")).toBe(false);
+  });
   it.each(["يوجد عائق", "صيانة خارجية"])("%s retains required details and current manager handoff", async label => {
-    s = state(true); renderControls(); await click(label); expect(renderControls()).toContain('role="alertdialog"'); expect(f.buttons.get("حفظ وإرسال للمسؤول").disabled).toBe(true);
-    f.fields.get("dependency").onChange({ target: { value: "تفاصيل مطلوبة" } }); renderControls(); await click("حفظ وإرسال للمسؤول"); expect(calls[0].outcome).toBe(label === "يوجد عائق" ? "blocked" : "external"); expect(calls[0].input.usages).toEqual([]);
+    s = state(true); renderControls(); await click(label); renderControls(); expect(f.buttons.get("حفظ وإرسال للمسؤول").disabled).toBe(true);
+    const field = [...f.fields.values()].find(p => typeof p.onChange === "function");
+    field.onChange({ target: { value: "تفاصيل مطلوبة" } }); renderControls(); await click("حفظ وإرسال للمسؤول"); expect(calls[0].outcome).toBe(label === "يوجد عائق" ? "blocked" : "external"); expect(calls[0].input.usages).toEqual([]);
   });
-  it("nonparticipant sees join and cannot record results or end another leader's visit", async () => { s = state(true); actorId = 4; renderControls(); expect(f.buttons.has("إنهاء الزيارة")).toBe(false); expect(f.buttons.get("تم الإصلاح").disabled).toBe(true); await click("الانضمام للتنفيذ"); expect(calls).toEqual([{ start: false }]); });
-  it("after receipt shows resume, then the same green usage card without OK or another material request", async () => {
+  it("nonparticipant sees join and cannot record results or end another leader's visit", async () => { s = state(true); actorId = 4; renderControls(); expect(f.buttons.has("إنهاء الزيارة")).toBe(false); expect(f.buttons.get("تم الإصلاح")?.disabled ?? true).toBe(true); await click("الانضمام للتنفيذ"); expect(calls).toEqual([{ start: false }]); });
+  it("after receipt shows resume, then repair usage without OK or another material request", async () => {
     s = state(); s.assignments[0].stage = "ready_to_repair"; renderControls(); await click("استكمال العمل"); expect(calls).toEqual([{ start: true }]);
     s = state(true); s.assignments[0].stage = "ready_to_repair";
     s.needs = [{ id: 12, assignmentId: 1, catalogItemId: 101, name: "قاطع", originalName: "قاطع", unit: "قطعة", requested: 4, requestedById: 3, warehouseId: 20, round: 1, used: null }];
     s.deliveries = [{ id: 5, needId: 12, deliveryId: 10, deliveryNumber: "MOCK-DLV-1", lotId: 1, inventoryTransactionId: 2, quantity: 4, receivedById: 3, used: null, returned: 0 }];
-    const html = renderControls(); expect(html).toContain("border-emerald-200"); expect(f.fields.get("used-12").value).toBe(""); expect(f.buttons.has("سليم")).toBe(false); expect(f.buttons.has("تحتاج مواد")).toBe(false);
-    f.fields.get("used-12").onChange({ target: { value: "3" } }); const field = [...f.fields.values()].find(p => p.placeholder?.startsWith("ملاحظات الفحص")); field.onChange({ target: { value: "تفاصيل الإصلاح" } });
+    renderControls(); expect(f.buttons.has("سليم")).toBe(false); expect(f.buttons.has("تحتاج مواد")).toBe(false);
+    await click("تم الإصلاح — حفظ الاستخدام");
+    expect(renderControls()).toContain("الكمية المستخدمة فعليًا");
+    expect(f.fields.get("used-12").value).toBe("");
+    f.fields.get("used-12").onChange({ target: { value: "3" } });
+    const field = [...f.fields.entries()].find(([key, p]) => key !== "used-12" && typeof p.onChange === "function")?.[1];
+    field.onChange({ target: { value: "تفاصيل الإصلاح" } });
     expect(renderControls()).toContain("المرتجع: 1"); await click("تم الإصلاح — حفظ الاستخدام"); expect(calls.at(-1).input.usages).toEqual([{ catalogItemId: 101, used: 3 }]);
   });
   it("only leader can end a waiting or reviewed visit and result remains separate from ticket closure", async () => { s = state(true); s.assignments[0].stage = "awaiting_review"; renderControls(); expect(f.buttons.get("إنهاء الزيارة").disabled).toBe(false); await click("إنهاء الزيارة"); expect(calls).toEqual([{ end: true }]); });

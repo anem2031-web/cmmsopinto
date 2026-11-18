@@ -30,10 +30,7 @@ import {
   materialSupplyRemaining,
   materialActionMessage,
 } from "@shared/maintenance-team-tickets/material-routing";
-import {
-  TicketMaterialNeedPanel,
-  TicketMaterialReceiptButton,
-} from "./TicketMaterialNeedPanel";
+import { TicketMaterialReceiptButton } from "./TicketMaterialNeedPanel";
 import {
   materialSection,
   type WarehouseSection,
@@ -322,7 +319,6 @@ export function ExecutionPanel({
             m => m.teamId === a.teamId && m.userId === u.id && m.active
           )))
   );
-  const current = state.needs.filter(n => n.round === a.materialRound);
   const selectClass =
     "h-10 rounded-md border border-input bg-background px-3 text-sm w-full";
   const review = (
@@ -369,34 +365,21 @@ export function ExecutionPanel({
       )}
       {technician && role === "technician" && <ExecutionElapsedTime language={language} startedAt={ticketExecutionSession(state, a).visits.at(-1)?.startedAt} endedAt={ticketExecutionSession(state, a).visits.at(-1)?.endedAt} />}
       {technician && <TicketExecutionControls
-        key={a.id}
+        key={`${a.id}:${a.stage}`}
         state={state} assignment={a} actorId={actorId} language={language} busy={busy}
         onStart={resume => run(resume ? "resume_item" : "start_item", { resume }, c =>
           resume ? utils.client.ticketTeamExecution.resumeItem.mutate(c) : utils.client.ticketTeamExecution.startItem.mutate(c))}
         onEndVisit={() => run("end_visit", {}, c => utils.client.ticketTeamExecution.endVisit.mutate(c))}
-        onNeedsMaterial={() => run("begin_material_need", {}, c => utils.client.ticketTeamExecution.beginMaterialNeed.mutate(c))}
+        onSaveMaterial={(need, confirmReceipt) =>
+          run("register_material_need", { need, confirmReceipt }, c =>
+            utils.client.ticketTeamExecution.registerMaterialNeed.mutate({
+              ...c,
+              need,
+              confirmReceipt,
+            })
+          )}
         onOutcome={(outcome, input) => run("outcome", { outcome, ...input }, c => utils.client.ticketTeamExecution.outcome.mutate({ ...c, outcome, ...input }))}
       />}
-      {technician && a.stage === "waiting_material" && (
-        <TicketMaterialNeedPanel
-          assignmentId={assignmentId}
-          currentNeeds={current}
-          warehouseName={
-            state.warehouses.find(w => w.id === a.warehouseId)?.name ?? ""
-          }
-          language={language}
-          busy={busy}
-          onSubmit={(need, confirmReceipt) =>
-            run("register_material_need", { need, confirmReceipt }, c =>
-              utils.client.ticketTeamExecution.registerMaterialNeed.mutate({
-                ...c,
-                need,
-                confirmReceipt,
-              })
-            )
-          }
-        />
-      )}
       {technician && <TicketTechnicianMaterials state={state} assignment={a} balances={balances.data ?? []} language={language} busy={busy}
         onReceive={needId => run("receive", { needId }, c => utils.client.ticketTeamExecution.receive.mutate({ ...c, needId }))} />}
       {!!state.needs.length && !technician && (

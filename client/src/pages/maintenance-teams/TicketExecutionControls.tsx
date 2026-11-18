@@ -1,35 +1,33 @@
 import { useState } from "react";
-import { CheckCircle2, PlayCircle, Users, Wrench } from "lucide-react";
+import { ArrowLeft, CheckCircle2, PlayCircle, Users, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
 import ar from "@/i18n/ar";
 import en from "@/i18n/en";
 import ur from "@/i18n/ur";
-import { issued, isPreConversionDelivery, type Snapshot, type Assignment, type Outcome, type CompletionInput } from "@shared/maintenance-team-tickets/model";
+import { issued, isPreConversionDelivery, type Snapshot, type Assignment, type Outcome, type CompletionInput, type NeedInput } from "@shared/maintenance-team-tickets/model";
 import { ticketExecutionSession } from "@shared/maintenance-team-tickets/execution-session";
 import { useExecutionDraftDirty } from "./ExecutionLeaveGuard";
+import { TicketMaterialNeedPanel } from "./TicketMaterialNeedPanel";
 
 /** PMV2 presentation and labels; all callbacks operate on the ticket assignment only. */
-export function TicketExecutionControls({ state, assignment: a, actorId, language, busy, onStart, onEndVisit, onNeedsMaterial, onOutcome }: {
+export function TicketExecutionControls({ state, assignment: a, actorId, language, busy, onStart, onEndVisit, onSaveMaterial, onOutcome }: {
   state: Snapshot; assignment: Assignment; actorId: number; language: string; busy: boolean;
   onStart: (resume: boolean) => Promise<boolean>; onEndVisit: () => Promise<boolean>;
-  onNeedsMaterial: () => Promise<boolean>;
+  onSaveMaterial: (need: NeedInput, confirmReceipt: boolean) => Promise<boolean>;
   onOutcome: (outcome: Exclude<Outcome, "needs_material">, input: CompletionInput) => Promise<boolean>;
 }) {
   const t = (language === "ar" ? ar : language === "ur" ? ur : en).workflow.pmv2;
   const l = (a: string, e: string, u: string) => language === "ar" ? a : language === "ur" ? u : e;
   const session = ticketExecutionSession(state, a);
+  const [selectedOutcome, setSelectedOutcome] = useState<Outcome | null>(null);
   const [note, setNote] = useState("");
   const [otherMaterials, setOtherMaterials] = useState("");
   const [usages, setUsages] = useState<Record<number, string>>({});
-  const [dependency, setDependency] = useState<"blocked" | "external" | null>(null);
-  const [dependencyNote, setDependencyNote] = useState("");
-  const [error, setError] = useState("");
   const [physicalUsages, setPhysicalUsages] = useState<Record<number, string>>({});
-  useExecutionDraftDirty(Boolean(note.trim() || otherMaterials.trim() || Object.keys(usages).length || Object.keys(physicalUsages).length || dependency && dependencyNote.trim()));
+  useExecutionDraftDirty(Boolean(note.trim() || otherMaterials.trim() || Object.keys(usages).length || Object.keys(physicalUsages).length));
   const current = state.needs.filter(n => n.assignmentId === a.id && n.round === a.materialRound);
   const substituted = current.filter(n => state.deliveries.some(d => d.needId === n.id && (d.replacementPlanId != null || isPreConversionDelivery(d))));
   const actualDeliveries = state.deliveries.filter(d => substituted.some(n => n.id === d.needId));
@@ -37,18 +35,44 @@ export function TicketExecutionControls({ state, assignment: a, actorId, languag
   const materialCompletion = a.stage === "ready_to_repair";
   const leader = session.openVisit?.leaderId === actorId;
   const participating = session.working && !!session.openVisit?.memberIds.includes(actorId);
-  async function submit(outcome: "ok" | "fixed") {
-    setError("");
-    if (outcome === "fixed" && !note.trim()) {
-      setError(l("تفاصيل الإصلاح إلزامية", "Repair details are required", "مرمت کی تفصیل ضروری ہے")); return;
-    }
+  const selection = actionable && participating ? selectedOutcome : null;
+  const editingMaterials = selection === "needs_material";
+  const result = selection === "needs_material" ? null : selection;
+  const outcomeLabels = {
+    ok: t.ok,
+    fixed: materialCompletion ? t.saveFixedUsage : t.fixed,
+    needs_material: t.needsMaterial,
+    blocked: l("يوجد عائق", "Obstacle", "رکاوٹ"),
+    external: l("صيانة خارجية", "External maintenance", "بیرونی مرمت"),
+  };
+  const noteLabels = {
+    ok: l("ملاحظات الفحص", "Inspection notes", "معائنے کے نوٹس"),
+    fixed: l("تفاصيل الإصلاح (إلزامية)", "Repair details (required)", "مرمت کی تفصیل (ضروری)"),
+    blocked: l("سبب العائق (إلزامي)", "Obstacle reason (required)", "رکاوٹ کی وجہ (ضروری)"),
+    external: l("المطلوب من الصيانة الخارجية (إلزامي)", "External work needed (required)", "بیرونی مرمت کی ضرورت (ضروری)"),
+  };
+  function discard() {
+    setSelectedOutcome(null);
+    setNote("");
+    setOtherMaterials("");
+    setUsages({});
+    setPhysicalUsages({});
+  }
+  async function submit(outcome: Exclude<Outcome, "needs_material">) {
     const input: CompletionInput = {
       note, otherMaterials: outcome === "fixed" ? otherMaterials : undefined,
       usages: outcome === "fixed" ? current.filter(n => !substituted.includes(n)).map(n => ({ catalogItemId: n.catalogItemId!, used: Number(usages[n.id] ?? issued(state, n.id)) })) : [],
       ...(outcome === "fixed" && actualDeliveries.length ? { physicalUsages: actualDeliveries.map(d => ({ deliveryId: d.deliveryId, used: Number(physicalUsages[d.deliveryId] ?? d.quantity - d.returned) })) } : {}),
     };
-    if (await onOutcome(outcome, input)) { setNote(""); setOtherMaterials(""); setUsages({}); setPhysicalUsages({}); }
+    if (await onOutcome(outcome, input)) discard();
   }
+  const backButton = (
+    <Button type="button" size="sm" variant="outline" disabled={busy} onClick={discard}
+      className="min-h-10 border-amber-500 bg-amber-100 font-semibold text-amber-950 hover:bg-amber-200 hover:text-amber-950">
+      <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
+      {l("رجوع للخلف", "Go back", "واپس جائیں")}
+    </Button>
+  );
   return <div className="space-y-4">
     {session.conflict && <p role="alert" className="text-sm text-destructive">{t.multipleOpenVisits}</p>}
     {session.openVisit && <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
@@ -65,37 +89,70 @@ export function TicketExecutionControls({ state, assignment: a, actorId, languag
       <Button size="sm" className={materialCompletion ? "w-full" : undefined} disabled={busy || session.conflict} onClick={() => void onStart(a.stage !== "action_required")}><PlayCircle className="me-1 h-4 w-4" />{a.stage === "action_required" ? t.startExecution : t.resumeWork}</Button>
     </div>}
     {session.working && session.openVisit && !session.openVisit.memberIds.includes(actorId) && <Button size="sm" variant="outline" disabled={busy} onClick={() => void onStart(a.stage !== "action_required")}><Users className="me-1 h-4 w-4" />{l("الانضمام للتنفيذ", "Join execution", "کام میں شامل ہوں")}</Button>}
-    {actionable && <div className={materialCompletion ? "space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 sm:w-[420px]" : "w-full space-y-2 sm:w-[360px]"}>
+    {actionable && !selection && <div className={materialCompletion ? "space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 sm:w-[420px]" : "w-full space-y-2 sm:w-[360px]"}>
       {materialCompletion && <p className="text-sm font-semibold">{t.completeRepairAfterMaterials}</p>}
-      <Textarea rows={2} maxLength={4000} disabled={busy || !participating} value={note} onChange={e => setNote(e.target.value)} placeholder={l("ملاحظات الفحص / تفاصيل الإصلاح (إلزامية عند الإصلاح)", "Inspection notes / repair details (required for repair)", "معائنے کے نوٹس / مرمت کی تفصیل (مرمت کے لیے ضروری)")} />
-      {current.length > 0 && current.map(n => <div key={n.id} className="rounded-md border bg-background p-2 text-xs">
+      <div className="flex flex-wrap gap-2">
+        {!current.length && a.stage !== "reinstall_required" && (
+          <Button type="button" size="sm" disabled={busy || !participating} onClick={() => setSelectedOutcome("ok")}>
+            <CheckCircle2 className="me-1 h-4 w-4" />{outcomeLabels.ok}
+          </Button>
+        )}
+        <Button type="button" size="sm" variant={materialCompletion ? "default" : "outline"} disabled={busy || !participating} onClick={() => setSelectedOutcome("fixed")}>
+          <Wrench className="me-1 h-4 w-4" />{outcomeLabels.fixed}
+        </Button>
+        {a.stage === "action_required" && !current.length && (
+          <Button type="button" size="sm" variant="outline" disabled={busy || !participating} onClick={() => setSelectedOutcome("needs_material")}>
+            {outcomeLabels.needs_material}
+          </Button>
+        )}
+        {a.stage !== "reinstall_required" && (["blocked", "external"] as const).map(outcome => (
+          <Button key={outcome} type="button" size="sm" variant="outline" disabled={busy || !participating} onClick={() => setSelectedOutcome(outcome)}>
+            {outcomeLabels[outcome]}
+          </Button>
+        ))}
+      </div>
+    </div>}
+    {result && <div className={`w-full space-y-3 rounded-lg border p-3 sm:max-w-[420px] ${
+      materialCompletion && result === "fixed" ? "border-emerald-200 bg-emerald-50/40" : "bg-muted/20"
+    }`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-semibold">{result === "fixed" ? t.fixed : outcomeLabels[result]}</p>
+        {backButton}
+      </div>
+      <Textarea rows={2} maxLength={4000} disabled={busy} value={note} onChange={e => setNote(e.target.value)} aria-label={noteLabels[result]} placeholder={noteLabels[result]} />
+      {result === "fixed" && current.map(n => <div key={n.id} className="rounded-md border bg-background p-2 text-xs">
         <p className="font-medium">{n.name} — {n.unit}</p><p>{t.issuedForTask}: {issued(state, n.id)}</p>
         {substituted.includes(n) ? state.deliveries.filter(d => d.needId === n.id).map(d => <div className="mt-2 rounded border p-2" key={d.deliveryId}>
           <p>{d.replacementName ?? n.name} — {d.quantity - d.returned} {d.physicalUnit ?? n.unit} · {d.deliveryNumber}</p>
           <label htmlFor={`physical-used-${d.deliveryId}`} className="mt-1 block font-medium">{l("المستخدم الفعلي من هذا السند", "Actual quantity used from this delivery", "اس رسید سے اصل استعمال شدہ مقدار")}</label>
-          <Input id={`physical-used-${d.deliveryId}`} type="number" min={0} max={d.quantity - d.returned} step={1} disabled={busy || !participating}
+          <Input id={`physical-used-${d.deliveryId}`} type="number" min={0} max={d.quantity - d.returned} step={1} disabled={busy}
             value={physicalUsages[d.deliveryId] ?? ""} onChange={e => setPhysicalUsages(v => ({ ...v, [d.deliveryId]: e.target.value }))} />
           <p className="mt-1 text-muted-foreground">{l("المرتجع الفعلي", "Actual return", "اصل واپسی")}: {Math.max(0, d.quantity - d.returned - Number(physicalUsages[d.deliveryId] ?? d.quantity - d.returned))} {d.physicalUnit ?? n.unit}</p>
         </div>) : <>
         <label htmlFor={`used-${n.id}`} className="mt-2 block font-medium">{t.usedQuantityLabel}</label>
-        <Input id={`used-${n.id}`} type="number" min={0} max={issued(state, n.id) - state.deliveries.filter(d => d.needId === n.id).reduce((sum, d) => sum + d.returned, 0)} step={1} disabled={busy || !participating} value={usages[n.id] ?? ""} onChange={e => setUsages(v => ({ ...v, [n.id]: e.target.value }))} />
+        <Input id={`used-${n.id}`} type="number" min={0} max={issued(state, n.id) - state.deliveries.filter(d => d.needId === n.id).reduce((sum, d) => sum + d.returned, 0)} step={1} disabled={busy} value={usages[n.id] ?? ""} onChange={e => setUsages(v => ({ ...v, [n.id]: e.target.value }))} />
         <p className="mt-1 text-muted-foreground">{l("المرتجع", "Return", "واپسی")}: {Math.max(0, issued(state, n.id) - Number(usages[n.id] ?? issued(state, n.id)))}</p>
         </>}
       </div>)}
-      {session.working && <Textarea maxLength={4000} rows={2} value={otherMaterials} onChange={e => setOtherMaterials(e.target.value)} disabled={busy} placeholder={l("مواد أخرى استُخدمت وتفاصيلها (إن وجدت)", "Other materials used and details (if any)", "دیگر استعمال شدہ مواد کی تفصیل")} />}
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      <div className="flex flex-wrap gap-2">
-        {!current.length && a.stage !== "reinstall_required" && <Button size="sm" disabled={busy || !participating} onClick={() => void submit("ok")}><CheckCircle2 className="me-1 h-4 w-4" />{t.ok}</Button>}
-        <Button size="sm" variant={materialCompletion ? "default" : "outline"} disabled={busy || !participating} onClick={() => void submit("fixed")}><Wrench className="me-1 h-4 w-4" />{materialCompletion ? t.saveFixedUsage : t.fixed}</Button>
-        {a.stage === "action_required" && !current.length && <Button size="sm" variant="outline" disabled={busy || !participating} onClick={() => void onNeedsMaterial()}>{t.needsMaterial}</Button>}
-        {a.stage !== "reinstall_required" && (["blocked", "external"] as const).map(value => <Button key={value} size="sm" variant="outline" disabled={busy || !participating} onClick={() => { setDependency(value); setDependencyNote(""); }}>{value === "blocked" ? l("يوجد عائق", "Obstacle", "رکاوٹ") : l("صيانة خارجية", "External maintenance", "بیرونی مرمت")}</Button>)}
-      </div>
+      {result === "fixed" && <Textarea maxLength={4000} rows={2} value={otherMaterials} onChange={e => setOtherMaterials(e.target.value)} disabled={busy} placeholder={l("مواد أخرى استُخدمت وتفاصيلها (إن وجدت)", "Other materials used and details (if any)", "دیگر استعمال شدہ مواد کی تفصیل (اگر کوئی ہو)")} />}
+      <Button type="button" size="sm" disabled={busy || (result !== "ok" && !note.trim())} onClick={() => void submit(result)}>
+        {result === "ok" ? l("حفظ النتيجة", "Save result", "نتیجہ محفوظ کریں") : result === "fixed" ? outcomeLabels.fixed : l("حفظ وإرسال للمسؤول", "Save and send to manager", "محفوظ کریں اور ذمہ دار کو بھیجیں")}
+      </Button>
     </div>}
-    <AlertDialog open={dependency !== null} onOpenChange={open => { if (!open && !busy) setDependency(null); }}>
-      <AlertDialogContent dir={language === "en" ? "ltr" : "rtl"}><AlertDialogHeader><AlertDialogTitle>{dependency === "blocked" ? l("سبب العائق (إلزامي)", "Obstacle reason (required)", "رکاوٹ کی وجہ (ضروری)") : l("المطلوب من الصيانة الخارجية (إلزامي)", "External work needed (required)", "بیرونی مرمت کی ضرورت (ضروری)")}</AlertDialogTitle></AlertDialogHeader>
-        <Textarea rows={4} maxLength={4000} value={dependencyNote} disabled={busy} onChange={e => setDependencyNote(e.target.value)} />
-        <AlertDialogFooter><AlertDialogCancel disabled={busy}>{t.cancel}</AlertDialogCancel><AlertDialogAction disabled={busy || !dependencyNote.trim()} onClick={e => { e.preventDefault(); if (dependency) void onOutcome(dependency, { note: dependencyNote, usages: [] }).then(saved => { if (saved) setDependency(null); }); }}>{l("حفظ وإرسال للمسؤول", "Save and send to manager", "محفوظ کریں اور ذمہ دار کو بھیجیں")}</AlertDialogAction></AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    {(editingMaterials || a.stage === "waiting_material") && <div className="space-y-2">
+      {editingMaterials && backButton}
+      <TicketMaterialNeedPanel
+        assignmentId={a.id}
+        currentNeeds={current}
+        warehouseName={state.warehouses.find(w => w.id === a.warehouseId)?.name ?? ""}
+        language={language}
+        busy={busy}
+        onSubmit={async (need, confirmReceipt) => {
+          const saved = await onSaveMaterial(need, confirmReceipt);
+          if (saved && editingMaterials) discard();
+          return saved;
+        }}
+      />
+    </div>}
   </div>;
 }
