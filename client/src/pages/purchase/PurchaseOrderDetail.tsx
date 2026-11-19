@@ -146,19 +146,11 @@ export default function PurchaseOrderDetail() {
     { id: po?.requestedById, name: (po as any)?.requestedByName },
   ] : directoryUsers;
   const { data: sites = [] } = trpc.sites.list.useQuery();
-  const { data: poSections = [] } = trpc.sections.list.useQuery(
-    po?.siteId ? { siteId: Number(po.siteId) } : undefined,
-    { enabled: Boolean(po?.siteId) },
+  const { data: sections = [] } = trpc.sections.list.useQuery(undefined, { enabled: Boolean(po) });
+  const { data: assets = [] } = trpc.assets.list.useQuery(
+    {},
+    { enabled: Boolean(po?.assetId || po?.items?.some((item: any) => item.assetId)) },
   );
-  const { data: poAssets = [] } = trpc.assets.list.useQuery(
-    po?.sectionId ? { sectionId: Number(po.sectionId) } : undefined,
-    { enabled: Boolean(po?.sectionId) },
-  );
-  const { data: purchaseCategories = [] } = trpc.centerCategories.list.useQuery({ activeOnly: false });
-  const selectedSite = (sites as any[]).find((site: any) => Number(site.id) === Number(po?.siteId));
-  const selectedSection = (poSections as any[]).find((section: any) => Number(section.id) === Number(po?.sectionId));
-  const selectedAsset = (poAssets as any[]).find((asset: any) => Number(asset.id) === Number(po?.assetId));
-  const selectedPurchaseCategory = (purchaseCategories as any[]).find((category: any) => Number(category.id) === Number(po?.categoryId));
 
   // ── تجميع سجل الملاحظات حسب الصنف — الجزء 4 من إصلاحات 2026-08-10 ────────
   // بدل قسم منفصل أسفل الصفحة، كل ملاحظة تُعرض أسفل بطاقة صنفها مباشرة.
@@ -904,27 +896,6 @@ const visibleItems = useMemo(() => {
         </CardContent></Card>
       </div>
 
-      {(po.siteId || po.sectionId || po.assetId || po.categoryId) && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Card><CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground">{t.tickets.site}</p>
-            <p className="text-sm font-medium">{selectedSite ? getLocalizedName(selectedSite, language) : "-"}</p>
-          </CardContent></Card>
-          <Card><CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground">{t.tickets.section}</p>
-            <p className="text-sm font-medium">{selectedSection ? getLocalizedName(selectedSection, language) : "-"}</p>
-          </CardContent></Card>
-          <Card><CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground">{t.tickets.asset}</p>
-            <p className="text-sm font-medium">{selectedAsset ? `${selectedAsset.assetNumber ? `${selectedAsset.assetNumber} — ` : ""}${selectedAsset.name}` : t.purchaseOrders.withoutAsset}</p>
-          </CardContent></Card>
-          <Card><CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground">{t.tickets.category}</p>
-            <p className="text-sm font-medium">{selectedPurchaseCategory?.name || t.purchaseOrders.withoutCategory}</p>
-          </CardContent></Card>
-        </div>
-      )}
-
       {/* ── توزيع طلب الشراء على المناديب ── */}
       {(() => {
         // نجمّع الأصناف حسب المندوب المخصص له كل صنف
@@ -1026,6 +997,14 @@ const visibleItems = useMemo(() => {
         <CardContent className="space-y-3">
           {visibleItems.map((item: any) => {
             const delegate = users?.find((u: any) => u.id === item.delegateId);
+            const itemSite = sites.find(site => Number(site.id) === Number(item.siteId ?? po.siteId));
+            const itemSection = sections.find(section => Number(section.id) === Number(item.sectionId ?? po.sectionId));
+            // Older items inherit the order location. An explicit empty asset on a
+            // separately located item must remain "without asset".
+            const itemAssetId = item.siteId == null && item.sectionId == null
+              ? item.assetId ?? po.assetId
+              : item.assetId;
+            const itemAsset = assets.find(asset => Number(asset.id) === Number(itemAssetId));
             // Admin/owner can act on all items; delegate only sees their own
             const isMyItem = isAdminOrOwner || (isDelegate && item.delegateId === userId);
 
@@ -1087,6 +1066,22 @@ const visibleItems = useMemo(() => {
                         </span>
                       )}
                     </div>
+                    <dl className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 rounded-lg bg-muted/50 p-3">
+                      <div className="min-w-0">
+                        <dt className="text-xs text-muted-foreground">{t.tickets.site}</dt>
+                        <dd className="text-sm font-medium break-words">{itemSite ? getLocalizedName(itemSite, language) : "—"}</dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-xs text-muted-foreground">{t.tickets.section}</dt>
+                        <dd className="text-sm font-medium break-words">{itemSection ? getLocalizedName(itemSection, language) : "—"}</dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-xs text-muted-foreground">{t.tickets.asset}</dt>
+                        <dd className="text-sm font-medium break-words">{itemAsset
+                          ? `${itemAsset.assetNumber ? `${itemAsset.assetNumber} — ` : ""}${getLocalizedName(itemAsset, language)}`
+                          : itemAssetId ? "—" : t.purchaseOrders.withoutAsset}</dd>
+                      </div>
+                    </dl>
                     {item.notes && <p className="text-xs text-muted-foreground mt-1.5 bg-muted/50 rounded-lg p-2 break-words">{getField(item, "notes")}</p>}
                     <SupplyWaitExplanation itemId={item.id} purchaseOrderId={po.id} />
 
