@@ -10,6 +10,7 @@ const ar = {
 
   // Navigation
   nav: {
+    achievement: "وحدة الإنجاز",
     dashboard: "لوحة التحكم",
     tickets: "البلاغات",
     operationalIssues: "الصرف التشغيلي",

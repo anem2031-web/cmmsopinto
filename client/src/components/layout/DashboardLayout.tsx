@@ -207,6 +207,7 @@ const NAV_SECTIONS: NavSection[] = [
     icon: BarChart3,
     roles: ["senior_management","executive_director","maintenance_manager","general_maintenance_manager","construction_procurement_manager","owner","admin"],
     items: [
+      { icon: BarChart3, labelKey: "nav.achievement", path: "/achievement", roles: ["owner", "admin"] },
       { icon: BarChart3,     labelKey: "nav.reports",                path: "/reports",
         roles: ["owner","admin","senior_management","executive_director","maintenance_manager","general_maintenance_manager","construction_procurement_manager"] },
       { icon: ShoppingCart,  labelKey: "nav.purchaseCycleReport",    path: "/reports/purchase-cycle",

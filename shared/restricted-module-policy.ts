@@ -11,7 +11,8 @@ export function isOwnerOrAdminRole(role?: string | null): boolean {
 
 export function isOwnerAdminOnlyPage(rawPath: string): boolean {
   const path = rawPath.split(/[?#]/, 1)[0] || "/";
-  return path === "/construction" || path.startsWith("/construction/")
+  return path === "/achievement" || path.startsWith("/achievement/")
+    || path === "/construction" || path.startsWith("/construction/")
     || path === "/preventive" || path.startsWith("/preventive/")
     || path === "/predictive" || path.startsWith("/predictive/")
     || path === "/reports/preventive" || path.startsWith("/reports/preventive/")
@@ -19,7 +20,8 @@ export function isOwnerAdminOnlyPage(rawPath: string): boolean {
 }
 
 export function isOwnerAdminOnlyRpc(path: string): boolean {
-  return path === "warehouseReceiptsV2.receiveStandaloneV2"
+  return path === "achievement" || path.startsWith("achievement.")
+    || path === "warehouseReceiptsV2.receiveStandaloneV2"
     || path === "catalogIntegrationTokens" || path.startsWith("catalogIntegrationTokens.")
     || path === "construction" || path.startsWith("construction.")
     || path === "preventive" || path.startsWith("preventive.");

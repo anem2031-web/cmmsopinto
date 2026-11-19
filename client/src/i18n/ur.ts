@@ -9,6 +9,7 @@ const ur: TranslationKeys = {
   logout: "سائن آؤٹ",
 
   nav: {
+    achievement: "کارکردگی",
     dashboard: "ڈیش بورڈ",
     tickets: "ٹکٹس",
     operationalIssues: "آپریشنل اجرا",

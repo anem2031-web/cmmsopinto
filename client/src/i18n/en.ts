@@ -9,6 +9,7 @@ const en: TranslationKeys = {
   logout: "Sign Out",
 
   nav: {
+    achievement: "Achievement",
     dashboard: "Dashboard",
     tickets: "Tickets",
     operationalIssues: "Operational issues",

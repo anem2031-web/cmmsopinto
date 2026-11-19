@@ -1,5 +1,6 @@
 import { delegatePricingBundlesRouter, approvedPricingDocumentsRouter } from "./delegate-pricing-bundles";
 import { router } from "./_shared/procedures";
+import { achievementRouter } from "./achievement.router";
 import { operationalIssuesRouter } from "./operational-issues";
 import { maintenanceTeamsRouter, ticketTeamAssignmentsRouter, ticketTeamExecutionRouter } from "./maintenance-teams";
 import { systemRouter } from "../_core/systemRouter";
@@ -87,6 +88,7 @@ import { pmv2Router } from "./pmv2";
 import { pscmFulfillmentRouter } from "./purchase/pscm-fulfillment.router";
 
 export const appRouter = router({
+  achievement: achievementRouter,
   system: systemRouter,
   translation: translationRouter,
 
