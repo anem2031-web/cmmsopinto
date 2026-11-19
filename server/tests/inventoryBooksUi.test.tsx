@@ -74,7 +74,12 @@ vi.mock("../../client/src/lib/trpc", () => ({
                     },
                   ],
                 },
-              ],
+              ].flatMap(book => input.groupByWarehouse ? [
+                { ...book, warehouseId: 1, warehouseName: "المخزن الرئيسي" },
+                { ...book, warehouseId: 2, warehouseName: "مستودع الفرع", totals: [
+                  { unit: "حبة", isFrozen: 0, quantity: 21, incoming: 24, outgoing: 3 },
+                ] },
+              ] : [book]),
               nextId: input.afterId ? null : state.nextBooksOffset,
             },
           };
@@ -366,6 +371,28 @@ it("keeps table read-only without callbacks and preserves the existing card layo
   expect(html).toContain('colSpan="8"');
   expect(html).not.toContain("اختيار اللوت");
   expect(render(<InventoryBooks warehouseId={1} />)).not.toContain("<table");
+});
+it("keeps the same catalog item in separate warehouse rows and scopes expansion and FIFO to its row", () => {
+  const fifo = vi.fn();
+  const view = <InventoryBooks layout="table" groupByWarehouse onFifo={fifo} />;
+  let html = render(view);
+  expect(html).toContain(">المستودع</th>");
+  expect(html).toContain("المخزن الرئيسي");
+  expect(html).toContain("مستودع الفرع");
+  expect(state.queries[0]).toMatchObject({ groupByWarehouse: true });
+  expect(state.queries[0].warehouseId).toBeUndefined();
+  const choices = state.buttons.filter(button => button.children === "صرف بالأقدم");
+  expect(choices).toHaveLength(2);
+  choices[1].onClick();
+  expect(fifo).toHaveBeenCalledWith(expect.objectContaining({ id: 9, warehouseId: 2 }), "حبة");
+  state.buttons.find(button => button["aria-controls"] === "inventory-book-9:2-details").onClick();
+  state.queries = [];
+  html = render(view);
+  expect(html).toContain('<div id="inventory-book-9:2-details">');
+  expect(html).not.toContain('<div id="inventory-book-9:1-details">');
+  expect(html).toContain('colSpan="10"');
+  expect(state.queries).toHaveLength(2);
+  expect(state.queries[1]).toMatchObject({ catalogItemId: 9, warehouseId: 2 });
 });
 it("does not hide a server failure behind an empty result", () => {
   state.error = { message: "database offline" };

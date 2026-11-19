@@ -370,7 +370,7 @@ export default function Inventory() {
   // بعد بأي مخزن (warehouseId فارغ) — تفاديًا لظهور الصفحة فارغة لصنوف لم تُنقَل بعد
   // لنظام المخازن المتعددة؛ أي مخزن فرعي يعرض فقط ما نُقل إليه فعليًا (تطابق تام).
   const warehouseItems = inventoryItemsWithTaxonomy.filter((item: any) => {
-    if (!selectedWarehouseId) return true;
+    if (!selectedWarehouseId || selectedWarehouseId === "all") return true;
     if (String(item.warehouseId) === selectedWarehouseId) return true;
     if (selectedWarehouse?.type === "main" && !item.warehouseId) return true;
     return false;
@@ -432,7 +432,7 @@ export default function Inventory() {
       setQrSearchInventoryIds(matchedIds);
       setSearchQuery(data.trackingToken || data.lotCode || "");
 
-      const selectedId = selectedWarehouseId ? Number(selectedWarehouseId) : null;
+      const selectedId = selectedWarehouseId && selectedWarehouseId !== "all" ? Number(selectedWarehouseId) : null;
       const inCurrentWarehouse = (data.matches || []).filter((row: any) => {
         if (selectedId == null) return true;
         if (Number(row.warehouseId) === selectedId) return true;
@@ -469,9 +469,12 @@ export default function Inventory() {
   const openBookDelivery = async (book: any, unit: string) => {
     if (!isOwnerOrAdminRole(user?.role) || Number(user?.isActive) !== 1) return;
     try {
-      const lots = await loadBookLots(input => utils.client.inventory.bookPages.query(input), book.id, Number(selectedWarehouseId));
+      const warehouseId = Number(book.warehouseId ?? selectedWarehouseId);
+      if (!Number.isSafeInteger(warehouseId) || warehouseId <= 0)
+        throw new Error("تعذر تحديد مستودع الصنف");
+      const lots = await loadBookLots(input => utils.client.inventory.bookPages.query(input), book.id, warehouseId);
       setFifoLots(lots); bookOperationKey.current = crypto.randomUUID();
-      setDeliverItem({ id: 0, linkedItemId: book.id, warehouseId: Number(selectedWarehouseId), itemName: book.nameAr || book.nameEn,
+      setDeliverItem({ id: 0, linkedItemId: book.id, warehouseId, itemName: book.nameAr || book.nameEn,
         unit, quantity: lots.filter(lot => !Number(lot.isFrozen) && String(lot.issueUnit || lot.inventoryUnit || "") === unit).reduce((sum, lot) => sum + Number(lot.balanceQuantity), 0), bookFifo: true });
       setDeliverLotInfo(null); setDeliverQty(""); setDeliverToId(""); setDeliverNotes(""); setDeliverCostAllocations([createIssueCostAllocationDraft()]);
     } catch (error: any) { toast.error(error.message); }
@@ -611,7 +614,8 @@ export default function Inventory() {
             filename="inventory"
             payload={{ itemIds: filteredItems.map((item: any) => Number(item.id)),
               ...(lotsEnabled && selectedWarehouseId ? { bookFilters: {
-                warehouseId: Number(selectedWarehouseId), search: searchQuery, includeZero: !hideZeroStock,
+                ...(selectedWarehouseId === "all" ? { groupByWarehouse: true } : { warehouseId: Number(selectedWarehouseId) }),
+                search: searchQuery, includeZero: !hideZeroStock,
                 nodeIds: bookNodeIds, sort: sortBy, dateFrom: dateFrom || undefined, dateTo: dateTo || undefined,
               } } : {}),
             }}
@@ -631,6 +635,7 @@ export default function Inventory() {
           <Select value={selectedWarehouseId} onValueChange={setSelectedWarehouseId}>
             <SelectTrigger><SelectValue placeholder="اختر المخزن..." /></SelectTrigger>
             <SelectContent>
+              <SelectItem value="all">كل المستودعات</SelectItem>
               {(warehousesList as any[] || []).map((w: any) => (
                 <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
               ))}
@@ -649,7 +654,7 @@ export default function Inventory() {
             disabled={!selectedWarehouseId}
           />
           <p className="text-[11px] text-muted-foreground">
-            اختر أي مستوى من نفس شجرة الكتالوج؛ النتائج تشمل المستوى المختار وكل فروعه داخل المخزن الحالي.
+            اختر أي مستوى من نفس شجرة الكتالوج؛ النتائج تشمل المستوى المختار وكل فروعه {selectedWarehouseId === "all" ? "في كل المستودعات." : "داخل المخزن الحالي."}
           </p>
           {selectedWarehouse?.type === "branch" && selectedWarehouse?.catalogNodeNameAr && (
             <p className="text-[11px] text-muted-foreground">
@@ -689,7 +694,7 @@ export default function Inventory() {
           </CardContent>
         </Card>
         {/* إجمالي الكميات بالمخزن المختار — للعرض فقط، محسوب تلقائيًا ولا يقبل أي تعديل يدوي */}
-        <InventoryQuantitySummary totals={totalWarehouseQuantities} />
+        <InventoryQuantitySummary totals={totalWarehouseQuantities} label={selectedWarehouseId === "all" ? "إجمالي الكميات بكل المستودعات" : undefined} />
       </div>
 
       {/* خانة البحث الذكية + الترتيب + فلتر التاريخ */}
@@ -783,7 +788,7 @@ export default function Inventory() {
         </div>
       </div>
 
-      {selectedWarehouseId && lotsEnabled && <InventoryBooks layout="table" warehouseId={Number(selectedWarehouseId)} search={searchQuery} includeZero={!hideZeroStock} sort={sortBy} dateFrom={dateFrom} dateTo={dateTo}
+      {selectedWarehouseId && lotsEnabled && <InventoryBooks layout="table" warehouseId={selectedWarehouseId === "all" ? undefined : Number(selectedWarehouseId)} groupByWarehouse={selectedWarehouseId === "all"} search={searchQuery} includeZero={!hideZeroStock} sort={sortBy} dateFrom={dateFrom} dateTo={dateTo}
         nodeIds={bookNodeIds}
         onPrintLot={({ lot, page }) => setPrintLotQr({
           lotId: Number(lot.lotId),
@@ -830,6 +835,7 @@ export default function Inventory() {
               <tr className="bg-muted/50 text-xs text-muted-foreground">
                 <th scope="col" className="w-12 whitespace-nowrap px-3 py-2 text-center font-medium">م</th>
                 <th className="text-right font-medium px-3 py-2">الصنف</th>
+                {selectedWarehouseId === "all" && <th className="text-right font-medium px-3 py-2">المستودع</th>}
                 <th className="text-right font-medium px-3 py-2">التصنيف</th>
                 <th className="text-right font-medium px-3 py-2">الكود</th>
                 <th className="text-right font-medium px-3 py-2">الرصيد</th>
@@ -873,6 +879,13 @@ export default function Inventory() {
                       {item.description && <div className="text-xs text-muted-foreground">{item.description}</div>}
                       {isLow && <Badge variant="destructive" className="text-[10px] gap-1 mt-1"><AlertTriangle className="w-3 h-3" /> {t.inventory.lowStock}</Badge>}
                     </td>
+                    {selectedWarehouseId === "all" && (
+                      <td className="px-3 py-2.5 text-muted-foreground">
+                        {(warehousesList as any[] || []).find(warehouse => item.warehouseId
+                          ? Number(warehouse.id) === Number(item.warehouseId)
+                          : warehouse.type === "main")?.nameAr || "—"}
+                      </td>
+                    )}
                     <td className="px-3 py-2.5 text-xs text-muted-foreground max-w-[260px]">
                       {item.catalogCategoryPathAr ? (
                         <span title={item.catalogCategoryPathAr}>{item.catalogCategoryPathAr}</span>

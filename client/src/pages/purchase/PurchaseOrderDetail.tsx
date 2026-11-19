@@ -1057,6 +1057,11 @@ const visibleItems = useMemo(() => {
                     {item.description && <p className={`text-xs break-words ${isCancelled ? "text-gray-400 line-through" : "text-muted-foreground"}`}>{getField(item, "description")}</p>}
                     <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground flex-wrap">
                       <span className={isCancelled ? "line-through" : ""}>{t.purchaseOrders.quantity}: <strong>{item.quantity} {displayUnit(item.unit)}</strong></span>
+                      {routedReviewItem && <span>{t.purchaseOrders.reviewRoleLabel}: <strong>{
+                        item.reviewRole === "general_maintenance_manager" ? t.purchaseOrders.reviewRoleGeneral
+                          : item.reviewRole === "construction_procurement_manager" ? t.purchaseOrders.reviewRoleConstruction
+                          : t.purchaseOrders.reviewRoleOther
+                      }</strong></span>}
                       {delegate && <span>{t.purchaseOrders.delegate}: <strong>{delegate.name}</strong></span>}
                       {item.requiredDate && <span>{t.purchaseOrders.requiredDate}: <strong>{formatDateOnly(item.requiredDate, locale)}</strong></span>}
                       {item.delegateAssignedAt && <span>{t.purchaseOrders.delegateAssignedDate}: <strong>{formatDateOnly(item.delegateAssignedAt, locale)}</strong></span>}

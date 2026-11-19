@@ -24,11 +24,12 @@ function evaluate(text: string, scope: any) {
 const book = (id: number, totals: any[] = [{ unit: "قطعة", quantity: 5, incoming: 9, outgoing: 4, isFrozen: 0 }]) => ({ id, code: `CAT-${id}`, nameAr: `صنف ${id}`, unit: "قطعة", pageCount: 3, totals });
 const filters = { warehouseId: 7, search: "مسمى قديم", includeZero: false, nodeIds: [11, 12], sort: "name" as const, dateFrom: "2026-10-01", dateTo: "2026-11-03" };
 async function xlsx(buffer: Buffer) { const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(buffer as any); return workbook; }
-function exportFixture(books = [book(1)], legacy: any[] = []) {
+function exportFixture(books: any[] = [book(1)], legacy: any[] = []) {
   const calls: any[] = [];
   const db = {
     getDb: vi.fn(async () => ({ execute: () => { throw Error("Unexpected SQL in injected export fixture"); } })),
     getWarehouseById: vi.fn(async () => ({ id: 7, type: "main" })),
+    getAllWarehouses: vi.fn(async () => [{ id: 7, type: "main", nameAr: "الرئيسي" }, { id: 8, type: "branch", nameAr: "الفرعي" }]),
     getInventoryItems: vi.fn(async () => legacy),
     getInventoryCatalogTaxonomy: vi.fn(async () => []),
   };
@@ -69,6 +70,35 @@ describe("Warehouse book Excel export, using the production export function", ()
     expect([sheet.getCell("B2").value, sheet.getCell("B122").value]).toEqual(["CAT-200", "CAT-80"]);
     expect(f.calls.map(call => call.afterId)).toEqual([0, 50, 100]);
     expect(f.calls.every(call => call.warehouseId === 7 && call.search === filters.search && call.nodeIds.join() === "11,12")).toBe(true);
+  });
+  it("exports the same catalog item separately for each warehouse in all mode", async () => {
+    const allFilters = { ...filters, warehouseId: undefined, groupByWarehouse: true };
+    const f = exportFixture([
+      { ...book(1), warehouseId: 7, warehouseName: "الرئيسي" },
+      { ...book(1, [{ unit: "قطعة", quantity: 2, incoming: 3, outgoing: 1, isFrozen: 0 }]), warehouseId: 8, warehouseName: "الفرعي" },
+    ]);
+    const result = await xlsx(await f.run({ itemIds: [], bookFilters: allFilters }));
+    const sheet = result.worksheets[0];
+    expect(sheet.getRow(1).getCell(2).value).toBe("المستودع");
+    expect(sheet.getRow(2).values).toEqual([undefined, "صنف 1", "الرئيسي", "CAT-1", 5, "قطعة", 9, 4, 3]);
+    expect(sheet.getRow(3).values).toEqual([undefined, "صنف 1", "الفرعي", "CAT-1", 2, "قطعة", 3, 1, 3]);
+    expect(sheet.autoFilter).toBe("A1:H1");
+    expect(f.calls.every(call => call.groupByWarehouse && call.warehouseId === undefined)).toBe(true);
+    expect(f.db.getWarehouseById).not.toHaveBeenCalled();
+  });
+  it("keeps all selected legacy warehouse rows labeled without duplicating linked books", async () => {
+    const f = exportFixture([{ ...book(1), warehouseId: 7, warehouseName: "الرئيسي" }], [
+      { id: 2, warehouseId: 7, linkedItemId: 1, itemName: "in book", quantity: 5 },
+      { id: 3, warehouseId: null, linkedItemId: 1, itemName: "legacy main", quantity: 2, unit: "علبة" },
+      { id: 4, warehouseId: 8, itemName: "branch legacy", quantity: 4, unit: "قطعة" },
+    ]);
+    const result = await xlsx(await f.run({ itemIds: [2, 3, 4], bookFilters: { groupByWarehouse: true } }));
+    const sheet = result.worksheets[1];
+    expect(sheet.rowCount).toBe(3);
+    expect([sheet.getCell("A2").value, sheet.getCell("B2").value]).toEqual(["legacy main", "الرئيسي"]);
+    expect([sheet.getCell("A3").value, sheet.getCell("B3").value]).toEqual(["branch legacy", "الفرعي"]);
+    expect(sheet.autoFilter).toBe("A1:I1");
+    expect(f.db.getAllWarehouses).toHaveBeenCalledTimes(1);
   });
   it("keeps unit families and frozen historical totals on separate labeled rows", async () => {
     const f = exportFixture([book(1, [
@@ -118,6 +148,9 @@ describe("Warehouse book Excel export, using the production export function", ()
     await expect(appendInventoryBookSheet(new ExcelJS.Workbook(), filters, async input => {
       if (input.afterId) throw Error("later page failed"); return { books: [book(1)], nextId: 50 };
     })).rejects.toThrow("later page failed");
+    await expect(appendInventoryBookSheet(new ExcelJS.Workbook(), { groupByWarehouse: true }, async () => ({
+      books: [{ ...book(1), warehouseId: 7 }, { ...book(1), warehouseId: 7 }], nextId: null,
+    }))).rejects.toThrow("تغير ترتيب");
   });
 });
 
@@ -144,11 +177,14 @@ describe("Actual inventory HTTP export boundary", () => {
   it("freshly checks unauthenticated/disabled identities and rejects malformed filters without a data read", async () => {
     exported.mockClear(); expect((await request(null, {})).statusCode).toBe(401);
     expect((await request({ id: 9, role: "warehouse", isActive: 0 }, {})).statusCode).toBe(403);
-    for (const bookFilters of [{ ...filters, warehouseId: -1 }, { ...filters, nodeIds: Array(501).fill(1) }, { ...filters, afterId: 50 }]) {
+    for (const bookFilters of [{ ...filters, warehouseId: -1 }, { ...filters, nodeIds: Array(501).fill(1) }, { ...filters, afterId: 50 }, {}, { groupByWarehouse: false }]) {
       expect((await request({ id: 9, role: "warehouse", isActive: 1 }, { itemIds: [], bookFilters })).statusCode).toBe(400);
     }
     expect(exported).not.toHaveBeenCalled();
     expect((await request({ id: 9, role: "warehouse", isActive: 1 }, { itemIds: [], bookFilters: filters })).statusCode).toBe(200);
+    exported.mockClear();
+    expect((await request({ id: 9, role: "warehouse", isActive: 1 }, { itemIds: [], bookFilters: { groupByWarehouse: true } })).statusCode).toBe(200);
+    expect(exported).toHaveBeenCalledWith({ itemIds: [], bookFilters: { groupByWarehouse: true } });
   });
 });
 
@@ -173,5 +209,11 @@ describe("Actual warehouse export button payload", () => {
   it("keeps the original legacy export contract when lots are off or no warehouse is selected", () => {
     expect(evaluate(payload, { ...scope, lotsEnabled: false })).toEqual({ itemIds: [90, 30] });
     expect(evaluate(payload, { ...scope, selectedWarehouseId: "" })).toEqual({ itemIds: [90, 30] });
+  });
+  it("sends an explicit grouped scope when all warehouses are selected", () => {
+    const { warehouseId, ...otherFilters } = filters;
+    expect(evaluate(payload, { ...scope, selectedWarehouseId: "all" })).toEqual({
+      itemIds: [90, 30], bookFilters: { ...otherFilters, groupByWarehouse: true },
+    });
   });
 });

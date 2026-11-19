@@ -3,6 +3,7 @@ import type { InventoryBookExportFilters } from "../../../shared/inventory-expor
 
 type Book = {
   id: number; code?: string | null; nameAr?: string | null; nameEn?: string | null; unit?: string | null; pageCount: number;
+  warehouseId?: number | null; warehouseName?: string | null;
   totals: Array<{ unit?: string | null; isFrozen?: number | string; quantity?: number | string; incoming?: number | string; outgoing?: number | string }>;
 };
 type ReadPage = (filters: InventoryBookExportFilters & { afterId: number; limit: number }) => Promise<{ books: Book[]; nextId: number | null }>;
@@ -12,6 +13,7 @@ export async function appendInventoryBookSheet(workbook: ExcelJS.Workbook, filte
   const sheet = workbook.addWorksheet("المخزون");
   sheet.columns = [
     { header: "الصنف", key: "name", width: 38 },
+    ...(filters.groupByWarehouse ? [{ header: "المستودع", key: "warehouse", width: 28 }] : []),
     { header: "الكود", key: "code", width: 20 },
     { header: "الرصيد", key: "quantity", width: 16 },
     { header: "الوحدة", key: "unit", width: 28 },
@@ -24,19 +26,21 @@ export async function appendInventoryBookSheet(workbook: ExcelJS.Workbook, filte
   header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1B7A4A" } };
   header.height = 30;
   sheet.views = [{ rightToLeft: true, state: "frozen", ySplit: 1 }];
-  sheet.autoFilter = { from: "A1", to: "G1" };
+  sheet.autoFilter = { from: "A1", to: filters.groupByWarehouse ? "H1" : "G1" };
 
   let afterId = 0;
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   for (;;) {
     const result = await readPage({ ...filters, afterId, limit: 50 });
     for (const book of result.books) {
       // Refuse a shifting/overlapping page instead of silently double-counting it.
-      if (seen.has(Number(book.id))) throw Error("تغير ترتيب المخزون أثناء التصدير؛ أعد المحاولة");
-      seen.add(Number(book.id));
+      const identity = filters.groupByWarehouse ? `${book.id}:${book.warehouseId}` : String(book.id);
+      if (seen.has(identity)) throw Error("تغير ترتيب المخزون أثناء التصدير؛ أعد المحاولة");
+      seen.add(identity);
       const totals = book.totals.length ? book.totals : [{ unit: book.unit, quantity: 0, incoming: 0, outgoing: 0, isFrozen: 0 }];
       for (const total of totals) sheet.addRow({
         name: book.nameAr || book.nameEn || "—", code: book.code || "—",
+        warehouse: book.warehouseName || (book.warehouseId ? `#${book.warehouseId}` : "—"),
         quantity: Number(total.quantity || 0),
         unit: `${total.unit || "وحدة غير محددة"}${Number(total.isFrozen) ? " — تاريخ مجمّد" : ""}`,
         incoming: Number(total.incoming || 0), outgoing: Number(total.outgoing || 0), pageCount: Number(book.pageCount || 0),

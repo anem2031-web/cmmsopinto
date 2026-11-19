@@ -164,6 +164,7 @@ export function InventoryBookPages({
 }
 export function InventoryBooks({
   warehouseId,
+  groupByWarehouse = false,
   search: externalSearch,
   includeZero = false,
   onPick,
@@ -183,6 +184,7 @@ export function InventoryBooks({
   dateFrom?: string;
   dateTo?: string;
   warehouseId?: number;
+  groupByWarehouse?: boolean;
   search?: string;
   includeZero?: boolean;
   supplierReturn?: boolean;
@@ -193,10 +195,13 @@ export function InventoryBooks({
 }) {
   const [search, setSearch] = useState("");
   const [cursor, setCursor] = useState({ key: "", id: 0 });
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<number | string | null>(null);
+  const bookKey = (book: any) => groupByWarehouse ? `${book.id}:${book.warehouseId}` : book.id;
+  const bookWarehouseId = (book: any) => groupByWarehouse ? Number(book.warehouseId) : warehouseId;
   const query = externalSearch ?? search;
   const key = JSON.stringify([
     warehouseId,
+    groupByWarehouse,
     query,
     includeZero,
     nodeIds,
@@ -207,6 +212,7 @@ export function InventoryBooks({
   const afterId = cursor.key === key ? cursor.id : 0;
   const result = trpc.inventory.books.useQuery({
     warehouseId,
+    ...(groupByWarehouse ? { groupByWarehouse: true } : {}),
     search: query,
     afterId,
     includeZero,
@@ -229,13 +235,14 @@ export function InventoryBooks({
       {layout === "table" ? (
         <div className="overflow-x-auto rounded-lg border bg-background">
           <table
-            className="w-full min-w-[1000px] table-fixed border-collapse text-sm"
+            className={`w-full ${groupByWarehouse ? "min-w-[1200px]" : "min-w-[1000px]"} table-fixed border-collapse text-sm`}
             aria-label="أصناف المستودع حسب دفتر الكتالوج"
             dir="rtl"
           >
             <colgroup>
               <col style={{ width: "5%" }} />
-              <col style={{ width: onFifo ? "27%" : "37%" }} />
+              <col style={{ width: groupByWarehouse ? (onFifo ? "13%" : "23%") : (onFifo ? "27%" : "37%") }} />
+              {groupByWarehouse && <col style={{ width: "14%" }} />}
               <col style={{ width: "12%" }} />
               <col style={{ width: "8%" }} />
               <col style={{ width: "14%" }} />
@@ -249,6 +256,7 @@ export function InventoryBooks({
                 {[
                   "م",
                   "الصنف",
+                  ...(groupByWarehouse ? ["المستودع"] : []),
                   "الكود",
                   "الرصيد",
                   "الوحدة",
@@ -269,7 +277,7 @@ export function InventoryBooks({
             </thead>
             <tbody>
               {(result.data?.books || []).map((book: any, index: number) => (
-                <Fragment key={book.id}>
+                <Fragment key={bookKey(book)}>
                   <tr className="border-t hover:bg-muted/30 transition-colors">
                     <td className="border-e px-2 py-2 align-middle text-center tabular-nums">
                       {afterId + index + 1}
@@ -281,13 +289,13 @@ export function InventoryBooks({
                           variant="ghost"
                           className="h-7 w-7 shrink-0"
                           aria-label={`تفاصيل دفتر ${book.nameAr || book.nameEn}`}
-                          aria-expanded={expanded === book.id}
-                          aria-controls={`inventory-book-${book.id}-details`}
+                          aria-expanded={expanded === bookKey(book)}
+                          aria-controls={`inventory-book-${bookKey(book)}-details`}
                           onClick={() =>
-                            setExpanded(expanded === book.id ? null : book.id)
+                            setExpanded(expanded === bookKey(book) ? null : bookKey(book))
                           }
                         >
-                          {expanded === book.id ? (
+                          {expanded === bookKey(book) ? (
                             <ChevronDown className="h-4 w-4" />
                           ) : (
                             <ChevronRight className="h-4 w-4" />
@@ -301,6 +309,11 @@ export function InventoryBooks({
                         </span>
                       </div>
                     </td>
+                    {groupByWarehouse && (
+                      <td className="border-e px-3 py-2 align-middle text-center break-words">
+                        {book.warehouseName || `#${book.warehouseId}`}
+                      </td>
+                    )}
                     <td className="border-e px-3 py-2 align-middle text-center">
                       <span
                         className="block truncate font-mono text-xs leading-8"
@@ -395,14 +408,14 @@ export function InventoryBooks({
                       </td>
                     )}
                   </tr>
-                  {expanded === book.id && (
+                  {expanded === bookKey(book) && (
                     <tr className="border-t bg-muted/10">
-                      <td colSpan={onFifo ? 9 : 8} className="p-2">
-                        <div id={`inventory-book-${book.id}-details`}>
+                      <td colSpan={(onFifo ? 9 : 8) + (groupByWarehouse ? 1 : 0)} className="p-2">
+                        <div id={`inventory-book-${bookKey(book)}-details`}>
                           <InventoryBookPages
-                            key={`${book.id}:${warehouseId}`}
+                            key={`${book.id}:${bookWarehouseId(book)}`}
                             catalogItemId={book.id}
-                            warehouseId={warehouseId}
+                            warehouseId={bookWarehouseId(book)}
                             onPick={onPick}
                             onPrintLot={onPrintLot}
                             renderIssueUnitActions={renderIssueUnitActions}
@@ -419,18 +432,18 @@ export function InventoryBooks({
         </div>
       ) : (
         (result.data?.books || []).map((book: any) => (
-          <div key={book.id} className="border rounded-lg bg-background">
+          <div key={bookKey(book)} className="border rounded-lg bg-background">
             <div className="p-3 flex flex-wrap items-center gap-3">
               <Button
                 size="sm"
                 variant="ghost"
                 aria-label={`تفاصيل دفتر ${book.nameAr}`}
-                aria-expanded={expanded === book.id}
+                aria-expanded={expanded === bookKey(book)}
                 onClick={() =>
-                  setExpanded(expanded === book.id ? null : book.id)
+                  setExpanded(expanded === bookKey(book) ? null : bookKey(book))
                 }
               >
-                {expanded === book.id ? <ChevronDown /> : <ChevronRight />}
+                {expanded === bookKey(book) ? <ChevronDown /> : <ChevronRight />}
               </Button>
               <div className="flex-1">
                 <strong>{book.nameAr || book.nameEn}</strong>{" "}
@@ -466,11 +479,11 @@ export function InventoryBooks({
                 ))}
               </div>
             </div>
-            {expanded === book.id && (
+            {expanded === bookKey(book) && (
               <InventoryBookPages
-                key={`${book.id}:${warehouseId}`}
+                key={`${book.id}:${bookWarehouseId(book)}`}
                 catalogItemId={book.id}
-                warehouseId={warehouseId}
+                warehouseId={bookWarehouseId(book)}
                 onPick={onPick}
                 onPrintLot={onPrintLot}
                 renderIssueUnitActions={renderIssueUnitActions}

@@ -13,8 +13,10 @@ import {
 
 export function InventoryQuantitySummary({
   totals,
+  label = "إجمالي الكميات بالمخزن المختار",
 }: {
   totals: { unit: string; quantity: number }[];
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -32,7 +34,7 @@ export function InventoryQuantitySummary({
                 : "0"}
           </p>
           <p className="text-[10px] text-emerald-600">
-            إجمالي الكميات بالمخزن المختار
+            {label}
           </p>
           <Button
             variant="outline"

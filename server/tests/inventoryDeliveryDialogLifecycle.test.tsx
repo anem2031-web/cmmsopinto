@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   approveConversion: vi.fn(),
   matchCatalogUnit: vi.fn(),
   book: null as any,
+  bookPagesQueries: [] as any[],
 }));
 vi.mock("react", async original => ({
   ...(await original<typeof import("react")>()),
@@ -102,7 +103,10 @@ vi.mock("../../client/src/lib/trpc", () => {
           });
         if (key === "query" && path === "client.inventory.previewIssueUnitConversion")
           return state.previewConversion;
-        if (key === "query") return vi.fn(async () => lots);
+        if (key === "query") return vi.fn(async (input: any) => {
+          if (path === "client.inventory.bookPages") state.bookPagesQueries.push(input);
+          return lots;
+        });
         if (key === "invalidate") return vi.fn();
         return port(path ? `${path}.${String(key)}` : String(key));
       },
@@ -180,6 +184,7 @@ beforeEach(() => {
   state.approveConversion.mockReset();
   state.matchCatalogUnit.mockReset();
   state.book = null;
+  state.bookPagesQueries = [];
 });
 const render = () => {
   state.index = 0;
@@ -237,6 +242,18 @@ it("keeps FIFO delivery available after choosing a book and renders safely after
   cancelDelivery();
   expect(render()).toContain("دفاتر المخزون");
   expect(confirm()).toBeUndefined();
+});
+it("keeps an all-warehouse book issue scoped to the warehouse of its row", async () => {
+  state.role = "admin";
+  expect(render()).toContain("كل المستودعات");
+  state.selects[0].onValueChange("all");
+  expect(render()).toContain("إجمالي الكميات بكل المستودعات");
+  expect(state.book.groupByWarehouse).toBe(true);
+  expect(state.book.warehouseId).toBeUndefined();
+  await state.book.onFifo({ id: 9, warehouseId: 2, nameAr: "دفتر المستودع الثاني" }, "حبة");
+  expect(state.bookPagesQueries).toEqual([{ catalogItemId: 9, warehouseId: 2, afterId: 0, limit: 50 }]);
+  expect(render()).toContain("دفتر المستودع الثاني");
+  expect(confirm().disabled).toBe(false);
 });
 it.each(["warehouse","senior_management","observer","accountant","technician"])("hides the inventory issue column action for %s while preserving the book reader",role=>{
   state.role=role;render();state.selects[0].onValueChange("1");render();

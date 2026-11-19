@@ -233,8 +233,10 @@ export async function exportInventoryToExcel(options?: { itemIds?: number[]; boo
     if (!isInventoryLotsEnabled()) throw Error("دفاتر اللوتات غير مفعّلة");
     database = await db.getDb();
     if (!database) throw Error("تعذر الاتصال بقاعدة البيانات لتصدير المخزون");
-    warehouse = await db.getWarehouseById(bookFilters.warehouseId, database);
-    if (!warehouse) throw Error("المخزن المحدد غير موجود");
+    if (bookFilters.warehouseId !== undefined) {
+      warehouse = await db.getWarehouseById(bookFilters.warehouseId, database);
+      if (!warehouse) throw Error("المخزن المحدد غير موجود");
+    }
   }
   const [inventoryItems, taxonomyRows] = await Promise.all([
     legacyIds?.length === 0 ? Promise.resolve([]) : db.getInventoryItems(),
@@ -263,9 +265,12 @@ export async function exportInventoryToExcel(options?: { itemIds?: number[]; boo
   if (bookFilters) items = items.filter((item: any) =>
     // Linked records are already included in their master book, never twice.
     (!item.linkedItemId || !item.warehouseId)
-    && (Number(item.warehouseId) === bookFilters.warehouseId || warehouse?.type === "main" && !item.warehouseId)
+    && (bookFilters.warehouseId === undefined || Number(item.warehouseId) === bookFilters.warehouseId || warehouse?.type === "main" && !item.warehouseId)
     && (bookFilters.includeZero || Number(item.quantity || 0) > 0)
   );
+  const exportWarehouses = bookFilters?.groupByWarehouse && items.length ? await db.getAllWarehouses() : [];
+  const warehouseNames = new Map(exportWarehouses.map(row => [Number(row.id), row.nameAr || row.nameEn]));
+  const mainWarehouse = exportWarehouses.find(row => row.type === "main");
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "CMMS";
@@ -284,6 +289,7 @@ export async function exportInventoryToExcel(options?: { itemIds?: number[]; boo
   // نفس أعمدة شاشة Inventory ونفس ترتيبها — بدون عمود الإجراءات.
   ws.columns = [
     { header: "الصنف", key: "itemName", width: 34 },
+    ...(bookFilters?.groupByWarehouse ? [{ header: "المستودع", key: "warehouse", width: 28 }] : []),
     { header: "التصنيف", key: "category", width: 42 },
     { header: "الكود", key: "code", width: 20 },
     { header: "الرصيد", key: "quantity", width: 14 },
@@ -297,6 +303,7 @@ export async function exportInventoryToExcel(options?: { itemIds?: number[]; boo
   items.forEach((item: any) => {
     ws.addRow({
       itemName: item.itemName || "—",
+      warehouse: warehouseNames.get(Number(item.warehouseId)) || (!item.warehouseId && mainWarehouse ? mainWarehouse.nameAr || mainWarehouse.nameEn : item.warehouseId ? `#${item.warehouseId}` : "—"),
       category: item.catalogCategoryPathAr || "غير مرتبط بالكتالوج",
       code: item.internalCode || item.manufacturerBarcode || "—",
       quantity: Number(item.quantity || 0),
@@ -311,7 +318,7 @@ export async function exportInventoryToExcel(options?: { itemIds?: number[]; boo
 
   // تحسينات Excel تشغيلية بدون تغيير البيانات: تثبيت العناوين + فلترة Excel مباشرة.
   ws.views = [{ rightToLeft: true, state: "frozen", ySplit: 1 }];
-  ws.autoFilter = { from: "A1", to: "H1" };
+  ws.autoFilter = { from: "A1", to: bookFilters?.groupByWarehouse ? "I1" : "H1" };
   ws.getColumn("lastPurchasePrice").numFmt = '#,##0.00 "ر.س"';
 
   ws.eachRow((row, rowNumber) => {

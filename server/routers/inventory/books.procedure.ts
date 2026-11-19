@@ -26,6 +26,7 @@ export async function readInventoryBooks(
   input: {
     search?: string;
     warehouseId?: number;
+    groupByWarehouse?: boolean;
     afterId?: number;
     limit?: number;
     includeZero?: boolean;
@@ -36,6 +37,22 @@ export async function readInventoryBooks(
   }
 ) {
   const limit = Math.min(50, Math.max(1, input.limit || 36));
+  const scope = input.groupByWarehouse
+    ? sql`i.warehouseId=warehouse_books.warehouseId`
+    : warehouseScope(input.warehouseId);
+  const from = input.groupByWarehouse
+    ? sql`FROM catalog_items c JOIN (
+        SELECT DISTINCT linkedItemId,warehouseId FROM inventory WHERE warehouseId IS NOT NULL AND warehouseId>0
+        ${input.warehouseId == null ? sql`` : sql`AND warehouseId=${input.warehouseId}`}
+      ) warehouse_books ON warehouse_books.linkedItemId=c.id
+      LEFT JOIN warehouses w ON w.id=warehouse_books.warehouseId`
+    : sql`FROM catalog_items c`;
+  const warehouseFields = input.groupByWarehouse
+    ? sql`warehouse_books.warehouseId,COALESCE(NULLIF(w.nameAr,''),w.nameEn) AS warehouseName,`
+    : sql``;
+  const warehouseOrder = input.groupByWarehouse
+    ? sql`,warehouse_books.warehouseId`
+    : sql``;
   // Page the distinct master identities before enriching their stock summaries.
   const nodeScope =
     input.nodeIds == null
@@ -48,21 +65,21 @@ export async function readInventoryBooks(
         : sql`1=0`;
   const latestDate = sql`(SELECT r.invoiceDate FROM inventory_transactions t LEFT JOIN warehouse_receipts r ON r.id=t.receiptId
     WHERE t.inventoryId=i.id AND t.type='in' AND t.transactionType='purchase' ORDER BY t.createdAt DESC LIMIT 1)`;
-  const dates = sql`EXISTS (SELECT 1 FROM inventory i WHERE i.linkedItemId=c.id AND ${warehouseScope(input.warehouseId)}
+  const dates = sql`EXISTS (SELECT 1 FROM inventory i WHERE i.linkedItemId=c.id AND ${scope}
     ${input.dateFrom ? sql`AND ${latestDate}>=${input.dateFrom}` : sql``} ${input.dateTo ? sql`AND ${latestDate}<=${input.dateTo}` : sql``})`;
   const order =
     input.sort === "name"
       ? sql`c.nameAr,c.id`
       : input.sort === "quantity"
-        ? sql`(SELECT SUM(i.quantity) FROM inventory i WHERE i.linkedItemId=c.id AND ${warehouseScope(input.warehouseId)} AND i.isFrozen=0) DESC,c.id`
-        : sql`(SELECT MAX(i.updatedAt) FROM inventory i WHERE i.linkedItemId=c.id AND ${warehouseScope(input.warehouseId)}) DESC,c.id`;
+        ? sql`(SELECT SUM(i.quantity) FROM inventory i WHERE i.linkedItemId=c.id AND ${scope} AND i.isFrozen=0) DESC,c.id`
+        : sql`(SELECT MAX(i.updatedAt) FROM inventory i WHERE i.linkedItemId=c.id AND ${scope}) DESC,c.id`;
   const books = await rows(
     db,
-    sql`SELECT c.id,c.code,c.nameAr,c.nameEn,c.unit,
-    (SELECT COUNT(*) FROM inventory i WHERE i.linkedItemId=c.id AND ${warehouseScope(input.warehouseId)}) AS pageCount
-    FROM catalog_items c WHERE ${nodeScope} AND ${bookSearchCondition(input.search || "")} AND ${dates}
-    AND EXISTS (SELECT 1 FROM inventory i WHERE i.linkedItemId=c.id AND ${warehouseScope(input.warehouseId)}
-      ${input.includeZero ? sql`` : sql`AND i.isFrozen=0 AND i.quantity>0`}) ORDER BY ${order} LIMIT ${limit + 1} OFFSET ${input.afterId || 0}`
+    sql`SELECT c.id,c.code,c.nameAr,c.nameEn,c.unit,${warehouseFields}
+    (SELECT COUNT(*) FROM inventory i WHERE i.linkedItemId=c.id AND ${scope}) AS pageCount
+    ${from} WHERE ${nodeScope} AND ${bookSearchCondition(input.search || "")} AND ${dates}
+    AND EXISTS (SELECT 1 FROM inventory i WHERE i.linkedItemId=c.id AND ${scope}
+      ${input.includeZero ? sql`` : sql`AND i.isFrozen=0 AND i.quantity>0`}) ORDER BY ${order}${warehouseOrder} LIMIT ${limit + 1} OFFSET ${input.afterId || 0}`
   );
   const hasMore = books.length > limit;
   const page = books.slice(0, limit);
@@ -71,7 +88,13 @@ export async function readInventoryBooks(
     db,
     inventoryBookTotalsQuery(
       page.map(book => Number(book.id)),
-      input.warehouseId
+      input.warehouseId,
+      input.groupByWarehouse
+        ? page.map(book => ({
+            catalogItemId: Number(book.id),
+            warehouseId: Number(book.warehouseId),
+          }))
+        : undefined
     )
   );
   return {
@@ -79,7 +102,10 @@ export async function readInventoryBooks(
       ...book,
       id: Number(book.id),
       totals: totals.filter(
-        row => Number(row.catalogItemId) === Number(book.id)
+        row =>
+          Number(row.catalogItemId) === Number(book.id) &&
+          (!input.groupByWarehouse ||
+            Number(row.warehouseId) === Number(book.warehouseId))
       ),
     })),
     nextId: hasMore ? (input.afterId || 0) + limit : null,
@@ -177,6 +203,7 @@ export function createInventoryBookProcedures(
         z.object({
           search: z.string().max(300).optional(),
           warehouseId: z.number().int().positive().optional(),
+          groupByWarehouse: z.boolean().optional(),
           afterId: z.number().int().nonnegative().optional(),
           limit: z.number().int().min(1).max(50).optional(),
           includeZero: z.boolean().optional(),

@@ -153,6 +153,40 @@ describe("book reads are scoped and page before enrichment", () => {
     expect(db.calls[0].sql).not.toContain("OR 1=1 --");
     expect(db.calls[0].sql).toContain("1=0");
   });
+  it("batch-enriches distinct warehouse books with repeated catalog identities in two reads", async () => {
+    const page = Array.from({ length: 50 }, (_, index) => ({
+      id: 9,
+      warehouseId: index + 1,
+      warehouseName: `مخزن ${index + 1}`,
+      pageCount: 1,
+    }));
+    const totals = page.map(book => ({
+      catalogItemId: book.id,
+      warehouseId: book.warehouseId,
+      unit: "حبة",
+      isFrozen: 0,
+      quantity: book.warehouseId,
+      incoming: 0,
+      outgoing: 0,
+    }));
+    const db = readPort([page, totals]);
+    const result = await readInventoryBooks(db, {
+      groupByWarehouse: true,
+      limit: 50,
+    });
+    expect(db.calls).toHaveLength(2);
+    expect(result.books).toHaveLength(50);
+    expect(
+      result.books.every(
+        book =>
+          book.totals.length === 1 &&
+          book.totals[0].warehouseId === book.warehouseId
+      )
+    ).toBe(true);
+    expect(db.calls[0].sql).toContain("warehouseId IS NOT NULL");
+    expect(db.calls[0].sql).toContain("LIMIT ? OFFSET ?");
+    expect(db.calls[1].params.length).toBeLessThanOrEqual(6 * page.length);
+  });
   it("denies a missing master before reading pages or lots", async () => {
     const db = readPort([[]]);
     await expect(

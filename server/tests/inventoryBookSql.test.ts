@@ -15,9 +15,11 @@ function fixture() {
     CREATE TABLE catalog_units(nameAr TEXT,nameEn TEXT,isActive INTEGER);
     CREATE TABLE catalog_items(id INTEGER,nameAr TEXT,nameEn TEXT,code TEXT,unit TEXT,nodeId INTEGER);
     CREATE TABLE catalog_item_candidates(resolvedCatalogItemId INTEGER,itemName TEXT);
+    CREATE TABLE warehouses(id INTEGER,nameAr TEXT,nameEn TEXT);
     CREATE TABLE inventory_lots(id INTEGER,catalogItemId INTEGER,issueUnit TEXT,supplierItemName TEXT,lotCode TEXT,trackingToken TEXT);
     CREATE TABLE inventory_transactions(inventoryId INTEGER,lotId INTEGER,type TEXT,quantity REAL,unitSnapshot TEXT);
     INSERT INTO catalog_units VALUES('حبة','Each',1),('قطعة','Piece',1),('كجم','Kg',1);
+    INSERT INTO warehouses VALUES(1,'الرئيسي','Main'),(2,'الفرعي','Branch');
     INSERT INTO catalog_items VALUES(9,'دجاج 1100 جم','Chicken','CAT-9','قطعة',1),(99,'سمك','Fish','FISH-99','حبة',2);
     INSERT INTO inventory VALUES
       (1,9,1,'كجم','كجم',1,0,'OLD CHICKEN','INV-1',NULL,'2026-01-01'),
@@ -109,3 +111,57 @@ it.each([
     }
   }
 );
+
+it("keeps each catalog book separate by warehouse and pages pairs before totals", async () => {
+  const f = fixture();
+  try {
+    f.db.exec(
+      "INSERT INTO inventory VALUES(7,9,NULL,'حبة','حبة',0,999,'Legacy','INV-7',NULL,'2026-07-01')"
+    );
+    const first = await readInventoryBooks(f, {
+      groupByWarehouse: true,
+      search: "CAT-9",
+      sort: "name",
+      limit: 1,
+    });
+    expect(first.books).toHaveLength(1);
+    expect(first.books[0]).toMatchObject({
+      id: 9,
+      warehouseId: 1,
+      warehouseName: "الرئيسي",
+      pageCount: 4,
+    });
+    expect(
+      first.books[0].totals.find(
+        total => total.unit === "حبة" && !total.isFrozen
+      )
+    ).toMatchObject({ quantity: 3, incoming: 3 });
+    expect(
+      first.books[0].totals.every(total => Number(total.warehouseId) === 1)
+    ).toBe(true);
+    expect(first.nextId).toBe(1);
+
+    const second = await readInventoryBooks(f, {
+      groupByWarehouse: true,
+      search: "CAT-9",
+      sort: "name",
+      limit: 1,
+      afterId: first.nextId!,
+    });
+    expect(second.books).toHaveLength(1);
+    expect(second.books[0]).toMatchObject({
+      id: 9,
+      warehouseId: 2,
+      warehouseName: "الفرعي",
+      pageCount: 1,
+    });
+    expect(second.books[0].totals).toHaveLength(1);
+    expect(second.books[0].totals[0]).toMatchObject({
+      quantity: 100,
+      warehouseId: 2,
+    });
+    expect(second.nextId).toBeNull();
+  } finally {
+    f.db.close();
+  }
+});
