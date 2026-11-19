@@ -51,8 +51,8 @@ async function findLinkedTicketEvidence(database: any, ids: number[]) {
     recipient.name AS recipientName,performer.name AS performerName
     FROM ticket_team_supply_links s JOIN ticket_team_material_needs n ON n.id=s.needId
     JOIN ticket_team_assignments a ON a.id=n.assignmentId JOIN tickets t ON t.id=a.ticketId
-    LEFT JOIN ticket_team_delivery_links d ON d.needId=n.id AND d.lotId IN
-      (SELECT l.id FROM inventory_lots l WHERE l.purchaseOrderItemId=s.sourceId)
+    LEFT JOIN (ticket_team_delivery_links d INNER JOIN inventory_lots l ON l.id=d.lotId)
+      ON d.needId=n.id AND l.purchaseOrderItemId=s.sourceId
     LEFT JOIN inventory_transactions movement ON movement.id=d.inventoryTransactionId
     LEFT JOIN users recipient ON recipient.id=d.receivedById LEFT JOIN users performer ON performer.id=movement.performedById
     WHERE s.sourceKind='purchase' AND s.status<>'cancelled' AND s.sourceId IN (${sql.join(chunk.map(id => sql`${id}`), sql`,`)})

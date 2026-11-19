@@ -56,7 +56,7 @@ function ItemDetails({ id, now }: { id: number; now: number }) {
   const detail = trpc.achievement.purchaseItem.useQuery({ id });
   const events = useMemo(() => detail.data ? buildEvents(detail.data) : [], [detail.data]);
   if (detail.isLoading) return <p className="p-3 text-sm">جاري تحميل رحلة الصنف...</p>;
-  if (detail.error || !detail.data) return <p role="alert" className="p-3 text-sm text-destructive">{detail.error?.message || "تعذر تحميل الرحلة"}</p>;
+  if (detail.error || !detail.data) return <p role="alert" className="p-3 text-sm text-destructive">تعذر تحميل رحلة الصنف. حاول مرة أخرى.</p>;
   const item = detail.data.item as AchievementItem;
   const reason = achievementStatus(item).reason;
   return <div className="mt-4 rounded-xl bg-muted/30 p-4">
@@ -98,7 +98,7 @@ export default function Achievement() {
     <form onSubmit={searchNow} className="flex max-w-2xl gap-2"><Input aria-label="البحث" value={search} onChange={event => setSearch(event.target.value)} placeholder="ابحث باسم الصنف أو رقم طلب الشراء أو البلاغ المرتبط بالطلب" /><Button type="submit"><Search className="h-4 w-4" /> بحث</Button></form>
     <p className="text-xs text-muted-foreground">تُحسب الأوقات من تاريخ إرسال الطلب المسجل. لا تعني مدة الانتظار وحدها وجود تأخير.</p>
     {result.isLoading && <p>جاري تحميل الأصناف...</p>}
-    {result.error && <p role="alert" className="text-destructive">{result.error.message}</p>}
+    {result.error && <p role="alert" className="text-destructive">تعذر تحميل الأصناف. حاول مرة أخرى.</p>}
     {!result.isLoading && !result.error && !items.length && <p className="rounded-lg border p-5">لا توجد أصناف مطابقة.</p>}
     <div className="space-y-3">{items.map(item => <article key={item.id} className="rounded-xl border bg-card p-4 shadow-sm">
       <button type="button" className="block w-full text-start" onClick={() => setSelected(selected === item.id ? null : item.id)} aria-expanded={selected === item.id}>

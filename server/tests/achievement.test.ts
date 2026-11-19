@@ -92,6 +92,10 @@ describe("achievement access and bounded reads", () => {
           "ticket_team_supply_links", "ticket_team_material_needs", "ticket_team_assignments",
           "ticket_team_delivery_links", "inventory_lots", "inventory_transactions",
         ].map(name => ({ name }))];
+        if (compiled.sql.includes("FROM ticket_team_supply_links s")) {
+          // TiDB rejects subqueries in JOIN ON, even though SQLite accepts them.
+          expect(compiled.sql).not.toMatch(/\bON\b[^;]*\bIN\s*\(\s*SELECT\b/i);
+        }
         return [mem.prepare(compiled.sql).all(...(compiled.params as any[]))];
       });
       f.parents.mockResolvedValue([{ id: 1 }]);
