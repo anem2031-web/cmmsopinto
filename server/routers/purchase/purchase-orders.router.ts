@@ -432,6 +432,7 @@ function shapeEnrichedPurchaseCycleItem(item: any, context: { po: any; ticket: a
     ...item,
     purchaseOrderNumber: po?.poNumber || null,
     purchaseOrderStatus: po?.status || null,
+    purchaseOrderCategoryId: po?.categoryId ?? null,
     ticketId: ticket?.id || null,
     ticketNumber: ticket?.ticketNumber || null,
     maintenancePath: item.itemMaintenancePath || ticket?.maintenancePath || null,

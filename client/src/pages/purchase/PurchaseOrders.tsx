@@ -46,6 +46,7 @@ import { localizeApiError } from "@/i18n/apiError";
 import { getLocalizedCatalogUnitName } from "@/i18n/catalogMasterData";
 import { formatAvailableDuration, formatDateOnly, formatOverdueDuration, formatRemainingPurchaseDuration, getAvailableCalendarDays, getOverdueCalendarDays } from "@/lib/purchaseItemTiming";
 import { comparePurchaseRequiredDates, remainingPurchaseCalendarDays } from "@shared/purchaseItemNeedDate";
+import { matchesDelegateItemCategory } from "@shared/delegateItemCategory";
 import { canRoleAccessPurchaseSupplyTracking, canRoleViewAllPurchaseSupplyTracking } from "@shared/roles";
 import { formatPurchaseSubmissionTime } from "@shared/purchaseSubmissionTime";
 
@@ -110,6 +111,7 @@ export default function PurchaseOrders() {
   // تبقى منفصلة عن فلاتر الطلبات العامة حتى لا تؤثر على بقية الأدوار/التبويبات.
   const [delegateItemsSearch, setDelegateItemsSearch] = useState("");
   const [delegateActionFilter, setDelegateActionFilter] = useState<DelegateActionFilter>("all");
+  const [delegateCategoryFilter, setDelegateCategoryFilter] = useState("all");
   const [delegateDateFilter, setDelegateDateFilter] = useState<DelegateDateFilter>("all");
   const [delegateDateFrom, setDelegateDateFrom] = useState("");
   const [delegateDateTo, setDelegateDateTo] = useState("");
@@ -226,6 +228,9 @@ export default function PurchaseOrders() {
   // Legacy package-pricing view retained, but its query stays disabled while
   // delegates use only the existing item queue and supply-tracking view.
   const isDelegatePricingActionRole = isDelegateRole(user?.role);
+  const { data: delegateCategories = [] } = trpc.centerCategories.list.useQuery(
+    { activeOnly: false }, { enabled: isDelegatePricingActionRole, ...independentReadOptions },
+  );
   const { data: delegatePendingEstimateItems = [], isLoading: delegatePendingEstimateItemsLoading } =
     trpc.purchaseOrders.pendingEstimateItems.useQuery(undefined, {
       enabled: isDelegatePricingActionRole && view === "actionable",
@@ -301,6 +306,7 @@ export default function PurchaseOrders() {
 
     return [...delegateActionableItems]
       .filter((item: any) => delegateActionFilter === "all" || item.actionMode === delegateActionFilter)
+      .filter((item: any) => matchesDelegateItemCategory(item, delegateCategoryFilter))
       .filter(matchesDate)
       .filter(matchesSearch)
       .sort(comparePurchaseRequiredDates);
@@ -308,6 +314,7 @@ export default function PurchaseOrders() {
     delegateActionableItems,
     delegateItemsSearch,
     delegateActionFilter,
+    delegateCategoryFilter,
     delegateDateFilter,
     delegateDateFrom,
     delegateDateTo,
@@ -1024,7 +1031,7 @@ export default function PurchaseOrders() {
         <div className="space-y-3">
           <Card>
             <CardContent className="py-3">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                 <Input
                   value={delegateItemsSearch}
                   onChange={(event) => setDelegateItemsSearch(event.target.value)}
@@ -1042,6 +1049,15 @@ export default function PurchaseOrders() {
                     <SelectItem value="all">{t.workflow.purchase.delegateActionAll}</SelectItem>
                     <SelectItem value="estimate">{t.workflow.purchase.delegateNeedsPricing}</SelectItem>
                     <SelectItem value="purchase">{t.workflow.purchase.delegateNeedsPurchase}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={delegateCategoryFilter} onValueChange={setDelegateCategoryFilter}>
+                  <SelectTrigger aria-label={t.workflow.purchase.delegateCategoryFilter}>
+                    <SelectValue placeholder={t.workflow.purchase.delegateCategoryFilter} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t.workflow.purchase.delegateAllCategories}</SelectItem>
+                    {delegateCategories.map((category: any) => <SelectItem key={category.id} value={String(category.id)}>{category.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <Select

@@ -2321,6 +2321,8 @@ const ur: TranslationKeys = {
       delegateItemsTab: "میرے آئٹمز کارروائی کے منتظر",
       delegateItemsSearchPlaceholder: "آئٹم نام، خریداری آرڈر نمبر یا رقم سے تلاش کریں",
       delegateActionType: "کارروائی کی قسم",
+      delegateCategoryFilter: "زمرہ",
+      delegateAllCategories: "تمام زمرے",
       delegateActionAll: "سب",
       delegateNeedsPricing: "قیمت درکار",
       delegateNeedsPurchase: "خریداری مطلوب",

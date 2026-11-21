@@ -2401,6 +2401,8 @@ const ar = {
       delegateItemsTab: "أصنافي بانتظار المعالجة",
       delegateItemsSearchPlaceholder: "بحث باسم الصنف أو رقم الطلب أو المبلغ",
       delegateActionType: "نوع المعالجة",
+      delegateCategoryFilter: "التصنيف",
+      delegateAllCategories: "كل التصنيفات",
       delegateActionAll: "الكل",
       delegateNeedsPricing: "يحتاج تسعير",
       delegateNeedsPurchase: "مطلوب الشراء",

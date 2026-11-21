@@ -2341,6 +2341,8 @@ const en: TranslationKeys = {
       delegateItemsTab: "My items awaiting processing",
       delegateItemsSearchPlaceholder: "Search by item name, purchase order number, or amount",
       delegateActionType: "Processing type",
+      delegateCategoryFilter: "Category",
+      delegateAllCategories: "All categories",
       delegateActionAll: "All",
       delegateNeedsPricing: "Needs pricing",
       delegateNeedsPurchase: "Purchase required",
