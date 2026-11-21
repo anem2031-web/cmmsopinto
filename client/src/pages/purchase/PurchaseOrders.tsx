@@ -46,7 +46,7 @@ import { localizeApiError } from "@/i18n/apiError";
 import { getLocalizedCatalogUnitName } from "@/i18n/catalogMasterData";
 import { formatAvailableDuration, formatDateOnly, formatOverdueDuration, formatRemainingPurchaseDuration, getAvailableCalendarDays, getOverdueCalendarDays } from "@/lib/purchaseItemTiming";
 import { comparePurchaseRequiredDates, remainingPurchaseCalendarDays } from "@shared/purchaseItemNeedDate";
-import { matchesDelegateItemCategory } from "@shared/delegateItemCategory";
+import { availableDelegateItemCategories, delegateItemCategoryId, matchesDelegateItemCategory } from "@shared/delegateItemCategory";
 import { canRoleAccessPurchaseSupplyTracking, canRoleViewAllPurchaseSupplyTracking } from "@shared/roles";
 import { formatPurchaseSubmissionTime } from "@shared/purchaseSubmissionTime";
 
@@ -245,6 +245,16 @@ export default function PurchaseOrders() {
     });
   const delegateActionableItems = delegateActionableItemsData?.items ?? [];
   const delegateActionableItemsCount = delegateActionableItemsData?.total ?? 0;
+  const availableDelegateCategories = useMemo(
+    () => availableDelegateItemCategories(delegateActionableItems, delegateCategories),
+    [delegateActionableItems, delegateCategories],
+  );
+  useEffect(() => {
+    if (delegateActionableItemsData && delegateCategoryFilter !== "all" &&
+        !delegateActionableItems.some((item: any) => String(delegateItemCategoryId(item)) === delegateCategoryFilter)) {
+      setDelegateCategoryFilter("all");
+    }
+  }, [delegateActionableItemsData, delegateActionableItems, delegateCategoryFilter]);
 
   const filteredDelegateActionableItems = useMemo(() => {
     const query = delegateItemsSearch.trim().toLowerCase();
@@ -1057,7 +1067,7 @@ export default function PurchaseOrders() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">{t.workflow.purchase.delegateAllCategories}</SelectItem>
-                    {delegateCategories.map((category: any) => <SelectItem key={category.id} value={String(category.id)}>{category.name}</SelectItem>)}
+                    {availableDelegateCategories.map((category: any) => <SelectItem key={category.id} value={String(category.id)}>{category.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <Select

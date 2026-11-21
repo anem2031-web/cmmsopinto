@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { matchesDelegateItemCategory } from "../../shared/delegateItemCategory";
+import { availableDelegateItemCategories, matchesDelegateItemCategory } from "../../shared/delegateItemCategory";
 import { comparePurchaseRequiredDates } from "../../shared/purchaseItemNeedDate";
 
 describe("delegate item category filter", () => {
+  it("only offers categories belonging to assigned actionable items, including new categories and legacy order categories", () => {
+    const categories = [{ id: 1, name: "الكهرباء" }, { id: 2, name: "السباكة" }, { id: 3, name: "جديد" }];
+    const items = [{ categoryId: 2 }, { categoryId: null, purchaseOrderCategoryId: 3 }];
+    expect(availableDelegateItemCategories(items, categories).map(category => category.id)).toEqual([2, 3]);
+    expect(availableDelegateItemCategories([], categories)).toEqual([]);
+    expect(availableDelegateItemCategories([{ categoryId: 1 }], categories).map(category => category.id)).toEqual([1]);
+  });
   it("filters across orders by the item's category and retains the existing need-date order", () => {
     const items = [
       { id: 1, categoryId: 3, purchaseOrderCategoryId: 8, requiredDate: "2026-11-25" },
