@@ -19,7 +19,7 @@ export function createTicketTeamAssignmentRouter(service: TicketTeamAssignmentSe
     candidates: protectedProcedure.query(({ ctx }) => result(() => service.candidates(actor(ctx)))),
     queue: protectedProcedure.query(({ ctx }) => result(() => service.queue(actor(ctx)))),
     warehouseRequests: protectedProcedure.query(({ ctx }) => result(() => service.warehouseRequests(actor(ctx)))),
-    assign: protectedProcedure.input(z.object({ ticketId: z.number().int().positive(), taskId: z.number().int().positive(), teamId: z.number().int().positive() }).strict())
+    assign: protectedProcedure.input(z.object({ ticketId: z.number().int().positive(), taskId: z.number().int().positive(), teamId: z.number().int().positive(), inspectionMinutes: z.number().int().min(1).max(525600) }).strict())
       .mutation(({ ctx, input }) => result(() => service.assign(actor(ctx), input))),
   });
 }

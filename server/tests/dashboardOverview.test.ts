@@ -3,6 +3,70 @@ import { buildDashboard, dashboardDetails, dashboardPeriod, dashboardSummary, DA
 import { fixture, ticket, purchase, NOW, FILTERS, HOUR } from "../../tools/dashboard-development/fixture";
 
 describe("real dashboard counting contracts without database access", () => {
+  it("tracks 48-hour triage and the inspection deadline with a one-hour grace without guessing legacy deadlines", () => {
+    const data = fixture();
+    data.tickets = [ticket(1, { status: "pending_triage", createdAt: NOW - 49 * HOUR }), ticket(2, { workflowModel: "sub_ticket", parentTicketId: 1, status: "under_inspection" })];
+    data.teams = [{ id: 40, ticketId: 2, managerId: 10, stage: "action_required", teamName: "فريق", createdAt: NOW - 4 * HOUR, enteredAt: NOW - 4 * HOUR, note: null, inspectionMinutes: 120, startedAt: null, outcomeAt: null }];
+    data.orders = []; data.purchases = []; data.teamPurchaseLinks = [];
+    let report = buildDashboard(data, FILTERS, NOW);
+    expect(report.counts.work_triage).toBe(1);
+    expect(report.counts.work_start).toBe(1);
+    expect(report.counts.work_overdue).toBe(2);
+    data.teams[0].createdAt = NOW - 3 * HOUR;
+    report = buildDashboard(data, FILTERS, NOW);
+    expect(report.counts.work_overdue).toBe(1); // exact grace boundary is not yet overdue
+    data.teams[0].inspectionMinutes = null;
+    report = buildDashboard(data, FILTERS, NOW);
+    expect(report.counts.work_start).toBe(1); expect(report.counts.work_overdue).toBe(1);
+    data.teams[0].startedAt = NOW - HOUR;
+    expect(buildDashboard(data, FILTERS, NOW).counts.work_active).toBe(1);
+    data.teams[0].outcomeAt = NOW - 1000;
+    expect(buildDashboard(data, FILTERS, NOW).counts.work_active).toBe(0);
+  });
+  it("counts only actionable purchases linked to a report and never includes drafts or unrelated purchases", () => {
+    const data = fixture(); data.purchases = [purchase(1, { status: "pending", receivedAt: null }), purchase(2, { status: "cancelled", receivedAt: null }), purchase(3, { orderId: 999, status: "pending", receivedAt: null })];
+    data.teamPurchaseLinks = [{ ticketId: 4, purchaseItemId: 1 }];
+    data.orders.push({ id: 999, poNumber: "PR-unlinked", status: "pending_estimate", ticketId: null, siteId: 1, requestedById: 10 });
+    expect(buildDashboard(data, FILTERS, NOW).metrics.work_purchases.map(row => row.id)).toEqual([1]);
+  });
+  it("filters the cards by report search, recorded responsible and overdue without assigning accounting work to the delegate", () => {
+    const data = fixture(); data.tickets = [ticket(4)];
+    data.purchases = [purchase(1, { status: "estimated", batchStatus: "pending_accounting", receivedAt: null, requiredDate: "2026-10-12" }), purchase(2, { status: "pending", receivedAt: null, requiredDate: "2026-10-12" })];
+    data.teamPurchaseLinks = [{ ticketId: 4, purchaseItemId: 1 }, { ticketId: 4, purchaseItemId: 2 }];
+    const all = buildDashboard(data, FILTERS, NOW);
+    expect(all.counts.work_overdue).toBe(2);
+    expect(all.metrics.work_purchases.find(row => row.id === 1)).toMatchObject({ waitOwner: "accounting", actorIds: [] });
+    expect(buildDashboard(data, { ...FILTERS, responsibleId: 20 }, NOW).metrics.work_purchases.map(row => row.id)).toEqual([2]);
+    expect(buildDashboard(data, { ...FILTERS, workType: "reports" }, NOW).counts.work_purchases).toBe(0);
+    expect(buildDashboard(data, { ...FILTERS, search: "MT-2026-00004", workStatus: "overdue" }, NOW).counts.work_purchases).toBe(2);
+    expect(buildDashboard(data, { ...FILTERS, search: "not-found" }, NOW).counts.work_purchases).toBe(0);
+  });
+  it("keeps blockers, external maintenance and manager review visible after the technician records a result", () => {
+    const data = fixture(); data.tickets = [ticket(4)];
+    data.teams = ["blocked", "external_requested", "awaiting_review"].map((stage, i) => ({ id: 40 + i, ticketId: 4, managerId: 10, stage, teamName: `فريق ${i}`, createdAt: NOW - 4 * HOUR, enteredAt: NOW - HOUR, note: "سبب", outcomeAt: NOW - HOUR }));
+    const report = buildDashboard(data, FILTERS, NOW);
+    expect(report.counts.work_blocked).toBe(1); expect(report.counts.work_external).toBe(1); expect(report.counts.work_review).toBe(1);
+    expect(report.metrics.work_blocked[0]).toMatchObject({ waitOwner: "maintenance", actorIds: [10], note: "سبب" });
+    expect(report.counts.work_overdue).toBe(0);
+  });
+  it("keeps a warehouse receipt visible for an open linked ticket without guessing who holds a purchased item", () => {
+    const data = fixture(); data.tickets = [ticket(4)];
+    data.purchases = [purchase(1, { status: "purchased", receivedAt: null }), purchase(2, { status: "delivered_to_warehouse" })];
+    data.teamPurchaseLinks = [{ ticketId: 4, purchaseItemId: 1 }, { ticketId: 4, purchaseItemId: 2 }];
+    const report = buildDashboard(data, FILTERS, NOW);
+    expect(report.metrics.work_purchases.find(row => row.id === 1)).toMatchObject({ waitOwner: "unknown", actorIds: [] });
+    expect(report.metrics.work_purchases.find(row => row.id === 2)?.workLabel).toContain("راجع الصرف");
+    data.tickets[0].status = "closed";
+    expect(buildDashboard(data, FILTERS, NOW).metrics.work_purchases.map(row => row.id)).toEqual([1]);
+  });
+  it("shows recorded material and repair actions in order without inventing an absent stage", () => {
+    const data = fixture(); data.tickets = [ticket(4)];
+    data.teams = [{ id: 40, ticketId: 4, managerId: 10, stage: "awaiting_review", teamName: "فريق", createdAt: NOW - 4 * HOUR, enteredAt: NOW - HOUR, note: null, startedAt: NOW - 3 * HOUR, outcomeAt: NOW - 2 * HOUR, outcomeKind: "needs_material", followupEvents: [{ kind: "purchase_requested", at: NOW - 1.5 * HOUR, actorId: 10, note: "طلب شراء" }, { kind: "warehouse_issue", at: NOW - HOUR, actorId: 10, note: "صرف" }] }];
+    const journey = buildDashboard(data, FILTERS, NOW).metrics.work_review[0].journey!;
+    expect(journey.map(event => event.label)).toContain("إنشاء طلب شراء المادة");
+    expect(journey.map(event => event.label)).toContain("صرف المواد للفني");
+    expect(journey.find(event => event.label === "انتهاء الفرز والتصنيف")?.at).toBeNull();
+  });
   it("counts one parent and its children in different units", () => {
     const data = fixture(); data.tickets = data.tickets.slice(0, 4);
     const report = buildDashboard(data, FILTERS, NOW);

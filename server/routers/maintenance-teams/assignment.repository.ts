@@ -130,7 +130,8 @@ class Transaction implements TeamAssignmentTransaction {
   async create(
     c: AssignmentContext,
     selected: AssignmentTeam,
-    actor: TeamManagementActor
+    actor: TeamManagementActor,
+    inspectionMinutes: number
   ) {
     const p = this.tickets;
     const parent = await p.getTicketById(c.parent.id, this.db);
@@ -211,7 +212,7 @@ class Transaction implements TeamAssignmentTransaction {
     if (!assignmentId) throw new Error("تعذر ربط إسناد الفريق");
     // Opt in only newly assigned tickets. No schema migration or historical backfill.
     await this.db.execute(
-      sql`INSERT INTO ticket_team_actions (assignmentId,actorId,kind,note,revision,operationKey) VALUES (${assignmentId},${actor.id},'execution_protocol','{"version":1}',0,${`ticket-team-protocol:${assignmentId}`})`
+      sql`INSERT INTO ticket_team_actions (assignmentId,actorId,kind,note,revision,operationKey) VALUES (${assignmentId},${actor.id},'execution_protocol',${JSON.stringify({ version: 1, inspectionMinutes })},0,${`ticket-team-protocol:${assignmentId}`})`
     );
     await p.updateTicketTask(
       task.id,

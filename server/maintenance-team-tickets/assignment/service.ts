@@ -42,6 +42,7 @@ export class TicketTeamAssignmentService {
   async assign(actor: TeamManagementActor, input: TeamAssignmentInput) {
     this.manager(actor);
     if (![input.ticketId, input.taskId, input.teamId].every(n => Number.isSafeInteger(n) && n > 0)) throw new TeamTicketError("INVALID", "معرفات الإسناد غير صحيحة");
+    if (!Number.isSafeInteger(input.inspectionMinutes) || input.inspectionMinutes < 1 || input.inspectionMinutes > 525600) throw new TeamTicketError("INVALID", "حدد مدة فحص صحيحة من دقيقة إلى سنة");
     return this.repository.transaction(async tx => {
       const c = await tx.lockContext(input);
       if (!c) throw new TeamTicketError("NOT_FOUND", "البلاغ أو المهمة أو الجهة غير موجودة");
@@ -57,7 +58,7 @@ export class TicketTeamAssignmentService {
       const team = await tx.lockTeam(input.teamId);
       if (!team || !team.active || !team.warehouseActive || team.warehouseType !== "branch" || team.memberCount < 1)
         throw new TeamTicketError("CONFLICT", "الفريق غير متاح؛ يلزم مستودع فرعي نشط وفني نشط واحد على الأقل");
-      return tx.create(c, team, actor);
+      return tx.create(c, team, actor, input.inspectionMinutes);
     });
   }
 }

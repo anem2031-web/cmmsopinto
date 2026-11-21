@@ -21,7 +21,7 @@ export function createDashboardSnapshots(options: {
   const entries = new Map<string, Snapshot>();
   const pending = new Map<string, Promise<Snapshot>>();
   const scopeKey = (actor: DashboardReadActor, filters: DashboardFilters) => JSON.stringify([
-    actor.id, actor.role, filters.period, filters.department, filters.siteId ?? null,
+    actor.id, actor.role, filters.period, filters.department, filters.siteId ?? null, filters.search ?? "", filters.responsibleId ?? null, filters.workStatus ?? "all", filters.workType ?? "all",
     filters.period === "custom" ? filters.dateFrom : null,
     filters.period === "custom" ? filters.dateTo : null,
   ]);

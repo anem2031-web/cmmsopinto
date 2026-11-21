@@ -12,6 +12,10 @@ const filterShape = z.object({
   dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   siteId: z.number().int().positive().optional(),
   department: z.enum(["all", "general", "construction", "it", "unclassified"]).default("all"),
+  search: z.string().trim().max(150).optional(),
+  responsibleId: z.number().int().positive().optional(),
+  workStatus: z.enum(["all", "overdue", "open", "completed"]).optional(),
+  workType: z.enum(["all", "reports", "purchases"]).optional(),
 });
 const validatePeriod = (input: DashboardFilters, context: z.RefinementCtx) => {
   try { dashboardPeriod(input, Date.now()); }

@@ -5,6 +5,7 @@ export interface TeamAssignmentInput {
   ticketId: number;
   taskId: number;
   teamId: number;
+  inspectionMinutes: number;
 }
 export interface AssignmentContext {
   parent: {
@@ -88,7 +89,8 @@ export interface TeamAssignmentTransaction {
   create(
     context: AssignmentContext,
     team: AssignmentTeam,
-    actor: TeamManagementActor
+    actor: TeamManagementActor,
+    inspectionMinutes: number
   ): Promise<AssignmentResult>;
 }
 export interface TeamAssignmentRepository {

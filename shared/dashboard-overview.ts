@@ -1,4 +1,5 @@
 /** Read-only dashboard rules. No application, database or browser imports. */
+import { achievementStatus, type AchievementItem } from "./achievement";
 export type DashboardDepartment = "all" | "general" | "construction" | "it" | "unclassified";
 export type DashboardFilters = {
   period: "month" | "year" | "all" | "custom";
@@ -6,6 +7,10 @@ export type DashboardFilters = {
   dateTo?: string;
   siteId?: number;
   department: DashboardDepartment;
+  search?: string;
+  responsibleId?: number;
+  workStatus?: "all" | "overdue" | "open" | "completed";
+  workType?: "all" | "reports" | "purchases";
 };
 export const DASHBOARD_METRICS = [
   "new_reports", "open_execution", "completed_execution", "aged_execution",
@@ -13,6 +18,8 @@ export const DASHBOARD_METRICS = [
   "received_value", "critical_execution", "pending_triage", "under_inspection",
   "awaiting_confirmation",
   "organizing_reports",
+  "work_overdue", "work_triage", "work_assignment", "work_start", "work_active", "work_purchases",
+  "work_blocked", "work_external", "work_review",
 ] as const;
 export type DashboardMetric = (typeof DASHBOARD_METRICS)[number];
 export type WaitOwner = "maintenance" | "warehouse" | "purchase" | "accounting" | "management" | "external" | "gate" | "mixed" | "finished" | "unknown";
@@ -25,18 +32,29 @@ export type DashboardTicket = {
   department: string | null; managerId: number | null; assignedToId: number | null;
   supervisorId?: number | null; maintenancePath?: string | null;
   createdAt: number | null; closedAt: number | null; assignedAt: number | null;
+  routedAt?: number | null; routedById?: number | null;
+  reportedById?: number | null;
 };
 export type DashboardItemScope = { ticketId: number; department: string | null; managerId: number | null };
-export type DashboardOrder = { id: number; poNumber: string; status: string; ticketId: number | null; siteId: number | null; requestedById: number };
+export type DashboardOrder = { id: number; poNumber: string; status: string; ticketId: number | null; siteId: number | null; requestedById: number; submittedAt?: number | null };
 export type DashboardPurchase = {
   id: number; orderId: number; itemName: string; status: string;
   quantity: number; receivedQuantity: number | null; unit: string | null;
   actualTotalCost: string | number | null; receivedAt: number | null;
   purchasedAt: number | null; delegateId: number | null;
+  requiredDate?: string | null; reviewRole?: string | null; reviewStartedAt?: number | null; delegateWaitStartedAt?: number | null;
+  itemSiteId?: number | null;
+  batchStatus?: string | null; pricingSubmittedAt?: number | null; accountingApprovedAt?: number | null; managementApprovedAt?: number | null;
+  itemRevisionNote?: string | null; purchaseCancelReason?: string | null; managementRejectionReason?: string | null;
 };
 export type DashboardTeam = {
   id: number; ticketId: number; managerId: number; stage: string; teamName: string;
   createdAt: number | null; enteredAt: number | null; note: string | null;
+  inspectionMinutes?: number | null; startedAt?: number | null; startedById?: number | null;
+  outcomeAt?: number | null; outcomeById?: number | null; outcomeKind?: string | null;
+  currentWorkAt?: number | null; currentWorkById?: number | null;
+  assignedById?: number | null; outcomeNote?: string | null;
+  followupEvents?: { kind: string; at: number | null; actorId: number | null; note: string | null }[];
 };
 export type DashboardData = {
   tickets: DashboardTicket[]; itemScopes: DashboardItemScope[]; departmentScopes: DashboardItemScope[];
@@ -44,6 +62,7 @@ export type DashboardData = {
   teamPurchaseLinks: { ticketId: number; purchaseItemId: number }[];
   statusEntries: { ticketId: number; enteredAt: number | null; note?: string | null }[];
   users: { id: number; name: string; role: string }[];
+  workTasks?: { id: number; ticketId: number; title: string; status: string; managerId: number | null; department: string | null; routedAt: number | null; sourceKind?: "task" | "department" }[];
   sites: { id: number; name: string }[];
   externalJobs: { ticketId: number; status: string; delegateId: number | null; purchaseOrderId?: number | null; actualRecipientId?: number | null; createdAt: number | null; warehousePreparedAt: number | null; gateExitApprovedAt: number | null; delegateReadyForReturnAt: number | null; gateEntryApprovedAt: number | null; warehouseReceivedAt: number | null; handoverAt: number | null }[];
 };
@@ -60,6 +79,14 @@ export type DashboardRow = {
   amount: number | null; orderId?: number; orderNumber?: string;
   quantity?: number; unit?: string | null;
   childTotal?: number; childCompleted?: number;
+  deadlineAt?: number | null; journey?: { label: string; at: number | null; actor: string | null; note?: string | null }[];
+  linkedTicketNumber?: string | null;
+  workLabel?: string | null;
+  actorIds?: number[];
+  requiredDate?: string | null;
+  overdue?: boolean;
+  reportAgeHours?: number | null;
+  inspectionOutcomeAt?: number | null;
 };
 export type DashboardManager = {
   key: string; managerId: number | null; name: string | null;
@@ -149,9 +176,12 @@ export function buildDashboard(data: DashboardData, filters: DashboardFilters, n
     if (order?.ticketId && !teamTicketIds.has(order.ticketId)) link(order.ticketId, item);
   }
   const purchaseMap = new Map(data.purchases.map(i => [i.id, i]));
+  const ticketIdsByPurchase = new Map<number, Set<number>>();
   for (const entry of data.teamPurchaseLinks) {
     const item = purchaseMap.get(entry.purchaseItemId);
     if (item) link(entry.ticketId, item);
+    const ids = ticketIdsByPurchase.get(entry.purchaseItemId) ?? new Set<number>();
+    ids.add(entry.ticketId); ticketIdsByPurchase.set(entry.purchaseItemId, ids);
   }
   const unique = <T,>(values: T[]) => Array.from(new Set(values));
   function ticketScopes(ticket: DashboardTicket) {
@@ -261,6 +291,20 @@ export function buildDashboard(data: DashboardData, filters: DashboardFilters, n
   }
   const metrics = Object.fromEntries(DASHBOARD_METRICS.map(m => [m, [] as DashboardRow[]])) as Record<DashboardMetric, DashboardRow[]>;
   const managerMap = new Map<string, DashboardManager>();
+  const teamJourney = (ticket: DashboardTicket, team: DashboardTeam): NonNullable<DashboardRow["journey"]> => {
+    const parent = ticket.parentTicketId ? tickets.get(ticket.parentTicketId) : ticket;
+    const journey: NonNullable<DashboardRow["journey"]> = [
+      { label: "إنشاء البلاغ", at: parent?.createdAt ?? null, actor: parent?.reportedById ? users.get(parent.reportedById)?.name ?? null : null },
+      { label: "انتهاء الفرز والتصنيف", at: parent?.routedAt ?? null, actor: parent?.routedById ? users.get(parent.routedById)?.name ?? null : null },
+      { label: `إسناد الفريق ${team.teamName}`, at: team.createdAt, actor: team.assignedById ? users.get(team.assignedById)?.name ?? null : null },
+      { label: "بدء التنفيذ", at: team.startedAt ?? null, actor: team.startedById ? users.get(team.startedById)?.name ?? null : null },
+      { label: ({ ok: "النتيجة: سليم", fixed: "النتيجة: تم الإصلاح", needs_material: "النتيجة: تحتاج مواد", blocked: "تسجيل عائق", external: "النتيجة: صيانة خارجية" } as Record<string, string>)[team.outcomeKind ?? ""] ?? "تسجيل النتيجة", at: team.outcomeAt ?? null, actor: team.outcomeById ? users.get(team.outcomeById)?.name ?? null : null, note: team.outcomeKind === "needs_material" ? null : team.outcomeNote ?? null },
+    ];
+    const labels: Record<string, string> = { purchase_requested: "إنشاء طلب شراء المادة", purchase_received: "تسجيل استلام الشراء في المستودع", transfer_confirmed: "تأكيد تحويل المواد", warehouse_issue: "صرف المواد للفني", material_received: "تسجيل استلام الفريق للمواد", execution_resumed: "استكمال التنفيذ", fixed: "تسجيل إتمام الإصلاح", return_to_team: "إعادة العمل للفريق", approve_external: "اعتماد طلب الصيانة الخارجية", external_handover: "تسليم الأصل لإعادة التركيب", approve_result: "اعتماد نتيجة الفريق", return_received: "تسجيل مرتجع المواد" };
+    for (const event of team.followupEvents ?? []) if (labels[event.kind]) journey.push({ label: labels[event.kind], at: event.at, actor: event.actorId ? users.get(event.actorId)?.name ?? null : null, note: event.note });
+    if (FINISHED.has(ticket.status) && ticket.closedAt != null) journey.push({ label: "إغلاق تذكرة التنفيذ", at: ticket.closedAt, actor: null });
+    return journey;
+  };
   let missingClosedDates = 0, missingReceiptDates = 0;
   for (const ticket of data.tickets) {
     const scopes = ticketScopes(ticket);
@@ -280,7 +324,62 @@ export function buildDashboard(data: DashboardData, filters: DashboardFilters, n
       waitOwner: wait.owner, actorNames: wait.actors, currentSince: wait.since, waitHours, ageHours,
       note: wait.note, actionStage: wait.actionStage, parentTicketId: ticket.parentTicketId,
       date: FINISHED.has(ticket.status) ? ticket.closedAt : ticket.createdAt, amount: null,
+      actorIds: ticket.assignedToId ? [ticket.assignedToId] : [],
     };
+    const origin = ticket.parentTicketId ? tickets.get(ticket.parentTicketId) : ticket;
+    row.reportAgeHours = origin?.createdAt != null && endAt != null && endAt >= origin.createdAt ? (endAt - origin.createdAt) / 3600000 : null;
+    row.journey = [
+      { label: "إنشاء البلاغ", at: origin?.createdAt ?? null, actor: origin?.reportedById ? users.get(origin.reportedById)?.name ?? null : null },
+      { label: "انتهاء الفرز والتصنيف", at: origin?.routedAt ?? null, actor: origin?.routedById ? users.get(origin.routedById)?.name ?? null : null },
+      { label: "الإسناد المسجل", at: ticket.assignedAt, actor: null },
+      { label: "بدء التنفيذ", at: null, actor: null },
+      { label: "تسجيل النتيجة", at: null, actor: null },
+    ];
+    if (FINISHED.has(ticket.status) && ticket.closedAt != null) row.journey.push({ label: "إغلاق تذكرة التنفيذ", at: ticket.closedAt, actor: null });
+    const ticketTeams = teamsByTicket.get(ticket.id) ?? [];
+    if (ticketTeams.length === 1) {
+      const team = ticketTeams[0];
+      row.deadlineAt = team.createdAt != null && team.inspectionMinutes != null ? team.createdAt + team.inspectionMinutes * 60000 : null;
+      row.inspectionOutcomeAt = team.outcomeAt ?? null;
+      row.journey = teamJourney(ticket, team);
+    }
+    if (!ticket.parentTicketId && ticket.workflowModel !== "sub_ticket" && ["new", "pending_triage"].includes(ticket.status)) {
+      const triage: DashboardRow = { ...row, actorIds: [], actorNames: [], currentSince: ticket.createdAt, waitHours: ageHours,
+        deadlineAt: ticket.createdAt == null ? null : ticket.createdAt + 48 * 3600000,
+        actionStage: "work:triage", journey: [{ label: "إنشاء البلاغ", at: ticket.createdAt, actor: ticket.reportedById ? users.get(ticket.reportedById)?.name ?? null : null }] };
+      metrics.work_triage.push(triage);
+      if (triage.deadlineAt != null && now > triage.deadlineAt) { triage.overdue = true; metrics.work_overdue.push(triage); }
+    }
+    if (!FINISHED.has(ticket.status)) {
+      for (const team of teamsByTicket.get(ticket.id) ?? []) {
+        const followupMetric: DashboardMetric | null = team.stage === "blocked" ? "work_blocked" : team.stage === "awaiting_review" ? "work_review" : ["external_requested", "external_in_progress"].includes(team.stage) ? "work_external" : null;
+        if (followupMetric) {
+          const manager = users.get(team.managerId);
+          const withinManager = team.stage !== "external_in_progress";
+          const start = team.enteredAt;
+          metrics[followupMetric].push({ ...row, key: `followup:${team.id}`, actionStage: `team:${team.stage}`,
+            waitOwner: withinManager ? "maintenance" : "external", actorNames: withinManager && manager ? [manager.name] : [],
+            actorIds: withinManager && manager ? [manager.id] : [], currentSince: start,
+            waitHours: start != null && start <= now ? (now - start) / 3600000 : null,
+            journey: teamJourney(ticket, team), note: team.note });
+        }
+        const awaitingFirstResult = team.stage === "action_required" && team.outcomeAt == null;
+        const currentlyWorking = ["action_required", "ready_to_repair", "reinstall_required"].includes(team.stage) && (team.currentWorkAt != null || awaitingFirstResult && team.startedAt != null);
+        if (!awaitingFirstResult && !currentlyWorking) continue;
+        const parent = ticket.parentTicketId ? tickets.get(ticket.parentTicketId) : ticket;
+        const assigned = team.createdAt;
+        const deadline = awaitingFirstResult && assigned != null && team.inspectionMinutes != null ? assigned + team.inspectionMinutes * 60000 : null;
+        const workById = team.currentWorkById ?? team.startedById;
+        const currentSince = currentlyWorking ? team.currentWorkAt ?? team.startedAt ?? assigned : assigned;
+        const teamRow: DashboardRow = { ...row, key: `team:${team.id}`, actorNames: currentlyWorking && workById && users.get(workById) ? [users.get(workById)!.name] : [team.teamName], actorIds: currentlyWorking && workById ? [workById] : [],
+          currentSince, waitHours: currentSince != null && currentSince <= now ? (now - currentSince) / 3600000 : null,
+          ageHours: parent?.createdAt != null && parent.createdAt <= now ? (now - parent.createdAt) / 3600000 : null,
+          deadlineAt: deadline, actionStage: currentlyWorking ? "work:working" : "work:await_start",
+          journey: teamJourney(ticket, team) };
+        metrics[currentlyWorking ? "work_active" : "work_start"].push(teamRow);
+        if (deadline != null && now > deadline + 3600000) { teamRow.overdue = true; metrics.work_overdue.push(teamRow); }
+      }
+    }
     if (ticket.workflowModel !== "sub_ticket" && !ticket.parentTicketId && within(ticket.createdAt)) metrics.new_reports.push(row);
     if (["new", "pending_triage"].includes(ticket.status) && !FINISHED.has(ticket.status)) metrics.pending_triage.push(row);
     if (ticket.workflowModel === "department_tasks") {
@@ -317,6 +416,26 @@ export function buildDashboard(data: DashboardData, filters: DashboardFilters, n
       managerMap.set(key, group);
     }
   }
+  for (const task of data.workTasks ?? []) {
+    const ticket = tickets.get(task.ticketId);
+    if (!ticket || FINISHED.has(ticket.status)) continue;
+    const department = mapDepartment(task.department);
+    const siteId = ticketSiteId(ticket);
+    if (!scopeMatches(siteId, [department])) continue;
+    const start = task.routedAt;
+    metrics.work_assignment.push({ key: `${task.sourceKind ?? "task"}:${task.id}`, kind: "ticket", id: ticket.id, number: ticket.ticketNumber,
+      title: task.title || ticket.title, status: ticket.status, siteId, siteName: (siteId ? sites.get(siteId) : null) || ticketLocation(ticket),
+      departments: [department], managerNames: task.managerId && users.get(task.managerId) ? [users.get(task.managerId)!.name] : [],
+      managerIds: task.managerId ? [task.managerId] : [], managerKeys: [`${department}:${task.managerId ?? "unassigned"}`],
+      waitOwner: "maintenance", actorNames: task.managerId && users.get(task.managerId) ? [users.get(task.managerId)!.name] : [],
+      actorIds: task.managerId ? [task.managerId] : [],
+      currentSince: start, waitHours: start != null && start <= now ? (now - start) / 3600000 : null,
+      ageHours: ticket.createdAt != null && ticket.createdAt <= now ? (now - ticket.createdAt) / 3600000 : null,
+      reportAgeHours: ticket.createdAt != null && ticket.createdAt <= now ? (now - ticket.createdAt) / 3600000 : null,
+      note: null, actionStage: "work:assignment", workLabel: task.sourceKind === "department" ? "بانتظار إعداد المهام وإسناد الفريق" : null, parentTicketId: ticket.parentTicketId, date: ticket.createdAt, amount: null,
+      journey: [{ label: "إنشاء البلاغ", at: ticket.createdAt, actor: ticket.reportedById ? users.get(ticket.reportedById)?.name ?? null : null }, { label: "انتهاء الفرز والتصنيف", at: start, actor: ticket.routedById ? users.get(ticket.routedById)?.name ?? null : null }],
+    });
+  }
   let cents = 0, missingCosts = 0;
   const seenItems = new Set<number>();
   for (const item of data.purchases) {
@@ -325,8 +444,11 @@ export function buildDashboard(data: DashboardData, filters: DashboardFilters, n
     const order = orders.get(item.orderId);
     if (!order) continue;
     const linkedTicket = order.ticketId ? tickets.get(order.ticketId) : null;
-    const siteId = order.siteId ?? (linkedTicket ? ticketSiteId(linkedTicket) : null);
-    const departments = linkedTicket ? unique(ticketScopes(linkedTicket).map(s => s.department)) : [mapDepartment(users.get(order.requestedById)?.role === "construction_procurement_manager" ? "construction" : ["maintenance_manager", "general_maintenance_manager"].includes(users.get(order.requestedById)?.role ?? "") ? "general" : null)];
+    const linkedIds = new Set(ticketIdsByPurchase.get(item.id) ?? []);
+    if (order.ticketId) linkedIds.add(order.ticketId);
+    const linkedTickets = Array.from(linkedIds).map(id => tickets.get(id)).filter((t): t is DashboardTicket => !!t);
+    const siteId = item.itemSiteId ?? order.siteId ?? (linkedTicket ? ticketSiteId(linkedTicket) : linkedTickets[0] ? ticketSiteId(linkedTickets[0]) : null);
+    const departments = linkedTickets.length ? unique(linkedTickets.flatMap(ticket => ticketScopes(ticket).map(s => s.department))) : [mapDepartment(users.get(order.requestedById)?.role === "construction_procurement_manager" ? "construction" : ["maintenance_manager", "general_maintenance_manager"].includes(users.get(order.requestedById)?.role ?? "") ? "general" : null)];
     if (!scopeMatches(siteId, departments)) continue;
     const amount = moneyCents(item.actualTotalCost);
     const row: DashboardRow = {
@@ -338,9 +460,33 @@ export function buildDashboard(data: DashboardData, filters: DashboardFilters, n
       parentTicketId: order.ticketId, date: item.receivedAt, amount: amount == null ? null : amount / 100,
       orderId: order.id, orderNumber: order.poNumber,
       quantity: RECEIVED.has(item.status) ? item.receivedQuantity ?? item.quantity : item.quantity, unit: item.unit,
+      actorIds: [],
     };
     if (PURCHASE_PENDING.has(item.status)) metrics.purchase_pending.push(row);
     if (item.status === "purchased") metrics.purchase_in_transit.push(row);
+    const warehouseFollowupFinished = item.status === "delivered_to_warehouse" && linkedTickets.length > 0 && linkedTickets.every(ticket => FINISHED.has(ticket.status));
+    if (linkedTickets.length && !warehouseFollowupFinished && !["delivered_to_requester", "rejected", "cancelled", "purchase_cancelled"].includes(item.status) && order.status !== "draft") {
+      const delegate = item.delegateId ? users.get(item.delegateId) : null;
+      const view = achievementStatus({ ...item, poNumber: order.poNumber, orderStatus: order.status,
+        delegateName: delegate?.name ?? null, delegateRole: delegate?.role ?? null,
+        ticketNumbers: linkedTickets.map(t => t.ticketNumber), ticketEvidenceAvailable: true, issues: [] } as unknown as AchievementItem);
+      const since = typeof view.since === "number" ? view.since : null;
+      const assignedDelegate = !!item.delegateId && (["pending", "approved", "funded"].includes(item.status) || item.status === "estimated" && !["pending_accounting", "pending_management"].includes(item.batchStatus ?? ""));
+      // Purchase registration alone does not prove who currently holds the item.
+      const workOwner: WaitOwner = item.status === "delivered_to_warehouse" ? "warehouse" : item.status === "estimated" && item.batchStatus === "pending_accounting" ? "accounting" : item.status === "estimated" && item.batchStatus === "pending_management" ? "management" : assignedDelegate ? "purchase" : item.status === "pending_review" && item.reviewRole === "senior_management" ? "management" : item.status === "pending_review" && ["general_maintenance_manager", "construction_procurement_manager"].includes(item.reviewRole ?? "") ? "maintenance" : "unknown";
+      const workRow: DashboardRow = { ...row, workLabel: view.text, linkedTicketNumber: linkedTickets.map(t => t.ticketNumber).join("، "), waitOwner: workOwner, requiredDate: item.requiredDate ?? null,
+        actorIds: assignedDelegate ? [item.delegateId!] : [], actorNames: assignedDelegate && delegate ? [delegate.name] : [],
+        currentSince: since, waitHours: since != null && since <= now ? (now - since) / 3600000 : null,
+        ageHours: order.submittedAt != null && order.submittedAt <= now ? (now - order.submittedAt) / 3600000 : null,
+        note: view.reason ?? null };
+      metrics.work_purchases.push(workRow);
+      const required = typeof item.requiredDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.requiredDate) ? item.requiredDate : null;
+      const endOfRequiredDay = required ? Date.parse(`${required}T00:00:00+03:00`) + 86400000 : null;
+      if (item.status !== "delivered_to_warehouse" && endOfRequiredDay != null && Number.isFinite(endOfRequiredDay) && now >= endOfRequiredDay) {
+        workRow.overdue = true; workRow.deadlineAt = endOfRequiredDay;
+        metrics.work_overdue.push(workRow);
+      }
+    }
     if (RECEIVED.has(item.status)) {
       if (item.receivedAt == null) missingReceiptDates++;
       if (within(item.receivedAt) || filters.period === "all" && item.receivedAt == null) {
@@ -352,13 +498,26 @@ export function buildDashboard(data: DashboardData, filters: DashboardFilters, n
     }
   }
   if (!Number.isSafeInteger(cents)) throw new Error("INVALID_DASHBOARD_MONEY_TOTAL");
+  const overdueKeys = new Set(metrics.work_overdue.map(row => row.key));
+  const search = filters.search?.trim().toLocaleLowerCase() ?? "";
+  for (const metric of DASHBOARD_METRICS) metrics[metric] = metrics[metric].filter(row => {
+    if (search && ![row.number, row.title, row.titleAr, row.titleEn, row.titleUr, row.linkedTicketNumber, ...row.actorNames, ...row.managerNames].some(value => value?.toLocaleLowerCase().includes(search))) return false;
+    if (filters.responsibleId && !row.actorIds?.includes(filters.responsibleId)) return false;
+    if (filters.workType === "reports" && row.kind !== "ticket") return false;
+    if (filters.workType === "purchases" && row.kind !== "purchase") return false;
+    if (filters.workStatus === "overdue" && !overdueKeys.has(row.key)) return false;
+    if (filters.workStatus === "completed" && (row.kind !== "ticket" || !FINISHED.has(row.status))) return false;
+    if (filters.workStatus === "open" && row.kind === "ticket" && FINISHED.has(row.status)) return false;
+    return true;
+  });
   for (const metric of DASHBOARD_METRICS) metrics[metric].sort((a, b) => (b.ageHours ?? b.date ?? 0) - (a.ageHours ?? a.date ?? 0) || b.id - a.id);
+  metrics.work_overdue.sort((a, b) => (a.deadlineAt ?? Infinity) - (b.deadlineAt ?? Infinity) || b.id - a.id);
   return {
     filters, range, generatedAt: now, ageThresholdHours: DASHBOARD_AGE_HOURS,
     counts: Object.fromEntries(DASHBOARD_METRICS.map(m => [m, metrics[m].length])) as Record<DashboardMetric, number>,
     receivedValue: cents / 100, missingCosts, missingClosedDates, missingReceiptDates,
     managers: Array.from(managerMap.values()).filter(g => g.open || g.completed).sort((a, b) => b.agedInside - a.agedInside || b.open - a.open),
-    sites: data.sites, metrics,
+    sites: data.sites, responsibles: data.users.map(user => ({ id: user.id, name: user.name })), metrics,
   };
 }
 export function dashboardSummary(report: ReturnType<typeof buildDashboard>) {

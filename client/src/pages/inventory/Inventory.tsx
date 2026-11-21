@@ -801,7 +801,8 @@ export default function Inventory() {
           receiptNumber: lot.receiptNumber || undefined,
         })}
         renderIssueUnitActions={canManageIssueUnit ? renderIssueUnitActions : undefined}
-        onFifo={isOwnerOrAdminRole(user?.role) && Number(user?.isActive) === 1 && lotsEnabled ? openBookDelivery : undefined}
+        onFifo={isOwnerOrAdminRole(user?.role) && Number(user?.isActive) === 1 &&
+          isOwnerOrAdminRole(authenticatedUser?.role) && Number(authenticatedUser?.isActive) === 1 && lotsEnabled ? openBookDelivery : undefined}
         onPick={isWarehouse && lotsEnabled ? async ({lot,page,master}) => {
           setDeliverItem({...page, quantity:Number(page.quantity), itemName:master.nameAr || master.nameEn});
           setDeliverQty("");setDeliverToId("");setDeliverNotes("");setDeliverCostAllocations([createIssueCostAllocationDraft()]);

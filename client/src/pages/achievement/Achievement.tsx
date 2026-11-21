@@ -52,7 +52,7 @@ function buildEvents(data: any): Event[] {
   }).sort((a, b) => (achievementMillis(a.date) ?? 0) - (achievementMillis(b.date) ?? 0));
 }
 
-function ItemDetails({ id, now }: { id: number; now: number }) {
+export function ItemDetails({ id, now }: { id: number; now: number }) {
   const detail = trpc.achievement.purchaseItem.useQuery({ id });
   const events = useMemo(() => detail.data ? buildEvents(detail.data) : [], [detail.data]);
   if (detail.isLoading) return <p className="p-3 text-sm">جاري تحميل رحلة الصنف...</p>;

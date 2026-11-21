@@ -13,7 +13,7 @@ import type { TeamManagementActor } from "../../../shared/maintenance-team-ticke
 import { supportsTeamTaskAssignmentDepartment } from "../../../client/src/pages/maintenance-teams/TeamTaskAssignment";
 
 const actor: TeamManagementActor = { id: 7, role: "general_maintenance_manager", active: true };
-const input = { ticketId: 1, taskId: 2, teamId: 3 };
+const input = { ticketId: 1, taskId: 2, teamId: 3, inspectionMinutes: 120 };
 function fixture() {
   const context: AssignmentContext = { parent: { id: 1, ticketNumber: "MT-2026-00566", workflowModel: "department_tasks", status: "department_planning" }, department: { id: 4, ticketId: 1, department: "maintenance_report_department_general", responsibleManagerId: 7 }, task: { id: 2, ticketId: 1, ticketDepartmentId: 4, status: "pending_assignment", convertedTicketId: null } };
   const team: AssignmentTeam = { id: 3, name: "فريق الكهرباء", active: true, warehouseId: 8, warehouseActive: true, warehouseType: "branch", memberCount: 2 };
@@ -93,6 +93,11 @@ test("invalid team/warehouse/members rejected and excluded from candidates", asy
 test("invalid identifiers rejected before repository access", async () => {
   const f = fixture(); await assert.rejects(f.service.assign(actor, { ...input, taskId: -2 })); assert.equal(f.calls(), 0);
 });
+test("inspection duration is required and must be a whole positive number of minutes", async () => {
+  for (const inspectionMinutes of [0, -1, 1.5, 525601, NaN]) {
+    const f = fixture(); await assert.rejects(f.service.assign(actor, { ...input, inspectionMinutes })); assert.equal(f.calls(), 0);
+  }
+});
 test("queue denies unsupported roles before loading repository", async () => {
   const f = fixture(); await assert.rejects(f.service.queue({ ...actor, role: "accountant" })); assert.equal(f.calls(), 0);
   await f.service.queue({ ...actor, role: "technician" }); assert.equal(f.calls(), 1);
@@ -150,6 +155,8 @@ test("SQL adapter writes original child/item plus team link/history/audit within
   assert.ok(f.queries.some(q => q.text.includes("maintenance_team_members") && q.text.includes("FOR UPDATE")));
   const insert = f.queries.find(q => q.text.includes("INSERT INTO ticket_team_assignments"))!;
   assert.ok(insert.params.includes(22)); assert.ok(insert.params.includes("MT-2026-00566-01"));
+  const protocol = f.queries.find(q => q.text.includes("INSERT INTO ticket_team_actions"))!;
+  assert.ok(protocol.params.includes(JSON.stringify({ version: 1, inspectionMinutes: 120 })));
   assert.doesNotMatch(f.committed().join(" "), /pmv2_|INSERT INTO users|INSERT INTO warehouses|inventory_transactions/);
 });
 test("SQL adapter failures roll back sequence, ticket, item, task and links including audit failure", async () => {

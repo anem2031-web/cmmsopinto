@@ -38,6 +38,13 @@ describe("scoped dashboard read snapshots", () => {
     expect(filtered.report.counts.open_execution).toBe(0);
     expect(read).toHaveBeenCalledTimes(2);
   });
+  it("never reuses a snapshot for a different search, responsible person or work status", async () => {
+    for (const change of [{ search: "MT-123" }, { responsibleId: 12 }, { workStatus: "overdue" as const }, { workType: "purchases" as const }]) {
+      const { store, read } = setup(); const main = await store.create(actor, FILTERS);
+      expect((await store.resolve(actor, { ...FILTERS, ...change }, main.id)).id).not.toBe(main.id);
+      expect(read).toHaveBeenCalledTimes(2);
+    }
+  });
   it("expires after two minutes and manual refresh always produces a new read", async () => {
     const { store, read, advance } = setup();
     const main = await store.create(actor, FILTERS);

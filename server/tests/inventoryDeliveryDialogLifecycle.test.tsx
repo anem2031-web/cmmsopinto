@@ -263,6 +263,16 @@ it.each(["warehouse","senior_management","observer","accountant","technician"])(
 it.each(["owner","admin"])("keeps the inventory issue column action for %s",role=>{
   state.role=role;render();state.selects[0].onValueChange("1");render();expect(state.book.onFifo).toBeTypeOf("function");
 });
+it.each(["warehouse", "senior_management", "observer", "accountant", "technician"])("hides the inventory issue column for authenticated %s even in a projected owner view", role => {
+  state.role = "owner"; state.authenticatedRole = role;
+  render(); state.selects[0].onValueChange("1"); render();
+  expect(state.book.onFifo).toBeUndefined();
+});
+it("hides the inventory issue column from an inactive authenticated admin", () => {
+  state.role = "admin"; state.authenticatedRole = "admin"; state.isActive = 0;
+  render(); state.selects[0].onValueChange("1"); render();
+  expect(state.book.onFifo).toBeUndefined();
+});
 
 const buttonWithText = (label: string) => state.buttons.find(button => button.children === label);
 const issueUnitAction = () => buttonWithText("اعتماد وحدة الصرف");
