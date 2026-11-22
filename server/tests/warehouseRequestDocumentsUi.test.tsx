@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const f = vi.hoisted(() => ({ search: "", language: "ar", role: "warehouse", rows: [] as any[], query: [] as any[], detail: vi.fn(), print: vi.fn(), download: vi.fn(), nav: vi.fn(), mounted: [] as string[], cells: [] as any[], cursor: 0, inputs: [] as any[], buttons: [] as any[], tabs: [] as any[] }));
+const f = vi.hoisted(() => ({ search: "", language: "ar", role: "warehouse", rows: [] as any[], query: [] as any[], detail: vi.fn(), print: vi.fn(), download: vi.fn(), nav: vi.fn(), mounted: [] as string[], operationTerms: [] as any[], cells: [] as any[], cursor: 0, inputs: [] as any[], buttons: [] as any[], tabs: [] as any[] }));
 vi.mock("react", async original => ({ ...await original<typeof import("react")>(), useState: (initial: any) => {
   const i = f.cursor++; if (!(i in f.cells)) f.cells[i] = typeof initial === "function" ? initial() : initial;
   return [f.cells[i], (value: any) => { f.cells[i] = typeof value === "function" ? value(f.cells[i]) : value; }];
@@ -15,9 +15,9 @@ vi.mock("../../client/src/components/ui/tabs", () => ({
 vi.mock("../../client/src/components/ui/button", () => ({ Button: (p: any) => { f.buttons.push(p); return <button>{p.children}</button>; } }));
 vi.mock("../../client/src/components/ui/input", () => ({ Input: (p: any) => { f.inputs.push(p); return <input {...p}/>; } }));
 vi.mock("../../client/src/components/ui/dialog", () => ({ Dialog: ({ open, children }: any) => open ? <section>{children}</section> : null, DialogContent: (p: any) => <div>{p.children}</div>, DialogHeader: (p: any) => <div>{p.children}</div>, DialogTitle: (p: any) => <h2>{p.children}</h2> }));
-vi.mock("../../client/src/pages/pmv2/Pmv2WarehouseQueue", () => ({ default: () => { f.mounted.push("pmv2"); return <p>PMV2 operations</p>; } }));
-vi.mock("../../client/src/pages/maintenance-teams/TicketWarehouseRequests", () => ({ default: (p: any) => { f.mounted.push("tickets"); return <p>Ticket operations {p.ticketId}</p>; } }));
-vi.mock("../../client/src/pages/operational-issues/OperationalWarehouseRequests", () => ({ default: () => { f.mounted.push("operational"); return <p>Operational operations</p>; } }));
+vi.mock("../../client/src/pages/pmv2/Pmv2WarehouseQueue", () => ({ default: (p: any) => { f.mounted.push("pmv2"); f.operationTerms.push(p.search); return <p>PMV2 operations</p>; } }));
+vi.mock("../../client/src/pages/maintenance-teams/TicketWarehouseRequests", () => ({ default: (p: any) => { f.mounted.push("tickets"); f.operationTerms.push(p.search); return <p>Ticket operations {p.ticketId}</p>; } }));
+vi.mock("../../client/src/pages/operational-issues/OperationalWarehouseRequests", () => ({ default: (p: any) => { f.mounted.push("operational"); f.operationTerms.push(p.search); return <p>Operational operations</p>; } }));
 vi.mock("../../client/src/lib/exportHtmlToPdf", () => ({ downloadDocumentAsPdf: f.download }));
 vi.mock("../../client/src/lib/trpc", () => ({ trpc: {
   useUtils: () => ({ warehouseRequestDocuments: { detail: { fetch: f.detail } } }),
@@ -27,7 +27,7 @@ import WarehouseRequestsPage from "../../client/src/pages/pmv2/WarehouseRequests
 import WarehouseRequestDocuments, { buildWarehouseRequestHtml } from "../../client/src/pages/pmv2/WarehouseRequestDocuments";
 const text = (v: any): string => Array.isArray(v) ? v.map(text).join("") : React.isValidElement(v) ? text((v.props as any).children) : typeof v === "string" ? v : "";
 const render = (element = <WarehouseRequestsPage/>) => { f.cursor = 0; f.inputs = []; f.buttons = []; f.tabs = []; return renderToStaticMarkup(element); };
-beforeEach(() => { f.search = ""; f.role = "warehouse"; f.language = "ar"; f.cells = []; f.query = []; f.mounted = []; vi.clearAllMocks(); f.rows = [{ id: 100, kind: "delivery", number: "DLV-100", createdAt: "2026-11-07", referenceNumber: "OPR-672", referenceTitle: "إنارة الموقع", itemName: "مصباح", quantity: 2, unit: "حبة", itemCount: 1, recipientName: "المستلم", issuerName: "المصدر", warehouseName: "المخزن", lotCode: "LOT-1", source: "operational" }]; f.detail.mockResolvedValue({ row: f.rows[0], document: { deliveryNumber: "DLV-100", itemName: "مصباح", quantity: 2, deliveredToName: "المستلم", deliveredByName: "المصدر", createdAt: "2026-11-07", poItemId: 0 } }); });
+beforeEach(() => { f.search = ""; f.role = "warehouse"; f.language = "ar"; f.cells = []; f.query = []; f.mounted = []; f.operationTerms = []; vi.clearAllMocks(); f.rows = [{ id: 100, kind: "delivery", number: "DLV-100", createdAt: "2026-11-07", referenceNumber: "OPR-672", referenceTitle: "إنارة الموقع", itemName: "مصباح", quantity: 2, unit: "حبة", itemCount: 1, recipientName: "المستلم", issuerName: "المصدر", warehouseName: "المخزن", lotCode: "LOT-1", source: "operational" }]; f.detail.mockResolvedValue({ row: f.rows[0], document: { deliveryNumber: "DLV-100", itemName: "مصباح", quantity: 2, deliveredToName: "المستلم", deliveredByName: "المصدر", createdAt: "2026-11-07", poItemId: 0 } }); });
 afterEach(() => vi.unstubAllGlobals());
 describe("warehouse source operations and existing document panels", () => {
   it.each(["pmv2", "tickets", "operational"])("defaults %s to the unchanged operations and mounts documents only when selected", source => {
@@ -36,6 +36,16 @@ describe("warehouse source operations and existing document panels", () => {
     expect(f.mounted).toEqual([source]); expect(f.query).toHaveLength(0);
     f.search += "&panel=documents"; f.mounted = []; render();
     expect(f.mounted).toHaveLength(0); expect(f.query[0].input).toMatchObject({ source, sort: "newest", page: 1 });
+  });
+  it.each(["pmv2", "tickets", "operational"])("passes live partial search into %s operations", source => {
+    f.search = `?source=${source}`;
+    expect(render()).toContain("البحث في العمليات");
+    f.inputs.find(p => p.id === "warehouse-operations-search").onChange({target:{value:"MT-12"}});
+    f.operationTerms=[]; render();
+    expect(f.operationTerms).toEqual(["MT-12"]);
+    f.search += "&panel=documents";
+    render();
+    expect(f.inputs.find(p => p.id === "warehouse-operations-search")).toBeUndefined();
   });
   it("preserves a ticket deep link when opening documents and clears documents on a source change", () => {
     f.search = "?source=tickets&ticketId=12"; render();

@@ -30,7 +30,7 @@ export function createOperationalIssuesRouter(ports: OperationalPorts, enabled: 
     preparedSelection: protectedProcedure.input(z.object({ warehouseId: id, catalogItemIds: z.array(id).min(1).max(20) })).query(({ ctx,input }) => { available(); return preparedSelection(ports,ctx.user,input.warehouseId,input.catalogItemIds); }),
     issuePrepared: warehouseProcedure.input(preparedIssueSchema).mutation(({ ctx,input }) => { available(); return issuePrepared(ports,ctx.user,input); }),
     status: protectedProcedure.query(({ ctx }) => { read(ctx.user); return { enabled: enabled() }; }),
-    list: protectedProcedure.query(async ({ ctx }) => { read(ctx.user); return { enabled: enabled(), orders: enabled() ? await service.list(ctx.user) : [] }; }),
+    list: protectedProcedure.input(z.object({ search: z.string().max(200).optional() }).optional()).query(async ({ ctx, input }) => { read(ctx.user); return { enabled: enabled(), orders: enabled() ? await service.list(ctx.user, input?.search) : [] }; }),
     detail: protectedProcedure.input(z.object({ id })).query(({ ctx, input }) => { read(ctx.user); available(); return service.detail(ctx.user, input.id); }),
     availability: protectedProcedure.input(z.object({ id })).query(({ ctx, input }) => { read(ctx.user); available(); return service.availability(ctx.user, input.id); }),
     addToPurchaseDraft: warehouseProcedure.input(z.object({ orderId: id, itemId: id })).mutation(({ ctx, input }) => { available(); return service.addToPurchaseDraft(ctx.user, input.orderId, input.itemId); }),

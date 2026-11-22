@@ -20,7 +20,7 @@ export function OperationalIssueQueue({ process = false, returnsOnly = false, se
 }) {
   const { user: projectedUser, authenticatedUser } = useAuth(); const user = authenticatedUser ?? projectedUser; const { language, dir } = useTranslation();
   const text = operationalIssueText[language];
-  const list = trpc.operationalIssues.list.useQuery(undefined, { retry: false });
+  const list = trpc.operationalIssues.list.useQuery(process && !returnsOnly && search ? { search } : undefined, { retry: false });
   const [id, setId] = useState<number | null>(null);
   const detail = trpc.operationalIssues.detail.useQuery({ id: id || 0 }, { enabled: Boolean(id && list.data?.enabled), retry: false });
   const approve = trpc.operationalIssues.approve.useMutation();
@@ -35,7 +35,8 @@ export function OperationalIssueQueue({ process = false, returnsOnly = false, se
   if (list.isLoading) return <p>{text.load}</p>;
   if (list.error) return <p role="alert" className="text-destructive">{list.error.message}</p>;
   if (!list.data?.enabled) return <p>{text.disabled}</p>;
-  const orders = list.data.orders.filter(order => matchesReturnSearch(search, order.orderNumber, order.siteName, order.sectionName, order.collectorName));
+  const orders = process && !returnsOnly && search ? list.data.orders : list.data.orders.filter(order => matchesReturnSearch(search, order.orderNumber, order.siteName, order.sectionName, order.collectorName, order.creatorName));
+  const showDetail = !search || orders.some(order => Number(order.id) === id);
   return <div className="space-y-4" dir={dir}>
     <Button variant="outline" onClick={() => void refresh()}>{text.refresh}</Button>
     {returnsOnly && <p className="text-sm text-muted-foreground">{language === "ar" ? "اختر طلب صرف لاستعراض سنداته وتسجيل مرتجع من الكميات المصروفة فعليًا." : language === "ur" ? "اصل اجرا کی رسیدیں اور واپسی دیکھنے کے لیے درخواست منتخب کریں۔" : "Choose an issue request to view its deliveries and record an actual return."}</p>}
@@ -48,9 +49,9 @@ export function OperationalIssueQueue({ process = false, returnsOnly = false, se
         <div className="flex gap-2 items-center"><Badge variant="outline">{text[order.status]}</Badge><Button variant="outline" onClick={() => setId(order.id)}>{text.details}</Button></div>
       </CardContent>
     </Card>)}</div>
-    {id && detail.isLoading && <p>{text.load}</p>}
-    {detail.error && <p role="alert" className="text-destructive">{detail.error.message}</p>}
-    {detail.data && <Card><CardHeader><CardTitle>{detail.data.order.orderNumber}</CardTitle></CardHeader><CardContent className="space-y-4">
+    {showDetail && id && detail.isLoading && <p>{text.load}</p>}
+    {showDetail && detail.error && <p role="alert" className="text-destructive">{detail.error.message}</p>}
+    {showDetail && detail.data && <Card><CardHeader><CardTitle>{detail.data.order.orderNumber}</CardTitle></CardHeader><CardContent className="space-y-4">
       <p>{text.creator}: {detail.data.order.creatorName} · {text.collector}: {detail.data.order.collectorName}</p>
       <p>{text.reason}: {detail.data.order.reason}</p>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-lg border p-3 text-sm">

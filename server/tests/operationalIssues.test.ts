@@ -293,3 +293,15 @@ it("rejects linked purchased material through the legacy create service before w
   await expect(f.service.create(manager,body)).rejects.toThrow("MT-TEST-01");
   expect(f.state().orders).toHaveLength(0);
 });
+
+
+it("searches operational orders by item and literal symbols within the actor's existing scope", async () => {
+  const f=fixture();
+  await f.service.list(manager, "75%_A");
+  const read=f.queries.find((entry: any) => entry.q.includes("FROM operational_issue_orders o"));
+  expect(read.q).toContain("o.createdById=");
+  expect(read.q).toContain("EXISTS (SELECT 1 FROM operational_issue_items");
+  expect(read.q).not.toContain("75%_A");
+  expect(read.p).toContain("%75!%!_A%");
+  expect(read.p).toContain(manager.id);
+});

@@ -46,6 +46,19 @@ import TicketWarehouseRequests from "../../client/src/pages/maintenance-teams/Ti
 import Pmv2WarehouseQueue from "../../client/src/pages/pmv2/Pmv2WarehouseQueue";
 import { OperationalIssueQueue } from "../../client/src/pages/operational-issues/OperationalIssueQueue";
 beforeEach(() => Object.assign(state, { language: "en", section: "waiting", role: "warehouse", creator: "Original creator", sentAt: "2026-11-05 09:15:00", pscmReady: false }));
+describe("live operation searches", () => {
+  it.each(["waiting", "ready"])("filters PMV2 %s cards by a part of a name", section => {
+    state.section=section;
+    expect(renderToStaticMarkup(<Pmv2WarehouseQueue search="ginAL CRE" />)).toContain("Material");
+    expect(renderToStaticMarkup(<Pmv2WarehouseQueue search="absent-term" />)).not.toContain("Original creator");
+  });
+  it.each(["waiting", "ready", "returns"])("filters ticket material cards by a partial ticket number in %s", section => {
+    state.section=section;
+    expect(renderToStaticMarkup(<TicketWarehouseRequests search="T-1" />)).toContain("UNCHANGED-EXECUTION");
+    expect(renderToStaticMarkup(<TicketWarehouseRequests search="not-found" />)).not.toContain("UNCHANGED-EXECUTION");
+  });
+});
+
 describe("request identity and original sending time on warehouse cards", () => {
   it.each(["waiting", "ready", "returns"])("renders senior ticket materials without warehouse execution controls in %s", section => {
     state.role = "senior_management"; state.section = section;

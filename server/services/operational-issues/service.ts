@@ -34,12 +34,15 @@ export class OperationalIssueService {
     if (!["warehouse", "owner", "admin", "observer", "senior_management"].includes(actor.role) && Number(row.createdById) !== actor.id) deny();
     return row;
   }
-  async list(actor: OperationalActor) {
+  async list(actor: OperationalActor, search = "") {
     this.actor(actor, "read"); const db = await this.ports.database();
+    const term = "%" + search.trim().replace(/[!%_]/g, character => "!" + character) + "%";
     return await rows(db, sql`SELECT o.*,u.name AS creatorName,c.name AS collectorName,s.name AS siteName,x.name AS sectionName
       FROM operational_issue_orders o LEFT JOIN users u ON u.id=o.createdById LEFT JOIN users c ON c.id=o.collectorId
       LEFT JOIN sites s ON s.id=o.siteId LEFT JOIN sections x ON x.id=o.sectionId
-      WHERE ${["warehouse", "owner", "admin", "observer", "senior_management"].includes(actor.role) ? sql`1=1` : sql`o.createdById=${actor.id}`} ORDER BY o.id DESC LIMIT 500`) as OperationalOrder[];
+      WHERE ${["warehouse", "owner", "admin", "observer", "senior_management"].includes(actor.role) ? sql`1=1` : sql`o.createdById=${actor.id}`}
+      ${search.trim() ? sql`AND (o.orderNumber LIKE ${term} ESCAPE '!' OR o.reason LIKE ${term} ESCAPE '!' OR u.name LIKE ${term} ESCAPE '!' OR c.name LIKE ${term} ESCAPE '!' OR s.name LIKE ${term} ESCAPE '!' OR x.name LIKE ${term} ESCAPE '!' OR EXISTS (SELECT 1 FROM operational_issue_items item WHERE item.orderId=o.id AND item.itemName LIKE ${term} ESCAPE '!'))` : sql``}
+      ORDER BY o.id DESC LIMIT 500`) as OperationalOrder[];
   }
   async detail(actor: OperationalActor, id: number) {
     this.actor(actor, "read");

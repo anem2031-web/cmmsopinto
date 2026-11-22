@@ -16,10 +16,10 @@ export class TicketTeamAssignmentService {
     if (!actor.active || !canReadTicketTeamExecution(actor.role)) throw new TeamTicketError("FORBIDDEN", "ليس لديك صلاحية لعرض تذاكر الفريق");
     return this.repository.queue(actor);
   }
-  async warehouseRequests(actor: TeamManagementActor) {
+  async warehouseRequests(actor: TeamManagementActor, search = "") {
     if (!actor.active || !["warehouse", "owner", "admin", "senior_management"].includes(actor.role))
       throw new TeamTicketError("FORBIDDEN", "طلبات مواد التذاكر للمستودع فقط");
-    return this.repository.queue(actor, { materialsOnly: true });
+    return this.repository.queue(actor, { materialsOnly: true, ...(search.trim() ? { search } : {}) });
   }
   private context(actor: TeamManagementActor, c: AssignmentContext, input: TeamAssignmentInput) {
     if (c.parent.id !== input.ticketId || c.task.id !== input.taskId || c.task.ticketId !== input.ticketId || c.department.ticketId !== input.ticketId || c.task.ticketDepartmentId !== c.department.id)

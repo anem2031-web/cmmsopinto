@@ -1,5 +1,6 @@
 import { useLocation, useSearch } from "wouter";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { Input } from "@/components/ui/input";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -19,9 +20,11 @@ export default function WarehouseRequestsPage() {
   const { authenticatedUser, user } = useAuth();
   const readOnly = (authenticatedUser ?? user)?.role === "senior_management";
   const search = useSearch();
+  const [operationSearch, setOperationSearch] = useState<Record<string, string>>({});
   const [, navigate] = useLocation();
   const { source, ticketId } = warehouseRequestsSelection(search);
   const panel = new URLSearchParams(search).get("panel") === "documents" ? "documents" : "operations";
+  const term = operationSearch[source] || "";
   const sourceTabs = (operations: ReactNode) => <Tabs value={panel} dir={dir} className="space-y-4" onValueChange={value => {
     const query = new URLSearchParams(search);
     if (value === "documents") query.set("panel", "documents"); else query.delete("panel");
@@ -31,7 +34,14 @@ export default function WarehouseRequestsPage() {
       <TabsTrigger value="operations">{language === "ar" ? "العمليات" : language === "ur" ? "کارروائیاں" : "Operations"}</TabsTrigger>
       <TabsTrigger value="documents">{language === "ar" ? "المستندات" : language === "ur" ? "دستاویزات" : "Documents"}</TabsTrigger>
     </TabsList>
-    <TabsContent value="operations">{panel === "operations" && operations}</TabsContent>
+    <TabsContent value="operations">{panel === "operations" && <>
+      <div className="mb-4 space-y-1">
+        <label htmlFor="warehouse-operations-search" className="text-sm font-medium">{language === "ar" ? "البحث في العمليات" : language === "ur" ? "کارروائیوں میں تلاش" : "Search operations"}</label>
+        <Input id="warehouse-operations-search" type="search" maxLength={200} value={term} onChange={event => setOperationSearch(old => ({ ...old, [source]: event.target.value }))}
+          placeholder={language === "ar" ? "ابحث برقم الطلب أو البلاغ أو المهمة أو اسم الصنف أو الشخص…" : language === "ur" ? "نمبر، مواد یا نام سے تلاش کریں…" : "Search by request, ticket, task, item or person…"} />
+      </div>
+      {operations}
+    </>}</TabsContent>
     <TabsContent value="documents">{panel === "documents" && <WarehouseRequestDocuments key={source} source={source}/>}</TabsContent>
   </Tabs>;
   return (
@@ -67,12 +77,12 @@ export default function WarehouseRequestsPage() {
         <TabsTrigger value="operational">{operationalIssueText[language].title}</TabsTrigger>
       </TabsList>
       <TabsContent value="pmv2">
-        {source === "pmv2" && sourceTabs(<Pmv2WarehouseQueue readOnly={readOnly} />)}
+        {source === "pmv2" && sourceTabs(<Pmv2WarehouseQueue readOnly={readOnly} search={term} />)}
       </TabsContent>
-      <TabsContent value="operational">{source === "operational" && sourceTabs(<OperationalWarehouseRequests />)}</TabsContent>
+      <TabsContent value="operational">{source === "operational" && sourceTabs(<OperationalWarehouseRequests search={term} />)}</TabsContent>
       <TabsContent value="tickets">
         {source === "tickets" && (
-          sourceTabs(<TicketWarehouseRequests ticketId={ticketId} />)
+          sourceTabs(<TicketWarehouseRequests ticketId={ticketId} search={term} />)
         )}
       </TabsContent>
     </Tabs>

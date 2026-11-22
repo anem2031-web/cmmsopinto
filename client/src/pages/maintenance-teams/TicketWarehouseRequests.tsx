@@ -41,14 +41,14 @@ export default function TicketWarehouseRequests({
   const allowed =
     user?.isActive === 1 && ["warehouse", "owner", "admin", "senior_management"].includes(user.role);
   const requests = trpc.ticketTeamAssignments.warehouseRequests.useQuery(
-    undefined,
+    !returnsOnly && search ? { search } : undefined,
     { enabled: !!allowed, retry: false, refetchOnWindowFocus: false }
   );
   const materials = (requests.data ?? []).flatMap(ticket =>
     (ticket.materialNeeds ?? []).map(need => ({ ticket, need }))
   );
   const matching = materials.filter(({ ticket, need }) => matchesReturnSearch(search, ticket.ticketNumber, ticket.title, ticket.teamName,
-    ticket.warehouseName, ticket.siteName, ticket.sectionName, need.name, need.unit));
+    ticket.warehouseName, ticket.siteName, ticket.sectionName, ticket.description, need.name, need.unit, need.requestCreatorName));
   const sorted = [...matching].sort(
     (a, b) =>
       Number(b.ticket.ticketId === ticketId) -

@@ -1,7 +1,7 @@
 import { WarehouseLotSelection } from "@/components/inventory/WarehouseLotSelection";
 import { selectFullIssueLots, type WarehouseLotSelection as LotSelection } from "@shared/warehouse-lot-selection";
 import { AlertTriangle, ArrowLeftRight, Boxes, ClipboardList, Link2, Loader2, PackageCheck, RefreshCw, RotateCcw, Send, ShoppingCart, Warehouse } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -63,11 +63,19 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
   const localizedName = (value: any) => language === "ar" ? (value?.nameAr || value?.nameEn || "—") : (value?.nameEn || value?.nameAr || "—");
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
-  const [pscmCursors, setPscmCursors] = useState<number[]>([]);
+  const [pscmPage, setPscmPage] = useState<{ search: string; cursors: number[] }>({ search: "", cursors: [] });
+  const pscmCursors = pscmPage.search === search ? pscmPage.cursors : [];
+  const setPscmCursors = (change: number[] | ((current: number[]) => number[])) => setPscmPage(previous => {
+    const current = previous.search === search ? previous.cursors : [];
+    return { search, cursors: typeof change === "function" ? change(current) : change };
+  });
+  useEffect(() => {
+    setPscmPage(previous => previous.search === search ? previous : { search, cursors: [] });
+  }, [search]);
   const pscmCursor = pscmCursors.at(-1);
   const queue = trpc.pmv2.warehouse.waitingMaterialQueue.useQuery(undefined, { enabled: !returnsOnly, refetchOnWindowFocus: false });
   const readyIssue = trpc.pmv2.warehouse.readyToIssueQueue.useQuery(undefined, { enabled: !returnsOnly, refetchOnWindowFocus: false });
-  const pscmReadyIssue = trpc.pscmFulfillment.ready.useQuery({ after: pscmCursor }, { enabled: !returnsOnly, refetchOnWindowFocus: false });
+  const pscmReadyIssue = trpc.pscmFulfillment.ready.useQuery({ after: pscmCursor, ...(search.trim() ? { search } : {}) }, { enabled: !returnsOnly, refetchOnWindowFocus: false });
   const pendingReturns = trpc.pmv2.warehouse.pendingReturns.useQuery(undefined, { refetchOnWindowFocus: false });
   const prepareTransfer = trpc.pmv2.warehouse.prepareTransferHandoff.useMutation();
   const preparePurchase = trpc.pmv2.warehouse.preparePurchaseHandoff.useMutation();
@@ -199,12 +207,22 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
     }
   }
 
-  const readyIssueCount = (readyIssue.data?.length ?? 0) + pscmItems.length;
+  const visibleWaiting = (data?.items ?? []).filter((item: any) => matchesReturnSearch(search,
+    item.requestId, item.requestItemId, item.taskNumber, item.taskItemTitle, item.itemNameSnapshot, item.unitSnapshot,
+    item.requestCreatorName, item.teamCode, item.teamId, item.catalogItem?.code, item.catalogItem?.nameAr, item.catalogItem?.nameEn,
+    item.teamWarehouse?.nameAr, item.teamWarehouse?.nameEn, item.teamWarehouse?.code,
+    ...(item.purchaseLinks || []).map((link: any) => link.poNumber)));
+  const visibleReady = (readyIssue.data ?? []).filter((item: any) => matchesReturnSearch(search,
+    item.itemName, item.itemCode, item.taskNumber, item.taskItemTitle, item.requesterName, item.requestCreatorName,
+    item.teamCode, item.targetLabel, item.unit, item.pendingRelink?.deliveryNumber,
+    ...(item.lotAllocations || []).map((lot: any) => lot.lotCode),
+    ...(item.availableLotOptions || []).map((lot: any) => lot.lotCode)));
+  const readyIssueCount = visibleReady.length + pscmItems.length;
   const readyIssueCountLabel = hasPscmPages ? `${readyIssueCount}+` : readyIssueCount;
   const loadingReadyIssue = readyIssue.isLoading || pscmReadyIssue.isLoading;
   const pendingReturnsCount = Array.isArray(pendingReturns.data) ? pendingReturns.data.length : 0;
   const visibleReturns = (Array.isArray(pendingReturns.data) ? pendingReturns.data : []).filter((item: any) => matchesReturnSearch(
-    search, item.itemName, item.taskNumber, item.taskItemTitle, item.previousRecipientName,
+    search, item.itemName, item.itemCode, item.taskNumber, item.taskItemTitle, item.previousRecipientName, item.teamCode, item.unit,
     ...(item.lots || []).map((lot: any) => lot.lotCode), ...(item.physicalUsages || []).map((part: any) => part.itemName),
   ));
 
@@ -264,7 +282,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
           className={`flex items-center justify-between gap-2 rounded-lg px-4 py-3 text-start text-sm font-semibold transition-colors ${activeSection === "waiting" ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted"}`}
         >
           <span className="flex items-center gap-2"><ClipboardList className="h-4 w-4" />{t.workflow.pmv2.needsProcessing}</span>
-          <span className={`rounded-full px-2 py-0.5 text-xs ${activeSection === "waiting" ? "bg-primary-foreground/15" : "bg-muted"}`}>{data?.total ?? 0}</span>
+          <span className={`rounded-full px-2 py-0.5 text-xs ${activeSection === "waiting" ? "bg-primary-foreground/15" : "bg-muted"}`}>{search ? visibleWaiting.length : data?.total ?? 0}</span>
         </button>
         <button
           type="button"
@@ -284,7 +302,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
           className={`flex items-center justify-between gap-2 rounded-lg px-4 py-3 text-start text-sm font-semibold transition-colors ${activeSection === "returns" ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted"}`}
         >
           <span className="flex items-center gap-2"><RotateCcw className="h-4 w-4" />{t.workflow.pmv2.returns}</span>
-          <span className={`rounded-full px-2 py-0.5 text-xs ${activeSection === "returns" ? "bg-primary-foreground/15" : "bg-muted"}`}>{pendingReturnsCount}</span>
+          <span className={`rounded-full px-2 py-0.5 text-xs ${activeSection === "returns" ? "bg-primary-foreground/15" : "bg-muted"}`}>{search ? visibleReturns.length : pendingReturnsCount}</span>
         </button>
       </div>
 
@@ -297,7 +315,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
             <h2 className="text-lg font-semibold">{t.workflow.pmv2.waitingSectionTitle}</h2>
             <p className="text-sm text-muted-foreground">{t.workflow.pmv2.waitingSectionHelp}</p>
           </div>
-          {!queue.isLoading && !queue.error && <Badge variant="secondary">{fmt(t.workflow.pmv2.requestCount, { count: data?.total ?? 0 })}</Badge>}
+          {!queue.isLoading && !queue.error && <Badge variant="secondary">{fmt(t.workflow.pmv2.requestCount, { count: search ? visibleWaiting.length : data?.total ?? 0 })}</Badge>}
         </div>
 
         {queue.isLoading ? (
@@ -313,16 +331,16 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
               {queue.error.message ? localizeApiError(queue.error.message) : t.workflow.pmv2.queueLoadFailed}
             </CardContent>
           </Card>
-        ) : !data?.items.length ? (
+        ) : !visibleWaiting.length ? (
           <Card>
             <CardContent className="flex flex-col items-center justify-center gap-2 py-14 text-center text-muted-foreground">
               <PackageCheck className="h-9 w-9" />
-              <p className="font-medium">{t.workflow.pmv2.noWaitingRequests}</p>
+              <p className="font-medium">{search ? (language === "ar" ? "لا توجد نتائج مطابقة للبحث." : language === "ur" ? "تلاش سے کوئی نتیجہ نہیں ملا۔" : "No matching results.") : t.workflow.pmv2.noWaitingRequests}</p>
             </CardContent>
           </Card>
         ) : (
           <div className="space-y-4">
-            {data.items.map((item) => {
+            {visibleWaiting.map((item) => {
               const statusView = STATUS_VIEW[item.availabilityStatus] ?? STATUS_VIEW.insufficient;
               const inventory = item.mainWarehouseAvailability;
               return (
@@ -508,13 +526,13 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
         {loadingReadyIssue ? (
           <Card><CardContent className="flex items-center justify-center gap-2 py-8 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> {t.workflow.pmv2.checkingReadyIssue}</CardContent></Card>
         ) : !readyIssueCount && !readyIssue.error && !pscmReadyIssue.error && !hasPscmPages ? (
-          <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">{t.workflow.pmv2.noReadyIssue}</CardContent></Card>
+          <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">{search ? (language === "ar" ? "لا توجد نتائج مطابقة للبحث." : language === "ur" ? "تلاش سے کوئی نتیجہ نہیں ملا۔" : "No matching results.") : t.workflow.pmv2.noReadyIssue}</CardContent></Card>
         ) : null}
         {readyIssue.error ? (
           <Card className="border-red-200"><CardContent className="py-6 text-center text-red-700">{localizeApiError(readyIssue.error.message)}</CardContent></Card>
-        ) : !!readyIssue.data?.length && (
+        ) : !!visibleReady.length && (
           <div className="space-y-3">
-            {(readyIssue.data as any[]).map((item: any) => {
+            {visibleReady.map((item: any) => {
               const selectedRecipient = recipientByRequirement[item.routeDecisionActionId] || String(item.defaultRecipientUserId || "");
               const selection=lotSelections[item.routeDecisionActionId]||{mode:"fifo" as const};
               let manualReady=true;

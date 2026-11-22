@@ -90,6 +90,35 @@ describe("PSCM warehouse progress from committed documents", () => {
     expect(await getPscmFulfillment("absent", [14])).toEqual({ items: [] });
   });
 
+  it("filters item, task, document and lot text before paging and still applies purchase scope", async () => {
+    sqlite.exec("UPDATE inventory_lots SET specificationStatus='approved' WHERE id=111");
+    for (const search of ['وصل', '2026-0001', 'المهم', 'LOT-111', '11-0014']) {
+      expect((await listPscmReady(actor, 0, search)).items.map(item => item.purchaseOrderItemId)).toEqual([31]);
+    }
+    expect((await listPscmReady(actor, 0, '0002')).items).toEqual([]);
+    expect((await listPscmReady(actor, 31, 'LOT-111')).items).toEqual([]);
+  });
+
+  it("treats SQL wildcard characters as literal search text", async () => {
+    sqlite.exec("UPDATE inventory_lots SET specificationStatus='approved' WHERE id=111; UPDATE purchase_order_items SET itemName='وصلة 75%_!' WHERE id=31");
+    expect((await listPscmReady(actor,0,'%_!')).items.map(item => item.purchaseOrderItemId)).toEqual([31]);
+    expect((await listPscmReady(actor,0,'%_X')).items).toEqual([]);
+  });
+
+  it("searches all eligible PSCM rows before applying the 50-row page", async () => {
+    for (let n=100; n<155; n++) {
+      sqlite.prepare("INSERT INTO pscm_purchase_items VALUES(?,1,?,'Project','Task','Piece',1)").run(n,n);
+      sqlite.prepare("INSERT INTO purchase_order_items VALUES(?,1,?,'delivered_to_warehouse','general_maintenance_manager')").run(n,n===154 ? 'Very distinctive item' : 'Other material');
+      sqlite.prepare("INSERT INTO warehouse_receipts VALUES(?,'confirmed')").run(n+1000);
+      sqlite.prepare("INSERT INTO warehouse_receipt_items VALUES(?,?,?,?,1,'Piece')").run(n+2000,n+1000,n,n+3000);
+      sqlite.prepare("INSERT INTO inventory_lots VALUES(?,?,?,?,?,1,1,'Piece',1,NULL,'receipt')").run(n+4000,'LOT-'+n,n+2000,n+1000,n);
+      sqlite.prepare("INSERT INTO inventory VALUES(?,1,0)").run(n+3000);
+      sqlite.prepare("INSERT INTO inventory_lot_balances VALUES(?,?,1)").run(n+4000,n+3000);
+    }
+    expect((await listPscmReady(actor)).nextCursor).not.toBeNull();
+    expect((await listPscmReady(actor,0,'distinctive')).items.map(item => item.purchaseOrderItemId)).toEqual([154]);
+  });
+
   it("shows the remaining physical piece after a fractional-carton issue and filters inaccessible purchases", async () => {
     sqlite.exec(`
       UPDATE inventory_lots SET specificationStatus='approved',remainingQuantity=1 WHERE id=111;

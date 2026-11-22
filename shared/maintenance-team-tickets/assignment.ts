@@ -100,6 +100,6 @@ export interface TeamAssignmentRepository {
   candidates(): Promise<AssignmentTeam[]>;
   queue(
     actor: TeamManagementActor,
-    options?: { materialsOnly?: boolean }
+    options?: { materialsOnly?: boolean; search?: string }
   ): Promise<AssignedTeamTicket[]>;
 }

@@ -183,13 +183,15 @@ export async function getPscmFulfillment(instanceId: string, requisitionIds: num
   });
 }
 
-export async function listPscmReady(actor: Actor, after = 0) {
+export async function listPscmReady(actor: Actor, after = 0, search = "") {
   if (!isInventoryLotsEnabled()) return { items: [], nextCursor: null };
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
+  const term = "%" + search.trim().replace(/[!%_]/g, character => "!" + character) + "%";
   const candidates = await fetchRows<Line>(db, sql`
     SELECT ${columns} ${sources}
     WHERE m.purchaseOrderItemId > ${after} AND ${eligibleLines}
+      ${search.trim() ? sql`AND (p.poNumber LIKE ${term} ESCAPE '!' OR p.sourceReference LIKE ${term} ESCAPE '!' OR m.projectName LIKE ${term} ESCAPE '!' OR m.taskName LIKE ${term} ESCAPE '!' OR i.itemName LIKE ${term} ESCAPE '!' OR EXISTS (SELECT 1 FROM inventory_lots findLot WHERE findLot.purchaseOrderItemId=m.purchaseOrderItemId AND findLot.lotCode LIKE ${term} ESCAPE '!'))` : sql``}
       AND EXISTS (
         SELECT 1 FROM inventory_lots l
         JOIN inventory_lot_balances b ON b.lotId = l.id AND b.quantity >= 1

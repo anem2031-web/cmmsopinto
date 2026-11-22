@@ -14,9 +14,9 @@ function active(user: { isActive?: number | null }) {
 }
 
 export const pscmFulfillmentRouter = router({
-  ready: pmv2WarehouseReadProcedure.input(z.object({ after: id.optional() }).optional()).query(({ ctx, input }) => {
+  ready: pmv2WarehouseReadProcedure.input(z.object({ after: id.optional(), search: z.string().max(200).optional() }).optional()).query(({ ctx, input }) => {
     active(ctx.user);
-    return listPscmReady(ctx.user, input?.after);
+    return listPscmReady(ctx.user, input?.after, input?.search);
   }),
   recipients: pmv2WarehouseProcedure.query(async ({ ctx }) => {
     active(ctx.user);
