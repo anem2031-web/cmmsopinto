@@ -57,6 +57,7 @@ vi.mock("../../client/src/lib/trpc", () => ({
                   nameAr: "دجاج 1100 جم",
                   code: "CAT-9",
                   pageCount: 2,
+                  linkedWork: input.includeLinkedWork ? [{kind:"ticket",reference:"MT-TEST-1",quantity:2,unit:"حبة",warehouseId:1}] : [],
                   totals: [
                     {
                       unit: "كجم",
@@ -459,4 +460,16 @@ it("renders the actual ledger views for isolated visual review without a databas
     "tools/inventory-books/artifacts/preview.html",
     `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"></head><body class="bg-background text-foreground"><main class="mx-auto max-w-7xl space-y-6 p-5"><h1 class="font-bold text-2xl">دفتر صنف الكتالوج</h1><p class="rounded border bg-amber-50 p-3">معاينة اختبار معزولة — بيانات وهمية، دون اتصال بقاعدة البيانات</p><div class="grid grid-cols-1 md:grid-cols-3 gap-3">${quantitySummary}</div><h2 class="font-bold">الدفتر مغلق — إجماليات منفصلة حسب الوحدة</h2>${collapsed}<h2 class="font-bold">الدفتر مفتوح — السجلات واللوتات واختيار المرتجع</h2>${expanded}</main></body></html>`
   );
+});
+
+
+it("displays the maintenance reference and quantity only when requested by the inventory page", () => {
+  const html = render(<InventoryBooks layout="table" warehouseId={1} showLinkedWork />);
+  expect(html).toContain("ارتباط الصيانة");
+  expect(html).toContain("MT-TEST-1");
+  expect(html).toContain("2 حبة");
+  expect(state.queries[0].includeLinkedWork).toBe(true);
+  state.queries = [];
+  expect(render(<InventoryBooks layout="table" warehouseId={1} />)).not.toContain("ارتباط الصيانة");
+  expect(state.queries[0].includeLinkedWork).toBeUndefined();
 });

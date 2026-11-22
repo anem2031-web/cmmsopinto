@@ -38,3 +38,14 @@ export function canReviewTicketTeamExecution(
       actorId === responsibleManagerId)
   );
 }
+
+/** Result approval only; construction ownership must agree across ticket, item and assignment. */
+export function canApproveTicketTeamResult(
+  role: string, actorId: number, responsibleManagerId: number | undefined,
+  ticket?: { responsibleDepartment?: string | null; ticketManagerId?: number | null; itemResponsibleDepartment?: string | null; itemResponsibleManagerId?: number | null },
+): boolean {
+  if (role !== "construction_procurement_manager") return canReviewTicketTeamExecution(role, actorId, responsibleManagerId);
+  return Number.isSafeInteger(actorId) && actorId > 0 && actorId === responsibleManagerId &&
+    ticket?.responsibleDepartment === "maintenance_report_department_construction" && ticket.ticketManagerId === actorId &&
+    ticket.itemResponsibleDepartment === "maintenance_report_department_construction" && ticket.itemResponsibleManagerId === actorId;
+}

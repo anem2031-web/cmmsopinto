@@ -144,6 +144,7 @@ function fixture() {
     failDocument: 0,
     failCommit: false,
     warehouseActive: true,
+    linkedLots: [] as any[],
   };
   const queries: Array<{ q: string; p: any[] }> = [];
   let queue = Promise.resolve();
@@ -157,6 +158,8 @@ function fixture() {
     execute: async (query: any) => {
       const { sql: q, params: p } = dialect.sqlToQuery(query);
       queries.push({ q, p });
+      if (q.includes("FROM inventory_lots l JOIN inventory_lot_balances b ON b.lotId=l.id")) return result(flags.linkedLots);
+      if (q.includes("FROM ticket_team_supply_links s JOIN ticket_team_material_needs") || q.includes("FROM pmv2_material_purchase_links k JOIN pmv2_material_request_items")) return result([]);
       if (q.includes("information_schema"))
         return result(flags.ready ? [{ ok: 1 }] : []);
       if (q.startsWith("SELECT id,role,isActive FROM users"))
@@ -797,7 +800,7 @@ describe("Creation/source/central capability and bounded reads", () => {
   it("batches repeated IDs and twenty selected lines in constant queries", async () => {
     const f = fixture();
     await preparedSelection(f.ports, warehouse, 1, Array(20).fill(5));
-    expect(f.queries).toHaveLength(3);
+    expect(f.queries).toHaveLength(4);
     expect(f.queries[0].p).toEqual([1, 5]);
     f.queries.length = 0;
     await preparedSelection(
@@ -806,7 +809,7 @@ describe("Creation/source/central capability and bounded reads", () => {
       1,
       Array.from({ length: 20 }, (_, i) => i + 1)
     );
-    expect(f.queries).toHaveLength(3);
+    expect(f.queries).toHaveLength(4);
   });
   it("preserves creator-only read scope across requests", async () => {
     const f = fixture();
@@ -841,4 +844,12 @@ describe("Creation/source/central capability and bounded reads", () => {
     stock.lots[1].quantity = 0.5;
     expect(() => allocateOperationalFifo(stock, 2)).toThrow("كسري");
   });
+});
+
+
+it("rejects a linked purchase item on the real createPrepared API without inserting an order", async () => {
+  const f=fixture();
+  f.flags.linkedLots=[{lotId:11,purchaseItemId:99,catalogItemId:5,purchaseUnit:"حبة",issueUnit:"حبة",conversionFactor:1,balanceQuantity:2,warehouseId:1,ticketNumber:"MT-TEST-01",purchaseQuantity:2,deliveredQuantity:0,purchaseOrderUnit:"حبة"}];
+  await expect(f.caller(warehouse).operationalIssues.createPrepared(makeInput())).rejects.toThrow("MT-TEST-01");
+  expect(f.state().orders).toHaveLength(0);
 });

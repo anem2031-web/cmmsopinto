@@ -48,6 +48,9 @@ export interface TicketRef {
   assignmentMode: "unassigned" | "name" | "team";
   assignedToId?: number | null;
   responsibleDepartment?: string | null;
+  ticketManagerId?: number | null;
+  itemResponsibleDepartment?: string | null;
+  itemResponsibleManagerId?: number | null;
 }
 export interface Team {
   id: number;

@@ -617,6 +617,23 @@ test("SQL store saves one action/audit/operation and replays retry without anoth
     1
   );
 });
+test("SQL store rechecks construction ownership and bridges approved team result to the existing ticket workflow", async () => {
+  const construction = { id: 90, role: "construction_procurement_manager", active: true };
+  const h = harness({ extraUsers: [{ id: 90, name: "Construction", role: construction.role, isActive: 1 }] });
+  Object.assign(h.assignment, { responsibleManagerId: 90, maintenanceResponsibleDepartment: "maintenance_report_department_construction", ticketManagerId: 90, itemResponsibleDepartment: "maintenance_report_department_construction", itemResponsibleManagerId: 90 });
+  const makeService = (actor: typeof construction | typeof tech) => new MaintenanceTeamTicketService(new SqlExecutionStore(100, actor, {}, async () => ({ db: h.db, gateway: () => noEffects })));
+  await makeService(tech).submitOutcome(3, { assignmentId: 100, expectedRevision: 0, operationKey: "construction-sql-fixed" }, "fixed", { note: "تم الإصلاح", usages: [] });
+  const countBefore = h.committed().length;
+  h.assignment.ticketManagerId = 91;
+  await assert.rejects(makeService(construction).review(90, { assignmentId: 100, expectedRevision: 1, operationKey: "construction-sql-deny" }, "approve_result", "اعتماد"), (e: any) => e.code === "FORBIDDEN");
+  assert.equal(h.committed().length, countBefore); assert.equal(h.assignment.stage, "awaiting_review");
+  h.assignment.ticketManagerId = 90;
+  await makeService(construction).review(90, { assignmentId: 100, expectedRevision: 1, operationKey: "construction-sql-ok" }, "approve_result", "اعتماد");
+  assert.equal(h.assignment.stage, "closed");
+  const item = h.committed().find(q => q.text.startsWith("UPDATE ticket_items SET status='ready_for_closure'"));
+  const ticket = h.committed().find(q => q.text.startsWith("UPDATE tickets SET status='ready_for_closure'"));
+  assert.ok(item); assert.ok(ticket);
+});
 test("SQL failures in audit and operation persistence roll back entire team action", async () => {
   const translated: any[] = [];
   for (const fail of [

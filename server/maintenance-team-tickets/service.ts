@@ -31,6 +31,7 @@ import {
 import {
   canExecuteAllTicketTeams,
   canReviewTicketTeamExecution,
+  canApproveTicketTeamResult,
 } from "../../shared/maintenance-team-tickets/execution-permissions";
 
 const managerRoles = new Set([
@@ -52,6 +53,15 @@ function manager(s: Snapshot, id: number, a?: Assignment) {
     (a && !canReviewTicketTeamExecution(u.role, id, a.responsibleManagerId))
   )
     throw new TeamTicketError("FORBIDDEN", "الإجراء للمسؤول المخوّل فقط");
+}
+function resultApprover(s: Snapshot, id: number, a: Assignment) {
+  const actor = user(s, id);
+  if (actor.role === "construction_procurement_manager") {
+    const ticket = s.tickets.find(t => t.ticketId === a.ticketId && t.ticketItemId === a.ticketItemId);
+    if (canApproveTicketTeamResult(actor.role, id, a.responsibleManagerId, ticket)) return;
+    throw new TeamTicketError("FORBIDDEN", "الاعتماد لمدير الإنشاءات المسؤول عن البلاغ وبنده فقط");
+  }
+  manager(s, id, a);
 }
 function warehouse(s: Snapshot, id: number) {
   if (!["warehouse", "owner", "admin"].includes(user(s, id).role))
@@ -1619,7 +1629,7 @@ export class MaintenanceTeamTicketService {
       (s, a) =>
         decision === "external_handover"
           ? warehouse(s, actorId)
-          : manager(s, actorId, a),
+          : decision === "approve_result" ? resultApprover(s, actorId, a) : manager(s, actorId, a),
       async (s, a) => {
         const reason = required(note, "ملاحظات المسؤول");
         const lastRouteReview = s.actions.filter(x => x.assignmentId === a.id && ["external_route_returned", "external_route_decided"].includes(x.kind)).sort((x, y) => y.revision - x.revision)[0];

@@ -85,7 +85,7 @@ export async function loadExecution(
   );
   const [r] = await selectRows(
     tx,
-    sql`SELECT a.*,k.status AS ticketStatus,k.workflowModel,k.assignedToId,k.maintenanceResponsibleDepartment,i.status AS itemStatus,i.ticketId AS itemTicketId FROM ticket_team_assignments a INNER JOIN tickets k ON k.id=a.ticketId INNER JOIN ticket_items i ON i.id=a.ticketItemId WHERE a.id=${id}${suffix}`
+    sql`SELECT a.*,k.status AS ticketStatus,k.workflowModel,k.assignedToId,k.maintenanceResponsibleDepartment,k.maintenanceResponsibleManagerId AS ticketManagerId,i.status AS itemStatus,i.ticketId AS itemTicketId,i.responsibleDepartment AS itemResponsibleDepartment,i.responsibleManagerId AS itemResponsibleManagerId FROM ticket_team_assignments a INNER JOIN tickets k ON k.id=a.ticketId INNER JOIN ticket_items i ON i.id=a.ticketItemId WHERE a.id=${id}${suffix}`
   );
   if (
     !r ||
@@ -377,6 +377,9 @@ export async function loadExecution(
         assignmentMode: "team",
         assignedToId: r.assignedToId == null ? null : num(r.assignedToId),
         responsibleDepartment: r.maintenanceResponsibleDepartment ?? null,
+        ticketManagerId: r.ticketManagerId == null ? null : num(r.ticketManagerId),
+        itemResponsibleDepartment: r.itemResponsibleDepartment ?? null,
+        itemResponsibleManagerId: r.itemResponsibleManagerId == null ? null : num(r.itemResponsibleManagerId),
       },
     ],
     assignments: [a],

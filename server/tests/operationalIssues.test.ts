@@ -26,13 +26,15 @@ const physicalCode = ts.transpileModule(`(${physicalNode.getText(physicalAst).re
 
 function fixture() {
   let state: any = { orders: [], items: [], deliveries: [], documents: [], movements: [], returns: [], returnOps: [], stock: 10, lotStock: 10, audits: [], contexts: [] };
-  const flags = { stockUnits: ["حبة"], catalogUnit: "حبة", failLedger: false, wrongLot: false, returnCalls: 0, collectorActive: 1, actorRole: "warehouse", sectionValid: true, warehouseSignature: null as string | null };
+  const flags = { stockUnits: ["حبة"], catalogUnit: "حبة", failLedger: false, wrongLot: false, returnCalls: 0, collectorActive: 1, actorRole: "warehouse", sectionValid: true, warehouseSignature: null as string | null, linkedLots: [] as any[] };
   let queue: Promise<any> = Promise.resolve(); const queries: any[] = [];
   const rows = (value: any[]) => [value];
   const issued = (id: number) => state.deliveries.filter((d: any) => d.orderItemId === id).reduce((sum: number, d: any) => sum + Number(d.quantity), 0);
   const tx: any = {
     execute: async (statement: any) => {
       const { sql: q, params: p } = new MySqlDialect().sqlToQuery(statement); queries.push({ q, p });
+      if (q.includes("FROM inventory_lots l JOIN inventory_lot_balances b ON b.lotId=l.id")) return rows(flags.linkedLots);
+      if (q.includes("FROM ticket_team_supply_links s JOIN ticket_team_material_needs") || q.includes("FROM pmv2_material_purchase_links k JOIN pmv2_material_request_items")) return rows([]);
       if (q.includes("information_schema.TABLES")) return rows([]);
       if (q.startsWith("SELECT id FROM users WHERE id=")) return rows([{ id: p[0] }]);
       if (q.includes("FROM operational_issue_orders WHERE operationKey=")) return rows(state.orders.filter((o: any) => o.operationKey === p[0] && o.createdById === p[1]));
@@ -282,4 +284,12 @@ describe("Central reference guard and rollout", () => {
   it("absorbs full-return rounding residue using the original snapshot", () => {
     expect(operationalNetCost([{ quantity: 3, returnedQuantity: 3, lotUnitCost: 0.3333, cost: 1 } as any])).toEqual({ issued: 1, returned: 1, net: 0 });
   });
+});
+
+
+it("rejects linked purchased material through the legacy create service before writing", async () => {
+  const f=fixture();
+  f.flags.linkedLots=[{lotId:11,purchaseItemId:99,catalogItemId:5,purchaseUnit:"حبة",issueUnit:"حبة",conversionFactor:1,balanceQuantity:2,warehouseId:1,ticketNumber:"MT-TEST-01",purchaseQuantity:2,deliveredQuantity:0,purchaseOrderUnit:"حبة"}];
+  await expect(f.service.create(manager,body)).rejects.toThrow("MT-TEST-01");
+  expect(f.state().orders).toHaveLength(0);
 });

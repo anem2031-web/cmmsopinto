@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { assertNoLinkedWork } from "../inventory/linked-work";
 import { allocateOperationalFifo } from "../../../shared/operational-dispatch";
 import type { WarehouseLotSelection } from "../../../shared/warehouse-lot-selection";
 import { replacementPhysicalToOriginal } from "../../supplier-return-followup/fulfillment";
@@ -112,6 +113,7 @@ export class OperationalIssueService {
       const [section] = await rows(tx, sql`SELECT id FROM sections WHERE id=${input.sectionId} AND siteId=${input.siteId}`);
       const [collector] = await rows(tx, sql`SELECT id FROM users WHERE id=${input.collectorId} AND role='technician' AND isActive=1`);
       if (!section || !collector) throw new TRPCError({ code: "BAD_REQUEST", message: "تحقق من القسم والموقع والفني النشط" });
+      await assertNoLinkedWork(tx, input.items.map(item => item.catalogItemId));
       const catalog: any[] = [];
       for (const item of input.items) {
         const [row] = await rows(tx, sql`SELECT id,nameAr,nameEn,unit FROM catalog_items WHERE id=${item.catalogItemId} AND isActive=1`);

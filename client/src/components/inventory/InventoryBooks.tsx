@@ -177,8 +177,10 @@ export function InventoryBooks({
   dateFrom,
   dateTo,
   layout = "cards",
+  showLinkedWork = false,
 }: {
   layout?: "cards" | "table";
+  showLinkedWork?: boolean;
   nodeIds?: number[];
   sort?: "name" | "recent" | "quantity";
   dateFrom?: string;
@@ -213,6 +215,7 @@ export function InventoryBooks({
   const result = trpc.inventory.books.useQuery({
     warehouseId,
     ...(groupByWarehouse ? { groupByWarehouse: true } : {}),
+    ...(showLinkedWork ? { includeLinkedWork: true } : {}),
     search: query,
     afterId,
     includeZero,
@@ -235,13 +238,13 @@ export function InventoryBooks({
       {layout === "table" ? (
         <div className="overflow-x-auto rounded-lg border bg-background">
           <table
-            className={`w-full ${groupByWarehouse ? "min-w-[1200px]" : "min-w-[1000px]"} table-fixed border-collapse text-sm`}
+            className={`w-full ${showLinkedWork ? (groupByWarehouse ? "min-w-[1450px]" : "min-w-[1250px]") : (groupByWarehouse ? "min-w-[1200px]" : "min-w-[1000px]")} table-fixed border-collapse text-sm`}
             aria-label="أصناف المستودع حسب دفتر الكتالوج"
             dir="rtl"
           >
             <colgroup>
               <col style={{ width: "5%" }} />
-              <col style={{ width: groupByWarehouse ? (onFifo ? "13%" : "23%") : (onFifo ? "27%" : "37%") }} />
+              <col style={{ width: groupByWarehouse ? (onFifo ? (showLinkedWork ? "9%" : "13%") : (showLinkedWork ? "9%" : "23%")) : (onFifo ? (showLinkedWork ? "13%" : "27%") : (showLinkedWork ? "23%" : "37%")) }} />
               {groupByWarehouse && <col style={{ width: "14%" }} />}
               <col style={{ width: "12%" }} />
               <col style={{ width: "8%" }} />
@@ -249,6 +252,7 @@ export function InventoryBooks({
               <col style={{ width: "8%" }} />
               <col style={{ width: "8%" }} />
               <col style={{ width: "8%" }} />
+              {showLinkedWork && <col style={{ width: "14%" }} />}
               {onFifo && <col style={{ width: "10%" }} />}
             </colgroup>
             <thead>
@@ -263,6 +267,7 @@ export function InventoryBooks({
                   "الوارد",
                   "المنصرف",
                   "السجلات",
+                  ...(showLinkedWork ? ["ارتباط الصيانة"] : []),
                   ...(onFifo ? ["الصرف"] : []),
                 ].map((label, index, labels) => (
                   <th
@@ -372,12 +377,19 @@ export function InventoryBooks({
                       ))}
                     </td>
                     <td
-                      className={`px-3 py-2 align-middle text-center ${onFifo ? "border-e" : ""}`}
+                      className={`px-3 py-2 align-middle text-center ${onFifo || showLinkedWork ? "border-e" : ""}`}
                     >
                       <span className="inline-flex h-8 items-center justify-center tabular-nums">
                         {book.pageCount}
                       </span>
                     </td>
+                    {showLinkedWork && (
+                      <td className={`px-2 py-2 align-middle text-center ${onFifo ? "border-e" : ""}`}>
+                        {(book.linkedWork || []).length ? (book.linkedWork || []).map((link: any, i: number) => (
+                          <div key={i} className="text-xs leading-5">{link.kind === "ticket" ? "بلاغ" : "PMV2"} <b dir="ltr">{link.reference}</b>{link.quantity == null ? " — الكمية تحتاج مراجعة" : ` — ${link.quantity} ${link.unit}`}</div>
+                        )) : "—"}
+                      </td>
+                    )}
                     {onFifo && (
                       <td className="px-3 py-2 align-middle text-center">
                         {book.totals.map((total: any) => (
@@ -410,7 +422,7 @@ export function InventoryBooks({
                   </tr>
                   {expanded === bookKey(book) && (
                     <tr className="border-t bg-muted/10">
-                      <td colSpan={(onFifo ? 9 : 8) + (groupByWarehouse ? 1 : 0)} className="p-2">
+                      <td colSpan={(onFifo ? 9 : 8) + (groupByWarehouse ? 1 : 0) + (showLinkedWork ? 1 : 0)} className="p-2">
                         <div id={`inventory-book-${bookKey(book)}-details`}>
                           <InventoryBookPages
                             key={`${book.id}:${bookWarehouseId(book)}`}

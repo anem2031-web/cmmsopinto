@@ -38,6 +38,7 @@ import {
 import {
   canExecuteAllTicketTeams,
   canReviewTicketTeamExecution,
+  canApproveTicketTeamResult,
 } from "@shared/maintenance-team-tickets/execution-permissions";
 import {
   issued,
@@ -153,7 +154,9 @@ export function ExecutionPanel({
     warehouse = ["warehouse", "owner", "admin"].includes(role),
     manager =
       mode === "execution" &&
-      canReviewTicketTeamExecution(role, actorId, a?.responsibleManagerId);
+      canReviewTicketTeamExecution(role, actorId, a?.responsibleManagerId),
+    resultApprover = mode === "execution" && canApproveTicketTeamResult(role, actorId, a?.responsibleManagerId,
+      state?.tickets.find(ticket => ticket.ticketId === a?.ticketId && ticket.ticketItemId === a?.ticketItemId));
   const catalogNeed = warehouse && a?.stage === "waiting_material" && !details.error
     ? state?.needs.find(n => n.id === catalogNeedId && (warehouseNeedId == null || n.id === warehouseNeedId) && n.assignmentId === a.id && n.round === a.materialRound && canReviewTicketMaterialQuantity(state, n))
     : undefined;
@@ -794,10 +797,8 @@ export function ExecutionPanel({
       )}
       {warehouseNeedId == null &&
         state.actions.filter(x => x.assignmentId === a.id && ["external_route_returned", "external_route_decided"].includes(x.kind)).sort((x, y) => y.revision - x.revision)[0]?.kind !== "external_route_returned" &&
-        ((manager &&
-          ["awaiting_review", "blocked", "external_requested"].includes(
-            a.stage
-          )) ||
+        (((manager || resultApprover) && a.stage === "awaiting_review") ||
+          (manager && ["blocked", "external_requested"].includes(a.stage)) ||
           (warehouse &&
             ["waiting_material", "external_in_progress"].includes(
               a.stage
@@ -818,7 +819,7 @@ export function ExecutionPanel({
               onChange={e => setReviewNote(e.target.value)}
             />
             <div className="flex flex-wrap gap-2">
-              {manager && a.stage === "awaiting_review" && (
+              {resultApprover && a.stage === "awaiting_review" && (
                 <Button
                   disabled={busy || !reviewNote.trim()}
                   onClick={() => review("approve_result")}
@@ -915,7 +916,7 @@ export function ExecutionPanel({
             )}
           </div>
         )}
-      {manager && a.stage === "closed" && (
+      {resultApprover && a.stage === "closed" && (
         <a className="text-primary underline" href={`/tickets/${a.ticketId}`}>
           {l(
             "متابعة اعتماد وإغلاق البلاغ",

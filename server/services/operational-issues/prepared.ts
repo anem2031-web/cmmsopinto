@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { assertNoLinkedWork, loadLinkedWork } from "../inventory/linked-work";
 import { applyOperationalReplacementStock, loadOperationalReplacements, replacementStockLines } from "./replacement";
 import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
@@ -137,7 +138,7 @@ export async function preparedSelection(
     LEFT JOIN warehouses w ON w.isActive=1 AND w.id=${warehouseId} AND (w.id=i.warehouseId OR (i.warehouseId IS NULL AND w.id=(SELECT MIN(m.id) FROM warehouses m WHERE m.type='main' AND m.isActive=1)))
     WHERE c.id IN (${idsSql(catalogItemIds)}) AND c.isActive=1 GROUP BY c.id,c.unit ORDER BY c.id`
   );
-  return loadOperationalStock(
+  const stock = await loadOperationalStock(
     db,
     catalog.map(
       c =>
@@ -150,6 +151,8 @@ export async function preparedSelection(
     false,
     warehouseId
   );
+  const linked = await loadLinkedWork(db, catalogItemIds);
+  return stock.map(item => ({ ...item, linkedWork: linked.get(item.itemId) || [] }));
 }
 
 export async function createPrepared(
@@ -215,6 +218,7 @@ export async function createPrepared(
       false,
       input.warehouseId
     );
+    await assertNoLinkedWork(tx, input.items.map(item => item.catalogItemId));
     const prepared = input.items.map(item => {
       const section = sections.find(
         s => Number(s.id) === item.sectionId && Number(s.siteId) === item.siteId

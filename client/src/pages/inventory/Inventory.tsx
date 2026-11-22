@@ -788,7 +788,7 @@ export default function Inventory() {
         </div>
       </div>
 
-      {selectedWarehouseId && lotsEnabled && <InventoryBooks layout="table" warehouseId={selectedWarehouseId === "all" ? undefined : Number(selectedWarehouseId)} groupByWarehouse={selectedWarehouseId === "all"} search={searchQuery} includeZero={!hideZeroStock} sort={sortBy} dateFrom={dateFrom} dateTo={dateTo}
+      {selectedWarehouseId && lotsEnabled && <InventoryBooks layout="table" showLinkedWork warehouseId={selectedWarehouseId === "all" ? undefined : Number(selectedWarehouseId)} groupByWarehouse={selectedWarehouseId === "all"} search={searchQuery} includeZero={!hideZeroStock} sort={sortBy} dateFrom={dateFrom} dateTo={dateTo}
         nodeIds={bookNodeIds}
         onPrintLot={({ lot, page }) => setPrintLotQr({
           lotId: Number(lot.lotId),

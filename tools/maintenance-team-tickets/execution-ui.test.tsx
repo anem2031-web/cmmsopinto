@@ -80,6 +80,19 @@ async function render(
   );
 }
 describe("production execution UI rendered with mock queries only", () => {
+  it("offers construction manager only result approval for the owned construction assignment", async () => {
+    await render("construction_procurement_manager", "awaiting_review", false, 90);
+    const a = fixture.state.assignments[0]; a.responsibleManagerId = 90;
+    Object.assign(fixture.state.tickets[0], { responsibleDepartment: "maintenance_report_department_construction", ticketManagerId: 90, itemResponsibleDepartment: "maintenance_report_department_construction", itemResponsibleManagerId: 90 });
+    const show = (actorId: number) => renderToStaticMarkup(<ExecutionPanel assignmentId={a.id} actorId={actorId} role="construction_procurement_manager" language="ar" onChanged={() => {}} />);
+    expect(show(90)).toContain("اعتماد نتيجة الفريق");
+    expect(show(90)).not.toContain("إعادة للفريق");
+    expect(show(91)).not.toContain("اعتماد نتيجة الفريق");
+    fixture.state.tickets[0].ticketManagerId = 91;
+    expect(show(90)).not.toContain("اعتماد نتيجة الفريق");
+    fixture.state.tickets[0].ticketManagerId = 90; a.stage = "closed";
+    expect(show(90)).toContain("متابعة اعتماد وإغلاق البلاغ");
+  });
   it("shows translated action notes and falls back to the original without changing it", async () => {
     await render("technician", "awaiting_review", false, 3);
     const a = fixture.state.assignments[0];

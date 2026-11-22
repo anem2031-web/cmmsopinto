@@ -143,6 +143,18 @@ describe("book reads are scoped and page before enrichment", () => {
       expect(db.calls[1].params.length).toBeLessThanOrEqual(3 * size + 5);
     }
   );
+  it("loads linked references in one bounded read for the displayed books and warehouse", async () => {
+    const db = readPort([
+      [{id: 9, warehouseId: 1, pageCount: 1}, {id: 9, warehouseId: 2, pageCount: 1}],
+      [],
+      [{lotId: 8, purchaseItemId: 7, catalogItemId: 9, warehouseId: 1, balanceQuantity: 2, ticketNumber: "MT-1", purchaseQuantity: 2, deliveredQuantity: 0, purchaseOrderUnit: "حبة", purchaseUnit: "حبة", issueUnit: "حبة", conversionFactor: 1}],
+      [], [], []
+    ]);
+    const result = await readInventoryBooks(db, {groupByWarehouse: true, includeLinkedWork: true});
+    expect(db.calls).toHaveLength(6);
+    expect((result.books[0] as any).linkedWork).toMatchObject([{reference: "MT-1", quantity: 2}]);
+    expect((result.books[1] as any).linkedWork).toEqual([]);
+  });
   it("does not enrich an empty page, and keeps search values parameterized", async () => {
     const db = readPort([[]]);
     expect(

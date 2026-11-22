@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   refCursor: 0,
   calls: [] as any[],
   ready: true,
+  linkedWork: [] as any[],
 }));
 vi.mock("react", async () => {
   const actual = await vi.importActual<any>("react");
@@ -62,6 +63,7 @@ vi.mock("../../client/src/lib/trpc", () => {
       get(_target, key) {
         if (key === "useUtils") return () => proxy("utils");
         if (key === "invalidate") return vi.fn(async () => {});
+        if (key === "query" && path.endsWith("operationalIssues.preparedSelection")) return async (input: any) => input.catalogItemIds.map((id: number) => ({ itemId: id, linkedWork: state.linkedWork }));
         if (key === "useMutation")
           return () => ({
             isPending: false,
@@ -96,6 +98,7 @@ vi.mock("../../client/src/lib/trpc", () => {
                       unit: "حبة",
                       totalQuantity: 10,
                       needsReview: false,
+                      linkedWork: state.linkedWork,
                       lots: [
                         {
                           lotId: id,
@@ -189,6 +192,7 @@ beforeEach(() => {
   state.language = "ar";
   state.role = "warehouse";
   state.ready = true;
+  state.linkedWork = [];
   state.hookMode = false;
   state.cursor = 0;
   state.refCursor = 0;
@@ -365,4 +369,17 @@ describe("Operational UI", () => {
     expect(html).toContain(operationalDispatchText.ar.setup);
     expect(html).not.toContain(operationalDispatchText.ar.save);
   });
+});
+
+
+it("does not add linked stock and shows its maintenance reference", async () => {
+  state.hookMode = true; state.states = ["1", "سبب", [], false, true, false];
+  state.linkedWork = [{kind:"ticket", reference:"MT-TEST-01", quantity:1, unit:"حبة", warehouseId:1}];
+  const toast = (await import("sonner")).toast;
+  const node=render(PreparedIssueForm);
+  const picker=find(node, e => e.props?.warehouseId === 1 && typeof e.props?.onSelect === "function");
+  picker.props.onSelect(5,"صنف");
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(state.states[2]).toEqual([]);
+  expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("MT-TEST-01"));
 });

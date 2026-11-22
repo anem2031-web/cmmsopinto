@@ -23,6 +23,7 @@ import { operationalIssueText } from "@/i18n/operationalIssues";
 import { operationalDispatchText } from "@/i18n/operationalDispatch";
 import { getLocalizedCatalogName } from "@/i18n/catalogMasterData";
 import { toast } from "sonner";
+import { linkedWorkMessage } from "@shared/inventory-linked-work";
 
 type DraftLine = {
   catalogItemId: number;
@@ -80,7 +81,12 @@ export function PreparedIssueForm() {
       };
     }
   };
-  const add = (id: number, name: string, source: DraftLine["source"]) =>
+  const add = async (id: number, name: string, source: DraftLine["source"]) => {
+    try {
+      const current = await utils.client.operationalIssues.preparedSelection.query({ warehouseId: Number(warehouseId), catalogItemIds: [id] });
+      const links = current.find(item => item.itemId === id)?.linkedWork || [];
+      if (links.length) { toast.error(linkedWorkMessage(links)); return; }
+    } catch (error) { toast.error(error instanceof Error ? error.message : text.error); return; }
     setItems(old =>
       old.length >= 20 || old.some(i => i.catalogItemId === id)
         ? old
@@ -97,6 +103,7 @@ export function PreparedIssueForm() {
             },
           ]
     );
+  };
   const change = (index: number, patch: Partial<DraftLine>) =>
     setItems(old =>
       old.map((row, n) => (n === index ? { ...row, ...patch } : row))
@@ -118,6 +125,7 @@ export function PreparedIssueForm() {
         i.quantity > 0 &&
         stock?.unit &&
         !stock.needsReview &&
+        !stock.linkedWork?.length &&
         !fifoFor(i).error &&
         ((i.source === "catalog" && stock.totalQuantity === 0) || stock.totalQuantity > 0)
       );
@@ -297,6 +305,9 @@ export function PreparedIssueForm() {
                 />
               </div>
             </div>
+            {!!stockFor(item.catalogItemId)?.linkedWork?.length && (
+              <p role="alert" className="text-sm text-destructive">{linkedWorkMessage(stockFor(item.catalogItemId)!.linkedWork)}</p>
+            )}
             {stockFor(item.catalogItemId)?.needsReview && (
               <p role="alert" className="text-destructive">
                 {text.stockReview}

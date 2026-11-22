@@ -1,3 +1,4 @@
+import { loadLinkedWork } from "../../services/inventory/linked-work";
 import { inventoryBookTotalsQuery } from "../../services/inventory-book-summary";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
@@ -34,6 +35,7 @@ export async function readInventoryBooks(
     sort?: string;
     dateFrom?: string;
     dateTo?: string;
+    includeLinkedWork?: boolean;
   }
 ) {
   const limit = Math.min(50, Math.max(1, input.limit || 36));
@@ -97,10 +99,12 @@ export async function readInventoryBooks(
         : undefined
     )
   );
+  const linkedWork = input.includeLinkedWork ? await loadLinkedWork(db, page.map(book => Number(book.id))) : null;
   return {
     books: page.map(book => ({
       ...book,
       id: Number(book.id),
+      ...(linkedWork ? { linkedWork: (linkedWork.get(Number(book.id)) || []).filter(link => input.groupByWarehouse ? link.warehouseId === Number(book.warehouseId) : input.warehouseId == null || link.warehouseId === input.warehouseId) } : {}),
       totals: totals.filter(
         row =>
           Number(row.catalogItemId) === Number(book.id) &&
@@ -204,6 +208,7 @@ export function createInventoryBookProcedures(
           search: z.string().max(300).optional(),
           warehouseId: z.number().int().positive().optional(),
           groupByWarehouse: z.boolean().optional(),
+          includeLinkedWork: z.boolean().optional(),
           afterId: z.number().int().nonnegative().optional(),
           limit: z.number().int().min(1).max(50).optional(),
           includeZero: z.boolean().optional(),
