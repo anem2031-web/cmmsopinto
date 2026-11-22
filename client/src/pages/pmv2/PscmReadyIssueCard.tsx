@@ -68,7 +68,7 @@ export function PscmReadyIssueCard({ item, recipients, readOnly, onIssued }: {
 
   return (
     <Card className="border-emerald-200">
-      <CardHeader className="border-b pb-3">
+      <CardHeader className="pb-3 rounded-t-xl border border-orange-500 dark:border-orange-400">
         <CardTitle className="text-lg font-bold text-emerald-700 dark:text-emerald-300" dir="auto">{item.itemName}</CardTitle>
         <CardDescription>{labels.pscmTaskReference.replace("{project}", item.projectName).replace("{task}", item.taskName)}</CardDescription>
         <p className="text-sm text-muted-foreground">

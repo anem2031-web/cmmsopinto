@@ -60,7 +60,7 @@ export function TicketWarehouseMaterialCard({
   const physicalReturnText = actualLinks.filter(d => d.used !== null && d.quantity > d.used! + d.returned)
     .map(d => `${d.quantity - d.used! - d.returned} ${d.physicalUnit ?? need.unit} — ${d.deliveryNumber}`).join(" · ");
   if (received === 0 && materialUnitMismatch(state, need)) return <div className="space-y-2 rounded-lg border border-amber-200 p-3 text-sm">
-    <p className={highlightName ? "font-bold text-emerald-700 dark:text-emerald-300" : "font-semibold"}>{need.name}</p>
+    <p className={highlightName ? "rounded-md border border-orange-500 px-3 py-2 font-bold text-emerald-700 dark:border-orange-400 dark:text-emerald-300" : "font-semibold"}>{need.name}</p>
     <p>{l("المطلوب", "Requested", "درخواست")}: {need.requested} {need.unit}</p>
     <p>{l("وحدة الكتالوج", "Catalog unit", "کیٹلاگ اکائی")}: {state.catalog.find(item => item.id === need.catalogItemId)?.unit}</p>
     <p role="status" className="text-amber-800">{l(
@@ -171,7 +171,7 @@ export function TicketWarehouseMaterialCard({
         ready ? "overflow-hidden border-emerald-200" : "overflow-hidden"
       }
     >
-      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 border-b">
+      <CardHeader className={highlightName ? "flex flex-row flex-wrap items-start justify-between gap-3 rounded-t-xl border border-orange-500 dark:border-orange-400" : "flex flex-row flex-wrap items-start justify-between gap-3 border-b"}>
         <div className="space-y-1">
           <h3 className={ready ? "text-lg font-semibold" : "font-semibold"}>
             <span className={highlightName ? "font-bold text-emerald-700 dark:text-emerald-300" : undefined}>{need.name}</span> — {need.unit}
