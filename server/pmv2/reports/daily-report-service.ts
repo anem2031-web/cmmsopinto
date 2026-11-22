@@ -19,6 +19,9 @@ import {
 import { getDb } from "../../_core/db/client";
 import { pmv2TaskTimelineService } from "../tracking/timeline-service";
 import { queuePmv2Translation } from "../translation-queue";
+import { isPmv2SimplifiedEnabled } from "../simplified/feature";
+import { listPmv2Members } from "../security/team-membership-list";
+import { loadUnifiedTeamNames } from "../security/unified-team-names";
 
 async function requireDb() {
   const db = await getDb();
@@ -81,17 +84,19 @@ export class Pmv2DailyReportService {
         .from(pmv2Teams)
         .where(eq(pmv2Teams.isActive, 1))
         .orderBy(asc(pmv2Teams.code)),
-      db.selectDistinct({
-        userId: users.id,
-        name: users.name,
-        teamId: pmv2TeamMembers.teamId,
-        teamCode: pmv2Teams.code,
-      })
-        .from(pmv2TeamMembers)
-        .innerJoin(pmv2Teams, eq(pmv2Teams.id, pmv2TeamMembers.teamId))
-        .innerJoin(users, eq(users.id, pmv2TeamMembers.userId))
-        .where(and(eq(pmv2TeamMembers.isActive, 1), eq(users.isActive, 1)))
-        .orderBy(asc(users.name), asc(pmv2Teams.code)),
+      isPmv2SimplifiedEnabled()
+        ? listPmv2Members(db, { includeInactiveTeams: true }).then(rows => rows.map(row => ({ ...row, name: row.userName })).sort((a,b) => a.name.localeCompare(b.name) || a.teamCode.localeCompare(b.teamCode)))
+        : db.selectDistinct({
+          userId: users.id,
+          name: users.name,
+          teamId: pmv2TeamMembers.teamId,
+          teamCode: pmv2Teams.code,
+        })
+          .from(pmv2TeamMembers)
+          .innerJoin(pmv2Teams, eq(pmv2Teams.id, pmv2TeamMembers.teamId))
+          .innerJoin(users, eq(users.id, pmv2TeamMembers.userId))
+          .where(and(eq(pmv2TeamMembers.isActive, 1), eq(users.isActive, 1)))
+          .orderBy(asc(users.name), asc(pmv2Teams.code)),
     ]);
 
     return {
@@ -193,12 +198,14 @@ export class Pmv2DailyReportService {
 
     let allowedTeamIds: number[] | null = null;
     if (filters.technicianUserId) {
-      const memberships = await db.select({ teamId: pmv2TeamMembers.teamId })
-        .from(pmv2TeamMembers)
-        .where(and(
-          eq(pmv2TeamMembers.userId, filters.technicianUserId),
-          eq(pmv2TeamMembers.isActive, 1),
-        ));
+      const memberships = isPmv2SimplifiedEnabled()
+        ? await listPmv2Members(db, { userId: filters.technicianUserId, includeInactiveUsers: true, includeInactiveTeams: true })
+        : await db.select({ teamId: pmv2TeamMembers.teamId })
+          .from(pmv2TeamMembers)
+          .where(and(
+            eq(pmv2TeamMembers.userId, filters.technicianUserId),
+            eq(pmv2TeamMembers.isActive, 1),
+          ));
       allowedTeamIds = memberships.map((row) => Number(row.teamId));
       if (filters.teamId && !allowedTeamIds.includes(filters.teamId)) allowedTeamIds = [];
     }
@@ -342,6 +349,7 @@ export class Pmv2DailyReportService {
       membersByVisit.set(key, group);
     }
 
+    const unifiedNames = await loadUnifiedTeamNames(db, candidateRows.map(row => Number(row.teamId)));
     const taskReports = await Promise.all(candidateRows.map(async (row) => {
       const taskId = Number(row.id);
       const items = itemsByTask.get(taskId) ?? [];
@@ -434,7 +442,7 @@ export class Pmv2DailyReportService {
         dueDate: String(row.dueDate),
         status: String(row.status),
         teamId: Number(row.teamId),
-        teamCode: String(row.teamCode),
+        teamCode: unifiedNames.get(Number(row.teamId)) ?? String(row.teamCode),
         checklistId: Number(row.checklistId),
         checklistName: String(row.checklistName),
         targetLabel: row.assetName ? `أصل: ${row.assetName}` : row.sectionName ? `قسم: ${row.sectionName}` : row.siteName ? `موقع: ${row.siteName}` : "—",

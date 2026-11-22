@@ -13,6 +13,7 @@ import {
 } from "./validation";
 import { nextPmv2ChecklistItemSortOrder } from "./order";
 import { queuePmv2Translation } from "../translation-queue";
+import { isSimplifiedChecklist } from "../simplified/legacy-write-guard";
 
 export class Pmv2ChecklistServiceError extends Error {
   constructor(
@@ -162,6 +163,9 @@ export class Pmv2ChecklistService {
 
   async updateChecklist(input: UpdateChecklistInput, actor: Pmv2ChecklistActor) {
     const current = await this.getChecklist(input.id);
+    if (await isSimplifiedChecklist(await requireDb(), input.id)) {
+      throw new Pmv2ChecklistServiceError("INVALID_STATE", "تُدار قائمة هذه المهمة من شاشة إعداد المهام المجدولة");
+    }
     const patch: Record<string, unknown> = {};
 
     if (input.name !== undefined) patch.name = normalizeChecklistName(input.name);
@@ -253,6 +257,9 @@ export class Pmv2ChecklistService {
 
   async createItem(input: CreateChecklistItemInput, actor: Pmv2ChecklistActor) {
     const checklist = await this.getChecklist(input.checklistId);
+    if (await isSimplifiedChecklist(await requireDb(), input.checklistId)) {
+      throw new Pmv2ChecklistServiceError("INVALID_STATE", "تُدار قائمة هذه المهمة من شاشة إعداد المهام المجدولة");
+    }
     if (Number(checklist.isActive) !== 1) {
       throw new Pmv2ChecklistServiceError(
         "INVALID_STATE",
@@ -309,6 +316,9 @@ export class Pmv2ChecklistService {
 
   async updateItem(input: UpdateChecklistItemInput, actor: Pmv2ChecklistActor) {
     const current = await this.getItem(input.id);
+    if (await isSimplifiedChecklist(await requireDb(), current.checklistId)) {
+      throw new Pmv2ChecklistServiceError("INVALID_STATE", "تُدار قائمة هذه المهمة من شاشة إعداد المهام المجدولة");
+    }
     const merged = validatePmv2ChecklistItemWrite({
       ...dbItemToWrite(current),
       ...input,

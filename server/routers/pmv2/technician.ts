@@ -53,10 +53,11 @@ export const pmv2TechnicianRouter = router({
   ),
 
   items: pmv2TechnicianProcedure
-    .input(z.object({ taskId: z.number().int().positive() }))
+    .input(z.object({ taskId: z.number().int().positive(), language: z.enum(["ar", "en", "ur"]).optional() }))
     .query(async ({ ctx, input }) => {
       try {
-        return await pmv2TechnicianReadService.listTaskItems(ctx.user.id, input.taskId);
+        const language = input.language ?? (ctx.user.preferredLanguage === "en" || ctx.user.preferredLanguage === "ur" ? ctx.user.preferredLanguage : "ar");
+        return await pmv2TechnicianReadService.listTaskItems(ctx.user.id, input.taskId, language);
       } catch (error) {
         mapTechnicianError(error);
       }

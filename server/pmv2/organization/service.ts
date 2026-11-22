@@ -15,6 +15,7 @@ import {
 import { writePmv2Audit } from "../audit/service";
 import { APP_ROLE } from "../../../shared/roles";
 import { queuePmv2Translation } from "../translation-queue";
+import { isUnifiedSpecialty, isUnifiedTeam } from "../security/unified-team-management";
 
 export class Pmv2OrganizationError extends Error {
   constructor(
@@ -145,6 +146,7 @@ export class Pmv2OrganizationService {
   }
 
   async updateSpecialty(input: UpdateSpecialtyInput, actor: Pmv2MutationActor) {
+    if (await isUnifiedSpecialty(await requireDb(), input.id)) throw new Pmv2OrganizationError("CONFLICT", "يُدار هذا التخصص من فريق الصيانة المرتبط");
     if (input.managerUserId != null) {
       await this.usersAdapter.requireActiveUser(input.managerUserId);
     }
@@ -265,6 +267,7 @@ export class Pmv2OrganizationService {
   }
 
   async updateTeam(input: UpdateTeamInput, actor: Pmv2MutationActor) {
+    if (await isUnifiedTeam(await requireDb(), input.id)) throw new Pmv2OrganizationError("CONFLICT", "يُدار هذا الفريق من فرق الصيانة");
     if (input.specialtyId !== undefined) {
       await this.requireActiveSpecialty(input.specialtyId);
     }
@@ -339,6 +342,7 @@ export class Pmv2OrganizationService {
   }
 
   async addTeamMember(teamId: number, userId: number, actor: Pmv2MutationActor) {
+    if (await isUnifiedTeam(await requireDb(), teamId)) throw new Pmv2OrganizationError("CONFLICT", "تُدار عضوية هذا الفريق من فرق الصيانة");
     await this.requireActiveTeam(teamId);
     const memberUser = await this.usersAdapter.requireActiveUser(userId);
 
@@ -411,6 +415,7 @@ export class Pmv2OrganizationService {
     if (!current[0]) {
       throw new Pmv2OrganizationError("NOT_FOUND", "عضوية الفريق غير موجودة");
     }
+    if (await isUnifiedTeam(db, Number(current[0].teamId))) throw new Pmv2OrganizationError("CONFLICT", "تُدار عضوية هذا الفريق من فرق الصيانة");
 
     await db
       .update(pmv2TeamMembers)

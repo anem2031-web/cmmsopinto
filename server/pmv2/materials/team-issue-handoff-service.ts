@@ -1,4 +1,6 @@
 import { canUserExecuteAllPmv2Teams, pmv2ExecutionActor, pmv2ExecutionActorCondition, pmv2ExecutionTeamCondition } from "../security/execution-access";
+import { isPmv2SimplifiedEnabled } from "../simplified/feature";
+import { listPmv2Members } from "../security/team-membership-list";
 import { selectFullIssueLots, type WarehouseLotSelection, type WarehouseLotOption } from "../../../shared/warehouse-lot-selection";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { replacementOriginalPerPhysical } from "../../supplier-return-followup/fulfillment";
@@ -227,6 +229,9 @@ async function requireDb() {
 
 async function listActiveTeamTechnicians(db: any, teamIds: number[]) {
   if (teamIds.length === 0) return [];
+  if (isPmv2SimplifiedEnabled()) {
+    return listPmv2Members(db, { teamIds, roles: PMV2_TECHNICIAN_EXECUTION_ROLES });
+  }
   return db.select({ teamId: pmv2TeamMembers.teamId, userId: users.id, userName: users.name })
     .from(pmv2TeamMembers)
     .innerJoin(users, eq(users.id, pmv2TeamMembers.userId))

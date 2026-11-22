@@ -1076,7 +1076,7 @@ export default function Pmv2MyTasks() {
   );
 
   const itemsQuery = trpc.pmv2.technician.items.useQuery(
-    { taskId: selectedTaskId ?? 0 },
+    { taskId: selectedTaskId ?? 0, language },
     { enabled: selectedTaskId != null },
   );
 
@@ -1235,7 +1235,7 @@ export default function Pmv2MyTasks() {
     }
   };
   const hasInProgressItem = Boolean(itemsQuery.data?.some(item => item.status === "in_progress"));
-  const steps = (itemsQuery.data ?? []).map(item => ({ id: item.id, title: item.titleSnapshot, status: itemStatusLabels[item.status] ?? item.status, recorded: item.status === "completed", working: item.status === "in_progress" }));
+  const steps = (itemsQuery.data ?? []).map(item => ({ id: item.id, title: item.localizedTitle || item.titleSnapshot, status: itemStatusLabels[item.status] ?? item.status, recorded: item.status === "completed", working: item.status === "in_progress" }));
   const currentStep = currentExecutionStep(steps, activeItemId);
   const displayedItems = sequential ? (itemsQuery.data ?? []).filter(item => item.id === currentStep?.id) : itemsQuery.data ?? [];
   const windowBusy = startItem.isPending || resumeItem.isPending || endVisit.isPending || resultMutationPending || materialWindowBusy;
@@ -1625,7 +1625,7 @@ export default function Pmv2MyTasks() {
                     ? <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
                     : <ClipboardList className="mt-0.5 h-5 w-5 text-muted-foreground" />}
                   <div>
-                    <div className="font-medium">{item.sortOrderSnapshot}. <EntityTranslatedText entityType="PMV2_TASK_ITEM" entityId={Number(item.id)} field="titleSnapshot" original={item.titleSnapshot} /></div>
+                    <div className="font-medium">{item.sortOrderSnapshot}. {item.localizedTitle ? <span dir="auto">{item.localizedTitle}</span> : <EntityTranslatedText entityType="PMV2_TASK_ITEM" entityId={Number(item.id)} field="titleSnapshot" original={item.titleSnapshot} />}</div>
                     {item.recurrenceLabelSnapshot && (
                       <div className="mt-1 text-xs text-muted-foreground">{item.recurrenceLabelSnapshot}</div>
                     )}

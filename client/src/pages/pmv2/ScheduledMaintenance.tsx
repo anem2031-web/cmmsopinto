@@ -31,6 +31,7 @@ import { Pmv2LocalizedTimelineText } from "@/components/i18n/Pmv2LocalizedTimeli
 import { useBatchTranslation } from "@/hooks/useContentTranslation";
 import { formatPmv2ChecklistRecurrenceLabel, formatPmv2ManagerIntervalLabel, formatPmv2RecurrenceLabel, formatPmv2ScheduleConfigJsonLabel } from "./recurrence-label";
 import { localizeApiError } from "@/i18n/apiError";
+import { SimplifiedSetupTab } from "./SimplifiedSetupTab";
 
 function localeFor(language: SupportedLanguage) {
   return language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-US";
@@ -2128,6 +2129,8 @@ function TasksTab({
 export default function ScheduledMaintenance() {
   const { p, language, dir } = usePmv2Text();
   const { user } = useAuth();
+  const simplifiedStatus = trpc.pmv2.simplified.status.useQuery();
+  const simplifiedEnabled = simplifiedStatus.data?.enabled === true;
   const [activeTab, setActiveTab] = useState("tasks");
   const [taskNavigation, setTaskNavigation] = useState<{ scope: "overdue"; teamId: string } | null>(null);
 
@@ -2152,14 +2155,17 @@ export default function ScheduledMaintenance() {
         </div>
       </div>
 
+      {simplifiedStatus.error && <p role="alert" className="text-sm text-destructive">{p("تعذر التحقق من إعداد المهام المبسط")}</p>}
       <Tabs value={activeTab} onValueChange={changeMainTab} className="space-y-5">
         <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 xl:grid-cols-6">
           <TabsTrigger value="monitoring" className="gap-2"><Clock3 className="h-4 w-4" />{p("متابعة المعلق")}</TabsTrigger>
           <TabsTrigger value="tasks" className="gap-2"><ClipboardCheck className="h-4 w-4" />{p("المهام المجدولة")}</TabsTrigger>
           <TabsTrigger value="workload" className="gap-2"><CalendarClock className="h-4 w-4" />{p("حمل الفرق")}</TabsTrigger>
-          <TabsTrigger value="programs" className="gap-2"><Wrench className="h-4 w-4" />{p("البرامج والأهداف")}</TabsTrigger>
-          <TabsTrigger value="checklists" className="gap-2"><ListChecks className="h-4 w-4" />{p("قوائم الصيانة")}</TabsTrigger>
-          <TabsTrigger value="organization" className="gap-2"><Users className="h-4 w-4" />{p("التخصصات والفرق")}</TabsTrigger>
+          {simplifiedEnabled ? <TabsTrigger value="simplified" className="gap-2"><Wrench className="h-4 w-4" />{p("إعداد المهام المجدولة")}</TabsTrigger> : <>
+            <TabsTrigger value="programs" className="gap-2"><Wrench className="h-4 w-4" />{p("البرامج والأهداف")}</TabsTrigger>
+            <TabsTrigger value="checklists" className="gap-2"><ListChecks className="h-4 w-4" />{p("قوائم الصيانة")}</TabsTrigger>
+            <TabsTrigger value="organization" className="gap-2"><Users className="h-4 w-4" />{p("التخصصات والفرق")}</TabsTrigger>
+          </>}
         </TabsList>
         <TabsContent value="monitoring"><MonitoringTab userRole={user?.role} /></TabsContent>
         <TabsContent value="tasks">
@@ -2169,9 +2175,18 @@ export default function ScheduledMaintenance() {
           />
         </TabsContent>
         <TabsContent value="workload"><WorkloadTab onOpenOverdue={openOverdueTasks} /></TabsContent>
-        <TabsContent value="programs"><ProgramsTab /></TabsContent>
-        <TabsContent value="checklists"><ChecklistsTab /></TabsContent>
-        <TabsContent value="organization"><OrganizationTab /></TabsContent>
+        {simplifiedEnabled ? <TabsContent value="simplified" className="space-y-5">
+          <SimplifiedSetupTab />
+          {simplifiedStatus.data?.legacyExists && <details className="rounded-lg border bg-card p-4"><summary className="cursor-pointer font-medium">{p("إعدادات الصيانة المجدولة السابقة")}</summary>
+            <Tabs defaultValue="programs" className="mt-4 space-y-3"><TabsList><TabsTrigger value="programs">{p("البرامج والأهداف")}</TabsTrigger><TabsTrigger value="checklists">{p("قوائم الصيانة")}</TabsTrigger><TabsTrigger value="organization">{p("التخصصات والفرق")}</TabsTrigger></TabsList>
+              <TabsContent value="programs"><ProgramsTab /></TabsContent><TabsContent value="checklists"><ChecklistsTab /></TabsContent><TabsContent value="organization"><OrganizationTab /></TabsContent>
+            </Tabs>
+          </details>}
+        </TabsContent> : <>
+          <TabsContent value="programs"><ProgramsTab /></TabsContent>
+          <TabsContent value="checklists"><ChecklistsTab /></TabsContent>
+          <TabsContent value="organization"><OrganizationTab /></TabsContent>
+        </>}
       </Tabs>
 
       <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">

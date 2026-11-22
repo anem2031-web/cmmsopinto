@@ -1,4 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
+import { isPmv2SimplifiedEnabled } from "../../pmv2/simplified/feature";
+import { ensurePmv2TeamWarehouseLinkSql } from "../../pmv2/simplified/setup-sql";
 import {
   TeamTicketError,
   type Team,
@@ -111,6 +113,14 @@ class Transaction implements TeamManagementTransaction {
     warehouseId: number,
     actorId: number
   ) {
+    if (isPmv2SimplifiedEnabled()) {
+      const [current] = await this.select(sql`SELECT warehouseId FROM maintenance_teams WHERE id=${teamId} FOR UPDATE`);
+      if (!current) throw new TeamTicketError("NOT_FOUND", "الفريق غير موجود");
+      if (Number(current.warehouseId) !== warehouseId) {
+        const linked = await this.select(sql`SELECT pmv2TeamId FROM pmv2_unified_team_links WHERE maintenanceTeamId=${teamId} LIMIT 1`);
+        if (linked.length) await ensurePmv2TeamWarehouseLinkSql(this.db, teamId, warehouseId, name, actorId);
+      }
+    }
     await this.db.execute(
       sql`UPDATE maintenance_teams SET name=${name}, warehouseId=${warehouseId}, updatedById=${actorId} WHERE id=${teamId}`
     );

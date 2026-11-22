@@ -1,0 +1,40 @@
+import { createRequire } from "node:module";
+import { describe, expect, it } from "vitest";
+import { MySqlDialect } from "drizzle-orm/mysql-core";
+import { listPmv2Members } from "./team-membership-list";
+const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
+function fixture() {
+  const db=new DatabaseSync(":memory:"); db.exec(`CREATE TABLE users(id INTEGER PRIMARY KEY,name TEXT,role TEXT,isActive INTEGER);
+    CREATE TABLE pmv2_teams(id INTEGER PRIMARY KEY,code TEXT); CREATE TABLE pmv2_team_members(teamId INTEGER,userId INTEGER,isActive INTEGER);
+    CREATE TABLE pmv2_unified_team_links(pmv2TeamId INTEGER PRIMARY KEY,maintenanceTeamId INTEGER);
+    CREATE TABLE maintenance_teams(id INTEGER PRIMARY KEY,name TEXT,isActive INTEGER); CREATE TABLE maintenance_team_members(teamId INTEGER,userId INTEGER,isActive INTEGER);
+    INSERT INTO users VALUES(1,'قديم','technician',1),(2,'فني','technician',1),(3,'معطل','technician',0),(4,'مدير','owner',1);
+    INSERT INTO pmv2_teams VALUES(10,'قديم'),(11,'قديم2'); INSERT INTO pmv2_team_members VALUES(10,1,1),(11,1,1);
+    INSERT INTO pmv2_unified_team_links VALUES(10,20); INSERT INTO maintenance_teams VALUES(20,'الكهرباء',1);
+    INSERT INTO maintenance_team_members VALUES(20,2,1),(20,3,1),(20,4,1);`);
+  const dialect=new MySqlDialect(); let queries=0;
+  return { db, get queries(){return queries}, reader:{async execute(q:any){queries++;const x=dialect.sqlToQuery(q);return [db.prepare(x.sql).all(...x.params as any[])];}} };
+}
+describe("PMV2 team membership list",()=>{
+  it("merges live linked teams with only unlinked legacy membership",async()=>{const f=fixture();
+    const result=await listPmv2Members(f.reader,{teamIds:[10,11],roles:["technician"]});
+    expect(result).toEqual(expect.arrayContaining([{teamId:10,userId:2,userName:"فني",teamCode:"الكهرباء"},{teamId:11,userId:1,userName:"قديم",teamCode:"قديم2"}]));
+    expect(result).toHaveLength(2); f.db.close();
+  });
+  it("filters by current user and does not reuse stale membership",async()=>{const f=fixture();
+    expect((await listPmv2Members(f.reader,{userId:1})).map(x=>x.teamId)).toEqual([11]);
+    f.db.exec("UPDATE maintenance_team_members SET isActive=0 WHERE teamId=20 AND userId=2");
+    expect(await listPmv2Members(f.reader,{userId:2})).toEqual([]); f.db.close();
+  });
+  it("includes inactive historical users only when explicitly requested by a report",async()=>{const f=fixture();
+    expect(await listPmv2Members(f.reader,{userId:3})).toEqual([]);
+    expect((await listPmv2Members(f.reader,{userId:3,includeInactiveUsers:true})).map(row=>row.teamId)).toEqual([10]);
+    f.db.exec("UPDATE maintenance_teams SET isActive=0 WHERE id=20");
+    expect(await listPmv2Members(f.reader,{userId:2})).toEqual([]);
+    expect((await listPmv2Members(f.reader,{userId:2,includeInactiveTeams:true})).map(row=>row.teamId)).toEqual([10]);f.db.close();
+  });
+  it("uses bounded batches and returns no rows for an empty scope",async()=>{const f=fixture();
+    await listPmv2Members(f.reader,{teamIds:Array.from({length:501},(_,i)=>i+1)}); expect(f.queries).toBe(2);
+    await listPmv2Members(f.reader,{teamIds:[]}); expect(f.queries).toBe(2); f.db.close();
+  });
+});

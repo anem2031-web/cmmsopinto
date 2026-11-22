@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import {
   pmv2ChecklistItems,
   pmv2Checklists,
@@ -19,6 +19,7 @@ import type {
   Pmv2SchedulerTargetRecord,
 } from "./engine";
 import { buildPmv2TaskNumber } from "./utils";
+import { isPmv2SimplifiedEnabled } from "../simplified/feature";
 
 async function requireDb() {
   const db = await getDb();
@@ -52,6 +53,8 @@ export class Pmv2DbSchedulerRepository implements Pmv2SchedulerRepository {
           eq(pmv2Teams.isActive, 1),
           eq(pmv2Specialties.isActive, 1),
           eq(pmv2Checklists.isActive, 1),
+          // Simplified programs have their own transactional scheduler.
+          isPmv2SimplifiedEnabled() ? sql`NOT EXISTS (SELECT 1 FROM pmv2_simplified_plans sp WHERE sp.programId = ${pmv2Programs.id})` : undefined,
         ),
       )
       .orderBy(asc(pmv2Programs.id));

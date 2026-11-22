@@ -16,6 +16,9 @@ import {
 } from "../../../drizzle/schema";
 import { getDb } from "../../_core/db/client";
 import { getRiyadhDateOnly } from "../scheduler/utils";
+import { loadUnifiedTeamNames } from "../security/unified-team-names";
+import { isPmv2SimplifiedEnabled } from "../simplified/feature";
+import { loadAuthorizedTaskItemTitles } from "../security/task-item-translations";
 import { currentTicketAdapter } from "../adapters/current-system";
 
 async function requireDb() {
@@ -106,8 +109,10 @@ export class Pmv2TechnicianReadService {
       .orderBy(desc(pmv2Tasks.dueDate), asc(pmv2Tasks.taskNumber));
     const rows = await (completedArchive ? query.limit(100) : query);
 
+    const unifiedNames = await loadUnifiedTeamNames(db, rows.map(row => Number(row.teamId)));
     const items = rows.map(row => ({
       ...row,
+      teamCode: unifiedNames.get(Number(row.teamId)) ?? row.teamCode,
       itemCount: Number(row.itemCount ?? 0),
       completedItemCount: Number(row.completedItemCount ?? 0),
       activeItemCount: Number(row.activeItemCount ?? 0),
@@ -277,7 +282,7 @@ export class Pmv2TechnicianReadService {
     };
   }
 
-  async listTaskItems(userId: number, taskId: number) {
+  async listTaskItems(userId: number, taskId: number, language: "ar" | "en" | "ur" = "ar") {
     const db = await requireDb();
     const allowed = await db
       .select({ id: pmv2Tasks.id })
@@ -327,6 +332,8 @@ export class Pmv2TechnicianReadService {
       }
     }
 
+    const localizedTitles = isPmv2SimplifiedEnabled() ? await loadAuthorizedTaskItemTitles(db, itemIds, language) : null;
+
     const ticketIds = [...new Set([...latestLinkByItem.values()].map(link => link.ticketId))];
     const ticketRefs = await currentTicketAdapter.getTicketsByIds(ticketIds);
     const ticketById = new Map(ticketRefs.map(ticket => [ticket.id, ticket]));
@@ -335,6 +342,7 @@ export class Pmv2TechnicianReadService {
       const link = latestLinkByItem.get(Number(item.id));
       return {
         ...item,
+        ...(localizedTitles ? { localizedTitle: localizedTitles.get(Number(item.id)) ?? item.titleSnapshot } : {}),
         linkedTicket: link ? (ticketById.get(link.ticketId) ?? null) : null,
       };
     });

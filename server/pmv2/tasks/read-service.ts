@@ -12,6 +12,7 @@ import {
   sites,
 } from "../../../drizzle/schema";
 import { getDb } from "../../_core/db/client";
+import { loadUnifiedTeamNames } from "../security/unified-team-names";
 import {
   PMV2_DAILY_TEAM_CAPACITY_MINUTES,
   PMV2_DAILY_WORKLOAD_AVAILABLE_THROUGH_MINUTES,
@@ -132,6 +133,7 @@ export class Pmv2TaskReadService {
       .groupBy(pmv2Tasks.teamId, pmv2Teams.code, pmv2Tasks.dueDate)
       .orderBy(asc(pmv2Tasks.dueDate), asc(pmv2Teams.code));
 
+    const unifiedNames = await loadUnifiedTeamNames(db, rows.map(row => Number(row.teamId)));
     const items = rows.map(row => {
       const taskCount = Number(row.taskCount ?? 0);
       const estimatedTaskCount = Number(row.estimatedTaskCount ?? 0);
@@ -139,7 +141,7 @@ export class Pmv2TaskReadService {
       const totalEstimatedMinutes = Number(row.totalEstimatedMinutes ?? 0);
       return {
         teamId: Number(row.teamId),
-        teamCode: row.teamCode,
+        teamCode: unifiedNames.get(Number(row.teamId)) ?? row.teamCode,
         dueDate: row.dueDate,
         taskCount,
         estimatedTaskCount,
@@ -187,7 +189,8 @@ export class Pmv2TaskReadService {
       .where(where);
 
     const total = Number(countRows[0]?.total ?? 0);
-    return { items, total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
+    const unifiedNames = await loadUnifiedTeamNames(db, items.map(row => Number(row.teamId)));
+    return { items: items.map(row => ({ ...row, teamCode: unifiedNames.get(Number(row.teamId)) ?? row.teamCode })), total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
   }
 
   async listTaskItems(taskId: number) {

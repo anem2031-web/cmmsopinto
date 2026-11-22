@@ -1,6 +1,8 @@
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { alias, type AnyMySqlColumn } from "drizzle-orm/mysql-core";
 import { pmv2TeamMembers, users } from "../../../drizzle/schema";
+import { isPmv2SimplifiedEnabled } from "../simplified/feature";
+import { pmv2MembershipCondition } from "./team-membership-condition";
 import { isObserverReadScope, observerReadActorRole } from "../../_core/authz/observer-read-scope";
 import {
   PMV2_ALL_TEAM_EXECUTION_ROLES,
@@ -27,7 +29,7 @@ export function pmv2ExecutionTeamCondition(userId: number, teamId: number | AnyM
       inArray(pmv2ExecutionActor.role, [...PMV2_ALL_TEAM_EXECUTION_ROLES, ...(isObserverReadScope() ? ["observer" as const] : [])]),
       and(
         inArray(pmv2ExecutionActor.role, [...PMV2_TECHNICIAN_EXECUTION_ROLES]),
-        sql`exists (select 1 from ${pmv2TeamMembers} where ${and(
+        isPmv2SimplifiedEnabled() ? pmv2MembershipCondition(userId, teamId) : sql`exists (select 1 from ${pmv2TeamMembers} where ${and(
           eq(pmv2TeamMembers.teamId, teamId),
           eq(pmv2TeamMembers.userId, userId),
           eq(pmv2TeamMembers.isActive, 1),

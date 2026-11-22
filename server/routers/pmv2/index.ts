@@ -9,6 +9,7 @@ import { pmv2TechnicianRouter } from "./technician";
 import { pmv2WarehouseRouter } from "./warehouse";
 import { pmv2MonitoringRouter } from "./monitoring";
 import { pmv2ReportsRouter } from "./reports";
+import { pmv2SimplifiedRouter } from "./simplified";
 import { ensurePmv2AlertScheduler } from "../../pmv2/monitoring/alert-scheduler";
 
 /**
@@ -18,6 +19,7 @@ import { ensurePmv2AlertScheduler } from "../../pmv2/monitoring/alert-scheduler"
 ensurePmv2AlertScheduler();
 
 export const pmv2Router = router({
+  simplified: pmv2SimplifiedRouter,
   organization: pmv2OrganizationRouter,
   targets: pmv2TargetsRouter,
   checklists: pmv2ChecklistsRouter,

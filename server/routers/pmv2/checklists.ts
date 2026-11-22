@@ -10,6 +10,8 @@ import {
   Pmv2ChecklistValidationError,
 } from "../../pmv2/checklists/validation";
 import { pmv2ManagementProcedure } from "../../pmv2/security/procedures";
+import { canManagePmv2Foundation } from "../../pmv2/security/policy";
+import { translatePmv2TaskTitle } from "../../pmv2/simplified/translate-title";
 
 const frequencySchema = z.enum(PMV2_CHECKLIST_FREQUENCIES);
 const optionalNullablePositiveInt = z.number().int().positive().nullable().optional();
@@ -92,6 +94,20 @@ export const pmv2ChecklistsRouter = router({
     }),
 
   items: router({
+    // Preview only; manual field edits are saved separately when the item is created.
+    translateTitle: pmv2ManagementProcedure
+      .input(z.object({ title: z.string().trim().min(1).max(300) }).strict())
+      .mutation(async ({ input, ctx }) => {
+        const actor = ctx.authenticatedUser ?? ctx.user;
+        if (actor.isActive !== 1 || !canManagePmv2Foundation(actor.role)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لترجمة المهمة" });
+        }
+        try {
+          return await translatePmv2TaskTitle(input.title);
+        } catch {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذرت الترجمة. يرجى المحاولة مجددًا أو كتابة الترجمة يدويًا" });
+        }
+      }),
     list: pmv2ManagementProcedure
       .input(
         z.object({

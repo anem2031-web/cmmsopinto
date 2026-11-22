@@ -14,6 +14,7 @@ import type { MaintenanceTargetAdapter } from "../adapters/contracts";
 import { currentMaintenanceTargetAdapter } from "../adapters/current-system";
 import { writePmv2Audit } from "../audit/service";
 import { queuePmv2Translation } from "../translation-queue";
+import { isSimplifiedChecklist, isSimplifiedProgram } from "../simplified/legacy-write-guard";
 import {
   Pmv2ProgramTargetValidationError,
   validatePmv2ProgramTargetWrite,
@@ -117,6 +118,9 @@ export class Pmv2ProgramService {
 
   private async requireActiveChecklist(checklistId: number) {
     const db = await requireDb();
+    if (await isSimplifiedChecklist(db, checklistId)) {
+      throw new Pmv2ProgramServiceError("INVALID_STATE", "تُدار قائمة هذه المهمة من شاشة إعداد المهام المجدولة");
+    }
     const rows = await db
       .select({ id: pmv2Checklists.id })
       .from(pmv2Checklists)
@@ -160,6 +164,9 @@ export class Pmv2ProgramService {
 
   async updateProgram(input: UpdateProgramInput, actor: Pmv2ProgramActor) {
     const current = await this.getProgram(input.id);
+    if (await isSimplifiedProgram(await requireDb(), input.id)) {
+      throw new Pmv2ProgramServiceError("INVALID_STATE", "تُدار هذه المهمة من شاشة إعداد المهام المجدولة");
+    }
     const teamChanged = input.teamId !== undefined && input.teamId !== current.teamId;
     const checklistChanged =
       input.checklistId !== undefined && input.checklistId !== current.checklistId;
