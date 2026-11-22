@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import {
   assets,
   pmv2Checklists,
@@ -15,6 +15,7 @@ import { currentMaintenanceTargetAdapter } from "../adapters/current-system";
 import { writePmv2Audit } from "../audit/service";
 import { queuePmv2Translation } from "../translation-queue";
 import { isSimplifiedChecklist, isSimplifiedProgram } from "../simplified/legacy-write-guard";
+import { isPmv2SimplifiedEnabled } from "../simplified/feature";
 import {
   Pmv2ProgramTargetValidationError,
   validatePmv2ProgramTargetWrite,
@@ -87,7 +88,14 @@ export class Pmv2ProgramService {
       .from(pmv2Programs)
       .innerJoin(pmv2Teams, eq(pmv2Teams.id, pmv2Programs.teamId))
       .innerJoin(pmv2Checklists, eq(pmv2Checklists.id, pmv2Programs.checklistId))
-      .where(includeInactive ? undefined : eq(pmv2Programs.isActive, 1))
+      .where(and(
+        includeInactive ? undefined : eq(pmv2Programs.isActive, 1),
+        isPmv2SimplifiedEnabled() ? sql`NOT EXISTS (
+          SELECT 1 FROM pmv2_simplified_plans s WHERE s.programId=${pmv2Programs.id}
+        ) AND NOT EXISTS (
+          SELECT 1 FROM pmv2_simplified_plan_revisions r WHERE r.programId=${pmv2Programs.id}
+        )` : undefined,
+      ))
       .orderBy(asc(pmv2Programs.id));
   }
 

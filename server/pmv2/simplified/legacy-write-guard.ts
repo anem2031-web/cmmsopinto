@@ -9,7 +9,8 @@ function hasRows(result: unknown): boolean {
 /** Prevent legacy setup screens from changing simplified plans or their schedules. */
 export async function isSimplifiedProgram(db: Reader, programId: number): Promise<boolean> {
   if (!isPmv2SimplifiedEnabled()) return false;
-  return hasRows(await db.execute(sql`SELECT programId FROM pmv2_simplified_plans WHERE programId=${programId} LIMIT 1`));
+  return hasRows(await db.execute(sql`SELECT programId FROM pmv2_simplified_plans WHERE programId=${programId}
+    UNION ALL SELECT programId FROM pmv2_simplified_plan_revisions WHERE programId=${programId} LIMIT 1`));
 }
 export async function isSimplifiedChecklist(db: Reader, checklistId: number): Promise<boolean> {
   if (!isPmv2SimplifiedEnabled()) return false;

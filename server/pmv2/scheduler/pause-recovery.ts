@@ -8,6 +8,7 @@ export interface PausedScheduleItem {
   schedule: Pmv2RecurrenceConfig;
   /** Dates that already produced an occurrence; these must never be recreated. */
   generatedDates?: readonly string[];
+  effectiveOn?: string | null;
 }
 
 export interface MissedScheduledItem {
@@ -41,7 +42,8 @@ export function missedDuringPause(
   for (const item of items) {
     if (item.kind === "daily" || item.schedule.isActive === false) continue;
     const generated = new Set(item.generatedDates ?? []);
-    for (let time = first; time < resume; time += DAY_MS) {
+    const effective = item.effectiveOn ? Math.max(first, dateMillis(item.effectiveOn)) : first;
+    for (let time = effective; time < resume; time += DAY_MS) {
       const date = new Date(time).toISOString().slice(0, 10);
       if (!generated.has(date) && isPmv2RecurrenceDueOnDate(item.schedule, date)) {
         results.push({ itemId: item.id, originalDueDate: date });

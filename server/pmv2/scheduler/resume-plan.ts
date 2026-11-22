@@ -26,6 +26,7 @@ export function planResumeOccurrences(items: readonly PausedScheduleItem[], paus
   const today: ResumeOccurrence[] = [];
   for (const item of items) {
     if (item.schedule.isActive === false || item.generatedDates?.includes(resumedOn)) continue;
+    if (item.effectiveOn && resumedOn < item.effectiveOn) continue;
     if (isPmv2RecurrenceDueOnDate(item.schedule, resumedOn)) {
       today.push({ itemId: item.id, scheduledDate: resumedOn, kind: item.kind, fromPause: false });
     }

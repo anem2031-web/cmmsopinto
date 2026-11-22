@@ -19,10 +19,13 @@ function ids(values: readonly number[]): SQL { return sql.join(values.map(value 
  * The caller must hold the program lock and include this entire operation in
  * the state-change/scheduler transaction. No network, global DB, or new tx.
  */
-export async function writeSimplifiedOccurrencesSql(tx: SetupSqlTx, programId: number, taskDate: string, occurrences: readonly ResumeOccurrence[]) {
+export async function writeSimplifiedOccurrencesSql(tx: SetupSqlTx, planId: number, taskDate: string, occurrences: readonly ResumeOccurrence[]) {
   if (!occurrences.length) return { taskId: null, createdItems: 0 };
+  const [revision] = rows(await tx.execute(sql`SELECT programId FROM pmv2_simplified_plan_revisions
+    WHERE planId=${planId} ORDER BY revisionNumber DESC LIMIT 1 FOR UPDATE`));
+  const programId = revision ? Number(revision.programId) : planId;
   const planRows = rows(await tx.execute(sql`SELECT p.id,p.checklistId,t.id AS targetId,link.maintenanceTeamId,mt.warehouseId FROM pmv2_programs p
-    INNER JOIN pmv2_simplified_plans s ON s.programId=p.id
+    INNER JOIN pmv2_simplified_plans s ON s.programId=${planId}
     INNER JOIN pmv2_program_targets t ON t.programId=p.id AND t.sectionId=s.sectionId
     INNER JOIN pmv2_unified_team_links link ON link.pmv2TeamId=p.teamId
     INNER JOIN maintenance_teams mt ON mt.id=link.maintenanceTeamId
@@ -33,14 +36,14 @@ export async function writeSimplifiedOccurrencesSql(tx: SetupSqlTx, programId: n
   if (distinctIds.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error("معرف مهمة فرعية غير صالح");
   const itemRows = rows(await tx.execute(sql`SELECT i.*,m.kind FROM pmv2_checklist_items i
     INNER JOIN pmv2_simplified_item_modes m ON m.checklistItemId=i.id
-    WHERE i.checklistId=${Number(plan.checklistId)} AND i.id IN (${ids(distinctIds)}) AND i.isActive=1`));
+    WHERE i.checklistId=${Number(plan.checklistId)} AND i.id IN (${ids(distinctIds)}) AND i.isActive=1 FOR UPDATE`));
   const itemById = new Map(itemRows.map(item => [Number(item.id), item]));
   if (itemById.size !== distinctIds.length || occurrences.some(occurrence => itemById.get(occurrence.itemId)?.kind !== occurrence.kind)) {
     throw new Error("مهمة فرعية لا تنتمي للمهمة الرئيسية أو تغير جدولها");
   }
   const translationRows = rows(await tx.execute(sql`SELECT entityId,languageCode,translatedText FROM entity_translations
     WHERE entityType='PMV2_CHECKLIST_ITEM' AND fieldName='title' AND languageCode IN ('en','ur')
-      AND translationStatus IN ('approved','completed') AND entityId IN (${ids(distinctIds)}) ORDER BY id DESC`));
+      AND translationStatus IN ('approved','completed') AND entityId IN (${ids(distinctIds)}) ORDER BY id DESC FOR UPDATE`));
   const translations = new Map<string, string>();
   for (const row of translationRows) {
     const key = `${Number(row.entityId)}:${String(row.languageCode)}`;

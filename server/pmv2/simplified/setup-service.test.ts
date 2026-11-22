@@ -16,6 +16,9 @@ function fixture() {
       createDraft: async data => { draft.plan = { id: 4, state: "draft", pausedOn: null, teamId: data.teamId, siteId: data.siteId, sectionId: data.sectionId }; return 4; },
       lockPlan: async id => draft.plan?.id === id ? draft.plan : null,
       addItem: async (_planId, _item, schedule) => { const id = draft.items.length + 1; draft.items.push({ id, kind: schedule.kind, schedule }); return id; },
+      revisePlan: async () => {},
+      updateItem: async () => false,
+      disableItem: async () => false,
       listItems: async () => draft.items,
       generate: async () => {},
       activate: async () => { draft.plan!.state = "active"; },
@@ -51,7 +54,7 @@ describe("simplified PMV2 setup service", () => {
     await expect(f.service.activate(owner, id)).rejects.toThrow();
     await f.service.addItem(owner, id, item); await f.service.activate(owner, id);
     expect(f.state.plan?.state).toBe("active");
-    await expect(f.service.addItem(owner, id, item)).rejects.toThrow();
+    await expect(f.service.addItem(owner, id, item)).resolves.toEqual({ id: 2 });
   });
   it("restores missed nondaily work before daily work and never repeats resume", async () => {
     const f = fixture(); const { id } = await f.service.create(owner, base);

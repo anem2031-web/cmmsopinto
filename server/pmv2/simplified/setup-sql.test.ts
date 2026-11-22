@@ -32,10 +32,18 @@ function fixture() {
     CREATE TABLE pmv2_unified_team_links(pmv2TeamId INTEGER PRIMARY KEY,maintenanceTeamId INTEGER,createdById INTEGER);
     CREATE TABLE pmv2_checklists(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,isActive INTEGER,createdById INTEGER);
     CREATE TABLE pmv2_programs(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT,teamId INTEGER,checklistId INTEGER,isActive INTEGER,createdById INTEGER);
-    CREATE TABLE pmv2_program_targets(id INTEGER PRIMARY KEY AUTOINCREMENT,programId INTEGER,sectionId INTEGER);
+    CREATE TABLE pmv2_program_targets(id INTEGER PRIMARY KEY AUTOINCREMENT,programId INTEGER,sectionId INTEGER,UNIQUE(programId,sectionId));
     CREATE TABLE pmv2_simplified_plans(programId INTEGER PRIMARY KEY,siteId INTEGER,sectionId INTEGER,state TEXT,pausedOn TEXT,createdById INTEGER,updatedById INTEGER);
+    CREATE TABLE pmv2_simplified_plan_revisions(
+      programId INTEGER PRIMARY KEY REFERENCES pmv2_programs(id),
+      planId INTEGER NOT NULL REFERENCES pmv2_simplified_plans(programId),
+      revisionNumber INTEGER NOT NULL,
+      effectiveOn TEXT NOT NULL,
+      createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(planId, revisionNumber)
+    );
     CREATE TABLE pmv2_checklist_items(id INTEGER PRIMARY KEY AUTOINCREMENT,checklistId INTEGER,title TEXT,sortOrder INTEGER,isRequired INTEGER,isActive INTEGER,frequency TEXT,frequencyValue INTEGER,weekday INTEGER,monthDay INTEGER,anchorDate TEXT,scheduleConfigJson TEXT);
-    CREATE TABLE pmv2_simplified_item_modes(checklistItemId INTEGER PRIMARY KEY,kind TEXT);
+    CREATE TABLE pmv2_simplified_item_modes(checklistItemId INTEGER PRIMARY KEY,kind TEXT,effectiveOn TEXT);
     CREATE TABLE entity_translations(id INTEGER PRIMARY KEY AUTOINCREMENT,entityType TEXT,entityId INTEGER,fieldName TEXT,languageCode TEXT,translatedText TEXT,translationStatus TEXT,versionNumber INTEGER,approvedById INTEGER,approvedAt TEXT);
     CREATE TABLE translation_versions(id INTEGER PRIMARY KEY AUTOINCREMENT,entityTranslationId INTEGER,versionNumber INTEGER,translatedText TEXT,translationStatus TEXT,changedById INTEGER,changeReason TEXT);
     CREATE TABLE pmv2_tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,programId INTEGER,programTargetId INTEGER,teamId INTEGER,taskNumber TEXT UNIQUE,dueDate TEXT,status TEXT,UNIQUE(programId,programTargetId,dueDate));
@@ -269,5 +277,144 @@ describe("technician receives a translated authorized task", () => {
     expect((await loadAuthorizedTaskItemTitles(f.tx,own,"en")).get(own[0])).toBe("Inspect electricity");
     expect((await loadAuthorizedTaskItemTitles(f.tx,own,"ur")).get(own[0])).toBe("بجلی کا معائنہ");
     expect(await authorized(8)).toEqual([]); f.db.close();
+  });
+});
+
+
+describe("PMV2 edits affect only newly generated work", () => {
+  const actor = { id: 7, role: "owner", isActive: 1 };
+  function revisionFixture() {
+    const f = fixture();
+    let today = "2026-11-01";
+    const database = {
+      execute: f.tx.execute,
+      async transaction<T>(work: (tx: SetupSqlTx) => Promise<T>) {
+        f.db.exec("BEGIN");
+        try {
+          const result = await work(f.tx);
+          f.db.exec("COMMIT");
+          return result;
+        } catch (error) {
+          f.db.exec("ROLLBACK");
+          throw error;
+        }
+      },
+    };
+    const setup = new SimplifiedSetupService(new SimplifiedSqlRepository(async () => database), () => today);
+    const scheduler = new SimplifiedScheduler(new SimplifiedSqlSchedulerRepository(async () => database));
+    const api = router({ pmv2: router({ simplified: createPmv2SimplifiedRouter({ enabled: () => true, db: async () => database, service: setup }) }) });
+    const caller = api.createCaller({ user: actor, authenticatedUser: actor } as any).pmv2.simplified;
+    return { ...f, setup, scheduler, caller, setDate: (date: string) => { today = date; } };
+  }
+
+  it("keeps the issued group and translations while issuing new same-day work once and carrying edits forward", async () => {
+    const f = revisionFixture();
+    try {
+      f.db.exec(`
+        INSERT INTO sites VALUES (21,1);
+        INSERT INTO sections VALUES (22,21,1);
+        INSERT INTO warehouses VALUES (15,'branch',1);
+        INSERT INTO maintenance_teams VALUES (13,'فريق آخر',15,1);
+        INSERT INTO users VALUES (16,'technician',1);
+        INSERT INTO maintenance_team_members VALUES (13,16,1);
+      `);
+      const oldTitles = { ...base, titleEn: "Restaurant inspection", titleUr: "ریستوران کا معائنہ" };
+      const daily = { ...subtask, recurrence: { kind: "daily" as const, startDate: "2026-11-01" } };
+      const { id: planId } = await f.caller.create(oldTitles);
+      const { id: editedId } = await f.caller.addItem({ planId, ...daily });
+      const { id: disabledId } = await f.caller.addItem({ planId, ...daily, titleAr: "فحص قديم" });
+      await f.caller.activate({ planId });
+      const oldTask = Number(f.db.prepare("SELECT id FROM pmv2_tasks WHERE programId=?").get(planId)?.id);
+      const oldItem = Number(f.db.prepare("SELECT id FROM pmv2_task_items WHERE taskId=? AND sourceChecklistItemId=?").get(oldTask, editedId)?.id);
+      f.db.prepare("UPDATE pmv2_tasks SET status='completed' WHERE id=?").run(oldTask);
+      f.db.prepare("UPDATE pmv2_task_items SET status='completed' WHERE taskId=?").run(oldTask);
+
+      const revisedMain = {
+        title: "فحص الموقع الجديد", titleEn: "New site inspection", titleUr: "نئی جگہ کا معائنہ",
+        siteId: 21, sectionId: 22, teamId: 13,
+      };
+      const revisedItem = { ...daily, titleAr: "فحص الأسلاك", titleEn: "Check the wiring", titleUr: "تاروں کی جانچ" };
+      await f.caller.updatePlan({ planId, ...revisedMain });
+      await f.caller.updateItem({ planId, itemId: editedId, ...revisedItem });
+      await f.caller.disableItem({ planId, itemId: disabledId });
+      const { id: addedId } = await f.caller.addItem({
+        planId, ...daily, titleAr: "اختبار جديد", titleEn: "New test", titleUr: "نیا امتحان",
+      });
+
+      const details = await f.caller.get({ id: planId });
+      expect(details).toMatchObject({ id: planId, state: "active", ...revisedMain });
+      expect(details.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: editedId, isActive: true, titleEn: revisedItem.titleEn, titleUr: revisedItem.titleUr }),
+        expect.objectContaining({ id: disabledId, isActive: false }),
+        expect.objectContaining({ id: addedId, isActive: true }),
+      ]));
+      expect(await f.caller.status()).toMatchObject({ legacyExists: false });
+
+      await f.scheduler.runForDate("2026-11-01");
+      await f.scheduler.runForDate("2026-11-01");
+      await f.scheduler.runForDate("2026-11-02");
+      await f.scheduler.runForDate("2026-11-02");
+
+      const work = f.db.prepare(`
+        SELECT t.id AS taskId,t.dueDate,t.status AS taskStatus,i.id AS taskItemId,i.sourceChecklistItemId AS itemId,
+          i.status AS itemStatus,i.titleSnapshot AS itemTitle,p.title AS mainTitle,r.sectionId,l.maintenanceTeamId AS teamId
+        FROM pmv2_task_items i JOIN pmv2_tasks t ON t.id=i.taskId
+        JOIN pmv2_programs p ON p.id=t.programId JOIN pmv2_program_targets r ON r.id=t.programTargetId
+        JOIN pmv2_unified_team_links l ON l.pmv2TeamId=t.teamId
+        ORDER BY t.dueDate,t.id,i.id
+      `).all();
+      expect(work.map(row => [row.dueDate, row.itemId, row.itemTitle, row.mainTitle, row.sectionId, row.teamId, row.itemStatus])).toEqual([
+        ["2026-11-01", editedId, daily.titleAr, oldTitles.title, 2, 3, "completed"],
+        ["2026-11-01", disabledId, "فحص قديم", oldTitles.title, 2, 3, "completed"],
+        ["2026-11-01", addedId, "اختبار جديد", revisedMain.title, 22, 13, "pending"],
+        ["2026-11-02", editedId, revisedItem.titleAr, revisedMain.title, 22, 13, "pending"],
+        ["2026-11-02", addedId, "اختبار جديد", revisedMain.title, 22, 13, "pending"],
+      ]);
+      expect(work[0]).toMatchObject({ taskId: oldTask, taskStatus: "completed" });
+      expect(work[2].taskId).not.toBe(oldTask);
+      const nextItem = Number(work[3].taskItemId);
+      const ids = [oldItem, nextItem];
+      const english = await loadAuthorizedTaskItemTitles(f.tx, ids, "en");
+      const urdu = await loadAuthorizedTaskItemTitles(f.tx, ids, "ur");
+      expect(ids.map(id => english.get(id))).toEqual([daily.titleEn, revisedItem.titleEn]);
+      expect(ids.map(id => urdu.get(id))).toEqual([daily.titleUr, revisedItem.titleUr]);
+      expect(f.db.prepare(`
+        SELECT translatedText FROM entity_translations
+        WHERE entityType='PMV2_PROGRAM' AND entityId=? AND languageCode='en'
+      `).get(planId)?.translatedText).toBe(oldTitles.titleEn);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  it("keeps unrelated pause backlog and rejects changing another plan's subtask", async () => {
+    const f = revisionFixture();
+    try {
+      const { id: planId } = await f.setup.create(actor, base);
+      const { id: editedId } = await f.setup.addItem(actor, planId, subtask);
+      const { id: unchangedId } = await f.setup.addItem(actor, planId, { ...subtask, titleAr: "مهمة أخرى" });
+      const { id: otherPlanId } = await f.setup.create(actor, { ...base, title: "خطة مستقلة" });
+      const { id: foreignId } = await f.setup.addItem(actor, otherPlanId, subtask);
+      await f.setup.activate(actor, planId);
+      f.setDate("2026-11-02");
+      await f.setup.pause(actor, planId);
+
+      f.setDate("2026-11-05");
+      await expect(f.setup.updateItem(actor, planId, foreignId, { ...subtask, titleAr: "تعديل غير مسموح" })).rejects.toThrow();
+      await expect(f.setup.disableItem(actor, planId, foreignId)).rejects.toThrow();
+      expect(f.count("pmv2_simplified_plan_revisions")).toBe(0);
+      expect(f.db.prepare("SELECT isActive FROM pmv2_checklist_items WHERE id=?").get(foreignId)?.isActive).toBe(1);
+      await f.setup.updateItem(actor, planId, editedId, { ...subtask, titleAr: "فحص معدل" });
+      const { id: addedId } = await f.setup.addItem(actor, planId, { ...subtask, titleAr: "فحص أضيف أثناء الإيقاف" });
+
+      f.setDate("2026-11-07");
+      const result = await f.setup.resume(actor, planId);
+      expect(result.occurrences.map(row => [row.itemId, row.scheduledDate])).toEqual([[unchangedId, "2026-11-04"]]);
+      await f.scheduler.runForDate("2026-11-11");
+      const nextWork = f.db.prepare("SELECT sourceChecklistItemId FROM pmv2_task_items WHERE scheduledDate=? ORDER BY sourceChecklistItemId").all("2026-11-11");
+      expect(nextWork.map(row => row.sourceChecklistItemId)).toEqual([editedId, unchangedId, addedId]);
+    } finally {
+      f.db.close();
+    }
   });
 });
