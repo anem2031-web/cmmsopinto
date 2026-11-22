@@ -36,18 +36,18 @@ export class SimplifiedSqlTransaction implements SimplifiedSetupTx {
     return members.length > 0;
   }
   async createDraft(input: SetupBase, actorId: number) { return createSimplifiedDraftSql(this.tx, input, actorId); }
-  private async currentProgramId(planId: number) {
+  private async currentProgramId(planId: number, lock = true) {
+    const lockClause = lock ? sql`FOR UPDATE` : sql``;
     const [revision] = await this.select(sql`SELECT programId FROM pmv2_simplified_plan_revisions
-      WHERE planId=${planId} ORDER BY revisionNumber DESC LIMIT 1 FOR UPDATE`);
+      WHERE planId=${planId} ORDER BY revisionNumber DESC LIMIT 1 ${lockClause}`);
     return revision ? Number(revision.programId) : planId;
   }
   async lockPlan(planId: number, nextTeamId?: number): Promise<SetupPlan | null> {
     // Acquire the shared teams in ID order before locking the plan.
+    const programBeforeLock = await this.currentProgramId(planId, false);
     const [identity] = await this.select(sql`SELECT l.maintenanceTeamId AS teamId
-      FROM pmv2_simplified_plans s INNER JOIN pmv2_programs p ON p.id=COALESCE((
-        SELECT r.programId FROM pmv2_simplified_plan_revisions r
-        WHERE r.planId=s.programId ORDER BY r.revisionNumber DESC LIMIT 1
-      ), s.programId)
+      FROM pmv2_simplified_plans s
+      INNER JOIN pmv2_programs p ON p.id=${programBeforeLock}
       INNER JOIN pmv2_unified_team_links l ON l.pmv2TeamId=p.teamId WHERE s.programId=${planId}`);
     if (!identity) return null;
     const teamIds = Array.from(new Set([Number(identity.teamId), ...(nextTeamId ? [nextTeamId] : [])])).sort((a, b) => a - b);

@@ -58,10 +58,34 @@ const subtaskFields = {
   recurrence,
 };
 
-const latestProgram = sql`COALESCE((
-  SELECT r.programId FROM pmv2_simplified_plan_revisions r
-  WHERE r.planId=s.programId ORDER BY r.revisionNumber DESC LIMIT 1
-), s.programId)`;
+// TiDB rejects scalar subqueries in JOIN ... ON. Choose the latest revisions
+// for just the requested page before joining to their program records.
+function planRowsSql(condition: SQL, limit: 1 | 51) {
+  return sql`
+    WITH plan_page AS (
+      SELECT programId,state,siteId,sectionId
+      FROM pmv2_simplified_plans
+      ${condition}
+      ORDER BY programId DESC LIMIT ${limit}
+    ), latest_revisions AS (
+      SELECT r.planId,MAX(r.revisionNumber) AS revisionNumber
+      FROM pmv2_simplified_plan_revisions r
+      INNER JOIN plan_page pp ON pp.programId=r.planId
+      GROUP BY r.planId
+    )
+    SELECT s.programId AS id,p.id AS currentProgramId,p.title,s.state,s.siteId,s.sectionId,
+      l.maintenanceTeamId AS teamId,p.checklistId,si.name AS siteName,se.name AS sectionName,t.name AS teamName
+    FROM plan_page s
+    LEFT JOIN latest_revisions latest ON latest.planId=s.programId
+    LEFT JOIN pmv2_simplified_plan_revisions r
+      ON r.planId=latest.planId AND r.revisionNumber=latest.revisionNumber
+    INNER JOIN pmv2_programs p ON p.id=COALESCE(r.programId,s.programId)
+    INNER JOIN pmv2_unified_team_links l ON l.pmv2TeamId=p.teamId
+    INNER JOIN maintenance_teams t ON t.id=l.maintenanceTeamId
+    LEFT JOIN sites si ON si.id=s.siteId
+    LEFT JOIN sections se ON se.id=s.sectionId
+    ORDER BY s.programId DESC`;
+}
 
 async function loadMainTitles(db: Db, ids: number[]) {
   const translations = new Map<string, string>();
@@ -106,12 +130,8 @@ export function createPmv2SimplifiedRouter(deps: Deps) {
     }),
     list: pmv2ManagementProcedure.input(z.object({ beforeId: z.number().int().positive().optional() }).optional()).query(async ({ ctx, input }) => {
       const db = await liveDb(deps, auth(ctx));
-      const before = input?.beforeId ? sql`AND s.programId < ${input.beforeId}` : sql``;
-      const data = resultRows(await db.execute(sql`SELECT s.programId AS id,p.id AS currentProgramId,p.title,s.state,si.name AS siteName,se.name AS sectionName,t.name AS teamName
-        FROM pmv2_simplified_plans s INNER JOIN pmv2_programs p ON p.id=${latestProgram}
-        INNER JOIN pmv2_unified_team_links l ON l.pmv2TeamId=p.teamId INNER JOIN maintenance_teams t ON t.id=l.maintenanceTeamId
-        LEFT JOIN sites si ON si.id=s.siteId LEFT JOIN sections se ON se.id=s.sectionId WHERE 1=1 ${before}
-        ORDER BY s.programId DESC LIMIT 51`));
+      const before = input?.beforeId ? sql`WHERE programId < ${input.beforeId}` : sql``;
+      const data = resultRows(await db.execute(planRowsSql(before, 51)));
       const rows = data.slice(0, 50);
       const titles = await loadMainTitles(db, rows.map(row => Number(row.currentProgramId)));
       const page = rows.map(row => ({
@@ -124,9 +144,7 @@ export function createPmv2SimplifiedRouter(deps: Deps) {
     }),
     get: pmv2ManagementProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ ctx, input }) => {
       const db = await liveDb(deps, auth(ctx));
-      const plans = resultRows(await db.execute(sql`SELECT s.programId AS id,p.id AS currentProgramId,p.title,s.state,s.siteId,s.sectionId,l.maintenanceTeamId AS teamId,p.checklistId
-        FROM pmv2_simplified_plans s INNER JOIN pmv2_programs p ON p.id=${latestProgram}
-        INNER JOIN pmv2_unified_team_links l ON l.pmv2TeamId=p.teamId WHERE s.programId=${input.id} LIMIT 1`));
+      const plans = resultRows(await db.execute(planRowsSql(sql`WHERE programId=${input.id}`, 1)));
       if (!plans[0]) throw new TRPCError({ code: "NOT_FOUND", message: "المهمة الرئيسية غير موجودة" });
       const plan = plans[0];
       const items = resultRows(await db.execute(sql`SELECT i.id,i.title,i.isActive,m.kind,i.frequency,i.frequencyValue,i.weekday,i.monthDay,DATE_FORMAT(i.anchorDate,'%Y-%m-%d') AS anchorDate

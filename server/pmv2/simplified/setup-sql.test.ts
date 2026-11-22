@@ -55,9 +55,13 @@ function fixture() {
   const dialect = new MySqlDialect();
   const tx: SetupSqlTx = { async execute(statement) {
     const query = dialect.sqlToQuery(statement);
+    // SQLite accepts scalar subqueries in JOIN conditions that TiDB rejects.
+    if (/\bON\s+\w+\.\w+\s*=\s*COALESCE\s*\(\s*\(\s*SELECT\b/i.test(query.sql)) {
+      throw new Error("TiDB: ON condition doesn't support subqueries yet");
+    }
     const statementText = query.sql.replace(/\s+FOR UPDATE/gi, "").replace(/DATE_FORMAT\(([^,]+),\s*'%Y-%m-%d'\)/gi, "$1");
     const prepared = db.prepare(statementText);
-    if (/^\s*SELECT\b/i.test(statementText)) return [prepared.all(...query.params as any[])];
+    if (/^\s*(?:SELECT|WITH)\b/i.test(statementText)) return [prepared.all(...query.params as any[])];
     const result = prepared.run(...query.params as any[]);
     return [{ insertId: Number(result.lastInsertRowid), affectedRows: result.changes }];
   } };
@@ -250,7 +254,8 @@ describe("simplified PMV2 management API integration", () => {
     expect(loaded.items[0]).toMatchObject({
       titleAr: "فحص الكهرباء", titleEn: "Check the electrical wiring", titleUr: "بجلی کی تاروں کی جانچ",
     });
-    expect((await caller.list()).items[0]).toMatchObject({id,state:"draft"});
+    expect(await caller.list()).toMatchObject({ items: [{ id, state: "draft" }], nextId: null });
+    expect(await caller.list({ beforeId: id })).toEqual({ items: [], nextId: null });
     expect((await caller.status()).legacyExists).toBe(false);
     f.db.exec("INSERT INTO pmv2_teams(id,specialtyId,code,warehouseId,isActive) VALUES(999,999,'LEGACY',5,1)");
     expect((await caller.status()).legacyExists).toBe(true);
@@ -317,6 +322,8 @@ describe("PMV2 edits affect only newly generated work", () => {
         INSERT INTO maintenance_teams VALUES (13,'فريق آخر',15,1);
         INSERT INTO users VALUES (16,'technician',1);
         INSERT INTO maintenance_team_members VALUES (13,16,1);
+        ALTER TABLE sites ADD COLUMN name TEXT;
+        ALTER TABLE sections ADD COLUMN name TEXT;
       `);
       const oldTitles = { ...base, titleEn: "Restaurant inspection", titleUr: "ریستوران کا معائنہ" };
       const daily = { ...subtask, recurrence: { kind: "daily" as const, startDate: "2026-11-01" } };
@@ -343,6 +350,13 @@ describe("PMV2 edits affect only newly generated work", () => {
 
       const details = await f.caller.get({ id: planId });
       expect(details).toMatchObject({ id: planId, state: "active", ...revisedMain });
+      expect(await f.caller.list()).toMatchObject({
+        items: [{
+          id: planId, state: "active", title: revisedMain.title,
+          titleEn: revisedMain.titleEn, titleUr: revisedMain.titleUr,
+        }],
+        nextId: null,
+      });
       expect(details.items).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: editedId, isActive: true, titleEn: revisedItem.titleEn, titleUr: revisedItem.titleUr }),
         expect.objectContaining({ id: disabledId, isActive: false }),
