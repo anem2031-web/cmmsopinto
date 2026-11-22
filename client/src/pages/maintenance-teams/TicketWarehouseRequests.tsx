@@ -155,7 +155,7 @@ export default function TicketWarehouseRequests({
                     <MaterialRequestMeta creatorName={need.requestCreatorName} sentAt={need.requestCreatedAt} language={language} />
                   </div>
                   {user!.role === "senior_management" ? <div className="rounded-b-xl border bg-card p-4 space-y-2">
-                    <p className="font-semibold">{need.name} — {need.unit}</p>
+                    <p className="font-semibold"><span className={returnsOnly ? undefined : "font-bold text-emerald-700 dark:text-emerald-300"}>{need.name}</span> — {need.unit}</p>
                     <p>{ticket.ticketNumber} · {ticket.title}</p>
                     <p>{ticket.teamName} · {ticket.warehouseName || "—"}</p>
                     <p>{ticket.siteName || "—"} · {ticket.sectionName || "—"}</p>

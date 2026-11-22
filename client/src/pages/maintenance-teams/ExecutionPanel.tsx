@@ -456,6 +456,7 @@ export function ExecutionPanel({
                 ticket={warehouseTicket}
                 language={language}
                 warehouse={mode === "warehouse" && warehouseNeedId != null}
+                highlightName={mode === "warehouse" && warehouseNeedId != null && !returnsOnly}
                 onReviewIdentity={warehouse && a.stage === "waiting_material" && n.round === a.materialRound && canReviewTicketMaterialQuantity(state, n)
                   ? () => { setCatalogNeedId(n.id); setError(""); } : undefined}
                 quantityFields={

@@ -348,7 +348,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
                   <CardHeader className="gap-3 border-b bg-muted/10">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                       <div>
-                        <CardTitle className="text-lg">{item.itemNameSnapshot}</CardTitle>
+                        <CardTitle className="text-lg font-bold text-emerald-700 dark:text-emerald-300">{item.itemNameSnapshot}</CardTitle>
                         <CardDescription className="mt-1">
                           {fmt(t.workflow.pmv2.requestMeta, { request: item.requestId, item: item.requestItemId, task: item.taskNumber })}
                         </CardDescription>
@@ -542,7 +542,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
                   <CardHeader className="border-b pb-3">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                       <div>
-                        <CardTitle className="text-lg">{item.itemName}</CardTitle>
+                        <CardTitle className="text-lg font-bold text-emerald-700 dark:text-emerald-300">{item.itemName}</CardTitle>
                         <CardDescription>{item.itemCode ? fmt(t.workflow.pmv2.codeInline, { code: item.itemCode }) + " · " : ""}{fmt(t.workflow.pmv2.taskInline, { task: item.taskNumber })} · {item.taskItemTitle}</CardDescription>
                       </div>
                       <Badge variant="outline" className={item.canIssue ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
@@ -651,7 +651,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
           <div className="space-y-3">
             {visibleReturns.map((item: any) => (
               <Card key={item.declarationActionId}>
-                <CardHeader className="border-b pb-3"><CardTitle className="text-base">{item.itemName}</CardTitle><CardDescription>{item.taskNumber} · {item.taskItemTitle}</CardDescription></CardHeader>
+                <CardHeader className="border-b pb-3"><CardTitle className={embedded ? "text-base" : "text-base font-bold text-emerald-700 dark:text-emerald-300"}>{item.itemName}</CardTitle><CardDescription>{item.taskNumber} · {item.taskItemTitle}</CardDescription></CardHeader>
                   <details className="group">
                     <summary className="cursor-pointer list-none border-b px-6 py-3 text-sm font-medium text-primary hover:bg-muted/40 [&::-webkit-details-marker]:hidden">
                       <span className="group-open:hidden">{readOnly ? (language === "ar" ? "عرض التفاصيل" : language === "ur" ? "تفصیل دیکھیں" : "Show details") : t.workflow.pmv2.showDetailsReceive}</span>
