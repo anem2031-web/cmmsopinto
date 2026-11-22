@@ -1203,35 +1203,35 @@ const { getField } = useResolvedTranslation(
       <Card>
         <CardContent className="p-4">
           {ticket.workflowModel === "department_tasks" && ticket.status !== "pending_triage" ? (
-            <div className="flex items-center justify-between gap-1 overflow-x-auto">
+            <div className="flex items-center justify-between gap-1 md:gap-[3.6px] overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden" tabIndex={0}>
               {[
                 { key: "triage", label: t.workflow.ticket.stageTriage, done: true },
                 { key: "departments", label: t.workflow.ticket.stageDepartments, done: true },
                 { key: "tasks", label: t.workflow.ticket.stageTasks, done: (departmentPlan?.tasks?.length || 0) > 0 },
                 { key: "subtickets", label: t.workflow.ticket.stageSubTickets, done: (departmentPlan?.tasks || []).some((task: any) => !!task.convertedTicketId) },
               ].map((step, i, arr) => (
-                <div key={step.key} className="flex items-center gap-1 flex-1 min-w-0">
-                  <div className={`flex items-center gap-1.5 ${step.done ? "text-primary" : "text-muted-foreground/40"}`}>
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${step.done ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground/40"}`}>
+                <div key={step.key} className="flex items-center gap-1 md:gap-[3.6px] flex-1 min-w-max">
+                  <div className={`flex items-center gap-1.5 md:gap-[5.4px] ${step.done ? "text-primary" : "text-muted-foreground/40"}`}>
+                    <div className={`w-6 h-6 md:w-[21.6px] md:h-[21.6px] rounded-full flex items-center justify-center text-[10px] md:text-[9px] font-bold shrink-0 ${step.done ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground/40"}`}>
                       {step.done ? "✓" : i + 1}
                     </div>
-                    <span className="text-[11px] font-medium whitespace-nowrap">{step.label}</span>
+                    <span className="text-[11px] md:text-[9.9px] font-medium whitespace-nowrap">{step.label}</span>
                   </div>
-                  {i < arr.length - 1 && <div className={`flex-1 h-px mx-1 ${step.done ? "bg-primary/40" : "bg-muted"}`} />}
+                  {i < arr.length - 1 && <div className={`flex-1 h-px mx-1 md:mx-[3.6px] ${step.done ? "bg-primary/40" : "bg-muted"}`} />}
                 </div>
               ))}
             </div>
           ) : (
-            <div className="flex items-center justify-between gap-1 overflow-x-auto">
+            <div className="flex items-center justify-between gap-1 md:gap-[3.6px] overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden" tabIndex={0}>
               {workflowSteps.map((step, i) => (
-                <div key={step.key} className="flex items-center gap-1 flex-1 min-w-0">
-                  <div className={`flex items-center gap-1.5 ${step.done ? "text-primary" : "text-muted-foreground/40"}`}>
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${ticket.status === step.key ? "bg-primary text-primary-foreground ring-2 ring-primary/30" : step.done ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground/40"}`}>
+                <div key={step.key} className="flex items-center gap-1 md:gap-[3.6px] flex-1 min-w-max">
+                  <div className={`flex items-center gap-1.5 md:gap-[5.4px] ${step.done ? "text-primary" : "text-muted-foreground/40"}`}>
+                    <div className={`w-6 h-6 md:w-[21.6px] md:h-[21.6px] rounded-full flex items-center justify-center text-[10px] md:text-[9px] font-bold shrink-0 ${ticket.status === step.key ? "bg-primary text-primary-foreground ring-2 ring-primary/30" : step.done ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground/40"}`}>
                       {step.done ? "✓" : i + 1}
                     </div>
-                    <span className="text-[11px] font-medium whitespace-nowrap">{step.label}</span>
+                    <span className="text-[11px] md:text-[9.9px] font-medium whitespace-nowrap">{step.label}</span>
                   </div>
-                  {i < workflowSteps.length - 1 && <div className={`flex-1 h-px mx-1 ${step.done ? "bg-primary/40" : "bg-muted"}`} />}
+                  {i < workflowSteps.length - 1 && <div className={`flex-1 h-px mx-1 md:mx-[3.6px] ${step.done ? "bg-primary/40" : "bg-muted"}`} />}
                 </div>
               ))}
             </div>
