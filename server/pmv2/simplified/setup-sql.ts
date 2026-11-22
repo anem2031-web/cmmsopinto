@@ -60,7 +60,7 @@ export async function ensurePmv2TeamWarehouseLinkSql(tx: SetupSqlTx, maintenance
   return pmv2TeamId;
 }
 
-/** Add a subtask and its reviewed translations in the caller's transaction. */
+/** Add the three validated titles in the caller's transaction. */
 export async function addSimplifiedItemSql(tx: SetupSqlTx, planId: number, item: SetupItem, schedule: ReturnType<typeof buildSimplifiedSchedule>, actorId: number): Promise<number> {
   const plans = rows(await tx.execute(sql`SELECT p.checklistId,s.state FROM pmv2_programs p INNER JOIN pmv2_simplified_plans s ON s.programId=p.id
     WHERE p.id=${planId} FOR UPDATE`));
@@ -73,7 +73,6 @@ export async function addSimplifiedItemSql(tx: SetupSqlTx, planId: number, item:
     VALUES (${checklistId},${item.titleAr},${nextOrder},1,1,${schedule.frequency},${schedule.frequencyValue},${schedule.weekday},${schedule.monthDay},${schedule.anchorDate},${schedule.scheduleConfigJson})`));
   await tx.execute(sql`INSERT INTO pmv2_simplified_item_modes (checklistItemId,kind) VALUES (${itemId},${schedule.kind})`);
   for (const [language, text] of [["en", item.titleEn], ["ur", item.titleUr]] as const) {
-    if (!text) continue;
     const translationId = insertId(await tx.execute(sql`INSERT INTO entity_translations
       (entityType,entityId,fieldName,languageCode,translatedText,translationStatus,versionNumber,approvedById,approvedAt)
       VALUES ('PMV2_CHECKLIST_ITEM',${itemId},'title',${language},${text},'approved',1,${actorId},CURRENT_TIMESTAMP)`));

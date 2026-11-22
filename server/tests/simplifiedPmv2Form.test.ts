@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { SimplifiedPlanForm, type SimplifiedPlanFormProps } from "../../client/src/pages/pmv2/SimplifiedPlanForm";
 const noop = async () => {};
 const props: SimplifiedPlanFormProps = {
-  sites: [{ id: 1, name: "الملقا" }], sections: [{ id: 2, siteId: 1, name: "فودوزو" }], teams: [{ id: 3, name: "الكهرباء" }], dir: "rtl", label: text => text,
+  sites: [{ id: 1, name: "الملقا" }], sections: [{ id: 2, siteId: 1, name: "فودوزو" }], teams: [{ id: 3, name: "الكهرباء" }], dir: "rtl", language: "ar", label: text => text,
   savePlan: async () => ({ id: 4 }), translate: async () => ({ en: "Inspection", ur: "معائنہ" }), addSubtask: noop, activate: noop, pause: noop, resume: noop,
 };
 describe("simplified maintenance setup form", () => {
@@ -21,5 +21,24 @@ describe("simplified maintenance setup form", () => {
     const html = renderToStaticMarkup(createElement(SimplifiedPlanForm, { ...props, initialPlan }));
     expect(html).toContain("فحص فودوزو");
     expect(html).toContain(expected);
+  });
+
+  it("displays only the saved title for the selected language, with Arabic for older untranslated items", () => {
+    const initialPlan = {
+      id: 4, title: "فحص فودوزو", siteId: 1, sectionId: 2, teamId: 3, state: "active" as const,
+      items: [
+        { titleAr: "فحص الأسلاك", titleEn: "Check the wiring", titleUr: "تاروں کی جانچ", recurrence: { kind: "daily" as const, startDate: "2026-11-01" } },
+        { titleAr: "فحص قديم", titleEn: "", titleUr: "", recurrence: { kind: "daily" as const, startDate: "2026-11-01" } },
+      ],
+    };
+    const titles = { ar: "فحص الأسلاك", en: "Check the wiring", ur: "تاروں کی جانچ" } as const;
+    for (const language of ["ar", "en", "ur"] as const) {
+      const html = renderToStaticMarkup(createElement(SimplifiedPlanForm, { ...props, initialPlan, language }));
+      expect(html).toContain(`<bdi>${titles[language]}</bdi>`);
+      expect(html).toContain("<bdi>فحص قديم</bdi>");
+      for (const title of Object.values(titles)) {
+        if (title !== titles[language]) expect(html).not.toContain(`<bdi>${title}</bdi>`);
+      }
+    }
   });
 });

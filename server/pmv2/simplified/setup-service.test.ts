@@ -43,8 +43,11 @@ describe("simplified PMV2 setup service", () => {
     await expect(f.service.create(owner, { ...base, teamId: 99 })).rejects.toThrow();
     expect(f.state.plan).toBeNull();
   });
-  it("keeps a new plan a draft until at least one valid subtask exists", async () => {
+  it("keeps a new plan a draft until at least one fully translated subtask exists", async () => {
     const f = fixture(); const { id } = await f.service.create(owner, base);
+    await expect(f.service.addItem(owner, id, { ...item, titleEn: " " })).rejects.toThrow("عنوان المهمة بالإنجليزية");
+    await expect(f.service.addItem(owner, id, { ...item, titleUr: "" })).rejects.toThrow("عنوان المهمة بالأوردو");
+    expect(f.state.items).toHaveLength(0);
     await expect(f.service.activate(owner, id)).rejects.toThrow();
     await f.service.addItem(owner, id, item); await f.service.activate(owner, id);
     expect(f.state.plan?.state).toBe("active");

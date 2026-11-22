@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { SimplifiedPlanForm, type LoadedSimplifiedPlan } from "./SimplifiedPlanForm";
 
 export function SimplifiedSetupTab() {
-  const { p, dir } = usePmv2Text();
+  const { p, dir, language } = usePmv2Text();
   const utils = trpc.useUtils();
   const [selected, setSelected] = useState<number | null>(null);
   const [beforeId, setBeforeId] = useState<number | undefined>();
@@ -44,7 +44,7 @@ export function SimplifiedSetupTab() {
       {!loading && !error && (selected === null || plan.data) && <SimplifiedPlanForm key={selected ?? `new-${formVersion}`}
         sites={(sites.data ?? []).map(x => ({ id: x.id, name: x.name }))}
         sections={(sections.data ?? []).map(x => ({ id: x.id, siteId: x.siteId, name: x.name }))}
-        teams={teams.data ?? []} dir={dir} label={text => p(text)}
+        teams={teams.data ?? []} dir={dir} language={language} label={text => p(text)}
         initialPlan={selected !== null ? plan.data as unknown as LoadedSimplifiedPlan : undefined}
         savePlan={async input => { const result=await create.mutateAsync(input); await changed(); return result; }}
         translate={async title => translate.mutateAsync({title})}

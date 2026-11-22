@@ -1,4 +1,5 @@
 import React, { useRef, useState } from "react";
+import type { SupportedLanguage } from "@/contexts/LanguageContext";
 
 export type SimplifiedPlanOption = { id: number; name: string };
 export type SimplifiedSectionOption = SimplifiedPlanOption & { siteId: number };
@@ -15,6 +16,7 @@ export type SimplifiedPlanFormProps = {
   sections: SimplifiedSectionOption[];
   teams: SimplifiedPlanOption[];
   dir: "rtl" | "ltr";
+  language: SupportedLanguage;
   label: (arabic: string) => string;
   initialPlan?: LoadedSimplifiedPlan;
   savePlan: (input: SimplifiedPlanDetails) => Promise<{ id: number }>;
@@ -61,7 +63,15 @@ export function SimplifiedPlanForm(props: SimplifiedPlanFormProps) {
   }
   const validBase = !!title.trim() && !!props.sites.find(x => x.id === Number(siteId)) && !!props.sections.find(x => x.id === Number(sectionId) && x.siteId === Number(siteId)) && !!props.teams.find(x => x.id === Number(teamId));
   const validCount = Number.isSafeInteger(Number(interval)) && Number(interval) >= 1 && Number(interval) <= 3650;
-  const validItem = !!titleAr.trim() && !!startDate && (kind !== "custom" || validCount) && (kind !== "monthly" || (Number.isInteger(Number(monthDay)) && Number(monthDay) >= 1 && Number(monthDay) <= 31));
+  const completeTitles = Boolean(titleAr.trim() && titleEn.trim() && titleUr.trim());
+  const validMonthDay = Number.isInteger(Number(monthDay)) && Number(monthDay) >= 1 && Number(monthDay) <= 31;
+  const validItem = completeTitles && !!startDate &&
+    (kind !== "custom" || validCount) && (kind !== "monthly" || validMonthDay);
+  function savedTitle(item: SimplifiedSubtask) {
+    if (props.language === "en") return item.titleEn || item.titleAr;
+    if (props.language === "ur") return item.titleUr || item.titleAr;
+    return item.titleAr;
+  }
   function recurrence(): SimplifiedRecurrence {
     if (kind === "daily") return { kind, startDate };
     if (kind === "weekly") return { kind, startDate, weekday: Number(weekday) };
@@ -82,14 +92,18 @@ export function SimplifiedPlanForm(props: SimplifiedPlanFormProps) {
     </section>
     {planId !== null && <section className="space-y-4 rounded-lg border bg-background p-4">
       <h2 className="font-semibold">{p("المهام الفرعية")}</h2>
-      {saved.length > 0 && <ol className="list-inside list-decimal space-y-1">{saved.map((item, index) => <li key={index} className="text-sm">{item.titleAr}</li>)}</ol>}
+      {saved.length > 0 && <ol className="list-inside list-decimal space-y-1">
+        {saved.map((item, index) => (
+          <li key={index} className="text-sm"><bdi>{savedTitle(item)}</bdi></li>
+        ))}
+      </ol>}
       {planState === "draft" && !itemOpen && <button type="button" className={buttonClass} disabled={busy} onClick={() => setItemOpen(true)}>{p("إنشاء مهمة فرعية")}</button>}
       {planState === "draft" && itemOpen && <div className="space-y-3 rounded-md border p-3">
-        <label className={fieldClass}>{p("المهمة بالعربية")}<input dir="rtl" className={inputClass} value={titleAr} maxLength={300} disabled={busy} onChange={e => setTitleAr(e.target.value)} /></label>
+        <label className={fieldClass}>{p("المهمة بالعربية")}<input dir="rtl" className={inputClass} value={titleAr} maxLength={300} required disabled={busy} onChange={e => setTitleAr(e.target.value)} /></label>
         <button type="button" className={buttonClass} disabled={busy || !titleAr.trim()} onClick={() => void run(async () => { const result = await props.translate(titleAr.trim()); setTitleEn(result.en); setTitleUr(result.ur); }, "تعذرت الترجمة. يرجى المحاولة مجددًا أو كتابة الترجمة يدويًا.")}>{p("ترجمة")}</button>
         <div className="grid gap-3 md:grid-cols-2">
-          <label className={fieldClass}>{p("المهمة بالإنجليزية")}<input dir="ltr" className={inputClass} value={titleEn} maxLength={300} disabled={busy} onChange={e => setTitleEn(e.target.value)} /></label>
-          <label className={fieldClass}>{p("المهمة بالأوردو")}<input dir="rtl" className={inputClass} value={titleUr} maxLength={300} disabled={busy} onChange={e => setTitleUr(e.target.value)} /></label>
+          <label className={fieldClass}>{p("المهمة بالإنجليزية")}<input dir="ltr" className={inputClass} value={titleEn} maxLength={300} required disabled={busy} onChange={e => setTitleEn(e.target.value)} /></label>
+          <label className={fieldClass}>{p("المهمة بالأوردو")}<input dir="rtl" className={inputClass} value={titleUr} maxLength={300} required disabled={busy} onChange={e => setTitleUr(e.target.value)} /></label>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <label className={fieldClass}>{p("تاريخ البداية")}<input type="date" className={inputClass} value={startDate} disabled={busy} onChange={e => setStartDate(e.target.value)} /></label>
@@ -98,6 +112,7 @@ export function SimplifiedPlanForm(props: SimplifiedPlanFormProps) {
         {kind === "weekly" && <label className={fieldClass}>{p("يوم الأسبوع")}<select className={inputClass} value={weekday} disabled={busy} onChange={e => setWeekday(e.target.value)}>{weekdays.map((day, index) => <option key={day} value={index}>{p(day)}</option>)}</select></label>}
         {kind === "monthly" && <label className={fieldClass}>{p("يوم الشهر")}<input className={inputClass} type="number" min={1} max={31} value={monthDay} disabled={busy} onChange={e => setMonthDay(e.target.value)} /></label>}
         {kind === "custom" && <div className="grid gap-3 md:grid-cols-2"><label className={fieldClass}>{p("يتكرر كل")}<input className={inputClass} type="number" min={1} max={3650} value={interval} disabled={busy} onChange={e => setInterval(e.target.value)} /></label><label className={fieldClass}>{p("وحدة التكرار")}<select className={inputClass} value={unit} disabled={busy} onChange={e => setUnit(e.target.value as typeof unit)}><option value="day">{p("يوم")}</option><option value="week">{p("أسبوع")}</option><option value="month">{p("شهر")}</option></select></label></div>}
+        {!completeTitles && <p className="text-sm text-muted-foreground">{p("أكمل عنوان المهمة باللغات الثلاث للحفظ.")}</p>}
         <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={busy || !validItem} onClick={() => void run(async () => { const item = { titleAr: titleAr.trim(), titleEn: titleEn.trim(), titleUr: titleUr.trim(), recurrence: recurrence() }; await props.addSubtask(planId, item); setSaved(previous => [...previous, item]); setTitleAr(""); setTitleEn(""); setTitleUr(""); setItemOpen(false); }, "تعذر حفظ المهمة الفرعية. يرجى المحاولة مجددًا.")}>{p("حفظ المهمة الفرعية")}</button><button type="button" className="rounded-md border px-4 py-2 text-sm" disabled={busy} onClick={() => setItemOpen(false)}>{p("إلغاء")}</button></div>
       </div>}
       {planState === "draft" && <button type="button" className={buttonClass} disabled={busy || itemOpen || saved.length === 0} onClick={() => void run(async () => { await props.activate(planId); setPlanState("active"); }, "تعذر تفعيل المهمة الرئيسية. يرجى المحاولة مجددًا.")}>{p("حفظ نهائي وتفعيل")}</button>}

@@ -35,10 +35,10 @@ function validateDate(date: string) {
   const parsed = new Date(`${date}T00:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) throw new Error("تاريخ العملية غير صالح");
 }
-function title(value: string, label: string, required: boolean, max: number) {
+function requiredTitle(value: string, label: string, max: number) {
   if (typeof value !== "string") throw new Error(`${label} غير صالح`);
   const result = value.trim();
-  if ((required && !result) || result.length > max) throw new Error(`${label} غير صالح`);
+  if (!result || result.length > max) throw new Error(`${label} غير صالح`);
   return result;
 }
 
@@ -46,7 +46,7 @@ export class SimplifiedSetupService {
   constructor(private readonly repository: SimplifiedSetupRepository, private readonly today: () => string) {}
   async create(actor: SetupActor, input: SetupBase) {
     requireActor(actor);
-    const data = { ...input, title: title(input.title, "عنوان المهمة الرئيسية", true, 200) };
+    const data = { ...input, title: requiredTitle(input.title, "عنوان المهمة الرئيسية", 200) };
     requireId(data.siteId); requireId(data.sectionId); requireId(data.teamId);
     return this.repository.transaction(async tx => {
       if (!await tx.validateActor(actor)) throw new Error("ليس لديك صلاحية لإدارة الصيانة المجدولة");
@@ -60,7 +60,12 @@ export class SimplifiedSetupService {
   }
   async addItem(actor: SetupActor, planId: number, input: SetupItem) {
     requireActor(actor); requireId(planId);
-    const item = { ...input, titleAr: title(input.titleAr, "عنوان المهمة بالعربية", true, 300), titleEn: title(input.titleEn, "العنوان الإنجليزي", false, 300), titleUr: title(input.titleUr, "العنوان الأردي", false, 300) };
+    const item = {
+      ...input,
+      titleAr: requiredTitle(input.titleAr, "عنوان المهمة بالعربية", 300),
+      titleEn: requiredTitle(input.titleEn, "عنوان المهمة بالإنجليزية", 300),
+      titleUr: requiredTitle(input.titleUr, "عنوان المهمة بالأوردو", 300),
+    };
     const schedule = buildSimplifiedSchedule(item.recurrence);
     return this.repository.transaction(async tx => {
       if (!await tx.validateActor(actor)) throw new Error("ليس لديك صلاحية لإدارة الصيانة المجدولة");

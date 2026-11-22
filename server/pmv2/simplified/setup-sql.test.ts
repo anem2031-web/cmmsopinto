@@ -231,8 +231,17 @@ describe("simplified PMV2 management API integration", () => {
     const user={id:7,role:"owner",isActive:1};const caller=api.createCaller({user,authenticatedUser:user} as any).pmv2.simplified;
     expect(await caller.status()).toEqual({enabled:true,legacyExists:false});
     expect((await caller.teams()).map(x=>x.name)).toContain("فريق الكهرباء");
-    const {id}=await caller.create(base);await caller.addItem({planId:id,...subtask});
-    const loaded=await caller.get({id});expect(loaded.items[0]).toMatchObject({titleAr:"فحص الكهرباء",titleEn:"Inspect electricity",titleUr:"بجلی کا معائنہ"});
+    const { id } = await caller.create(base);
+    const input = { planId: id, ...subtask };
+    await expect(caller.addItem({ ...input, titleEn: " " })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(caller.addItem({ ...input, titleUr: "" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(f.count("pmv2_checklist_items")).toBe(0);
+    expect(f.count("entity_translations")).toBe(0);
+    await caller.addItem({ ...input, titleEn: " Check the electrical wiring ", titleUr: " بجلی کی تاروں کی جانچ " });
+    const loaded = await caller.get({ id });
+    expect(loaded.items[0]).toMatchObject({
+      titleAr: "فحص الكهرباء", titleEn: "Check the electrical wiring", titleUr: "بجلی کی تاروں کی جانچ",
+    });
     expect((await caller.list()).items[0]).toMatchObject({id,state:"draft"});
     expect((await caller.status()).legacyExists).toBe(false);
     f.db.exec("INSERT INTO pmv2_teams(id,specialtyId,code,warehouseId,isActive) VALUES(999,999,'LEGACY',5,1)");
@@ -256,6 +265,7 @@ describe("technician receives a translated authorized task", () => {
     const taskId=Number(f.db.prepare("SELECT id FROM pmv2_tasks").get()?.id);
     async function authorized(userId:number){const q=sql`SELECT i.id FROM pmv2_task_items i INNER JOIN pmv2_tasks ON pmv2_tasks.id=i.taskId INNER JOIN users AS pmv2ExecutionActor ON pmv2ExecutionActor.id=${userId} WHERE pmv2_tasks.id=${taskId} AND ${pmv2ExecutionTeamCondition(userId,pmv2Tasks.teamId)}`;const value=await f.tx.execute(q);return (value as any)[0].map((x:any)=>Number(x.id));}
     const own=await authorized(6);expect(own).toHaveLength(1);
+    expect(f.db.prepare("SELECT titleSnapshot FROM pmv2_task_items WHERE id=?").get(own[0])?.titleSnapshot).toBe("فحص الكهرباء");
     expect((await loadAuthorizedTaskItemTitles(f.tx,own,"en")).get(own[0])).toBe("Inspect electricity");
     expect((await loadAuthorizedTaskItemTitles(f.tx,own,"ur")).get(own[0])).toBe("بجلی کا معائنہ");
     expect(await authorized(8)).toEqual([]); f.db.close();

@@ -103,9 +103,24 @@ export function createPmv2SimplifiedRouter(deps: Deps) {
     create: pmv2ManagementProcedure.input(z.object({ title: z.string().trim().min(1).max(200), siteId: z.number().int().positive(), sectionId: z.number().int().positive(), teamId: z.number().int().positive() }).strict()).mutation(async ({ ctx, input }) => {
       const actor=auth(ctx); enabled(); try { return await deps.service.create(actor,input); } catch { throw mutationError(); }
     }),
-    addItem: pmv2ManagementProcedure.input(z.object({ planId: z.number().int().positive(), titleAr: z.string().trim().min(1).max(300), titleEn: z.string().trim().max(300), titleUr: z.string().trim().max(300), recurrence }).strict()).mutation(async ({ ctx,input }) => {
-      const actor=auth(ctx); enabled(); try { const { planId,...item }=input; return await deps.service.addItem(actor,planId,item); } catch { throw mutationError(); }
-    }),
+    addItem: pmv2ManagementProcedure
+      .input(z.object({
+        planId: z.number().int().positive(),
+        titleAr: z.string().trim().min(1).max(300),
+        titleEn: z.string().trim().min(1, "أدخل عنوان المهمة بالإنجليزية").max(300),
+        titleUr: z.string().trim().min(1, "أدخل عنوان المهمة بالأوردو").max(300),
+        recurrence,
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = auth(ctx);
+        enabled();
+        const { planId, ...item } = input;
+        try {
+          return await deps.service.addItem(actor, planId, item);
+        } catch {
+          throw mutationError();
+        }
+      }),
     activate: pmv2ManagementProcedure.input(z.object({ planId:z.number().int().positive() }).strict()).mutation(async ({ ctx,input }) => { const actor=auth(ctx);enabled();try{return await deps.service.activate(actor,input.planId)}catch{throw mutationError()} }),
     pause: pmv2ManagementProcedure.input(z.object({ planId:z.number().int().positive() }).strict()).mutation(async ({ ctx,input }) => { const actor=auth(ctx);enabled();try{return await deps.service.pause(actor,input.planId)}catch{throw mutationError()} }),
     resume: pmv2ManagementProcedure.input(z.object({ planId:z.number().int().positive() }).strict()).mutation(async ({ ctx,input }) => { const actor=auth(ctx);enabled();try{return await deps.service.resume(actor,input.planId)}catch{throw mutationError()} }),

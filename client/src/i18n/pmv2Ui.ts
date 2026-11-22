@@ -20,6 +20,7 @@ const M: Record<string, Entry> = {
   "ترجمة": { en: "Translate", ur: "ترجمہ کریں" },
   "المهمة بالإنجليزية": { en: "Task in English", ur: "کام انگریزی میں" },
   "المهمة بالأوردو": { en: "Task in Urdu", ur: "کام اردو میں" },
+  "أكمل عنوان المهمة باللغات الثلاث للحفظ.": { en: "Enter the task title in all three languages to save.", ur: "محفوظ کرنے کے لیے کام کا عنوان تینوں زبانوں میں درج کریں۔" },
   "تاريخ البداية": { en: "Start date", ur: "شروع کی تاریخ" },
   "تكرار المهمة": { en: "Task recurrence", ur: "کام کی تکرار" },
   "يومي": { en: "Daily", ur: "روزانہ" },
