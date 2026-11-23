@@ -4,6 +4,7 @@ import { TeamTicketError } from "../../../shared/maintenance-team-tickets/model"
 import { materialStockUnitApproval, materialSupplyRemaining } from "../../../shared/maintenance-team-tickets/material-routing";
 import { ticketTeamQueueScope } from "./assignment-read-scope";
 import { loadTeamReportMedia } from "../../maintenance-team-tickets/report-media";
+import { queueTeamTicketTranslations, type TeamTicketTranslationSource } from "../../maintenance-team-tickets/ticket-translations";
 import type {
   Snapshot,
   MaterialNeed,
@@ -62,6 +63,8 @@ function team(r: any): AssignmentTeam {
   };
 }
 class Transaction implements TeamAssignmentTransaction {
+  ticketToTranslate?: TeamTicketTranslationSource;
+
   constructor(
     private readonly db: TeamDatabaseTransaction,
     private readonly tickets: TicketPromotionPort
@@ -230,6 +233,7 @@ class Transaction implements TeamAssignmentTransaction {
     await this.db.execute(
       sql`INSERT INTO audit_logs (userId,action,entityType,entityId,newValues,ipAddress,userAgent) VALUES (${actor.id},'assign_ticket_maintenance_team','ticket',${parent.id},${JSON.stringify({ taskId: task.id, ticketId, ticketItemId: itemId, assignmentId, teamId: selected.id, warehouseId: selected.warehouseId, ticketNumber })},${actor.ipAddress ?? null},${actor.userAgent ?? null})`
     );
+    this.ticketToTranslate = { ticketId, userId: actor.id, title, description: task.description };
     return { ticketId, ticketNumber, assignmentId, alreadyExisting: false };
   }
 }
@@ -238,11 +242,22 @@ export class SqlTicketTeamAssignmentRepository implements TeamAssignmentReposito
     private readonly load: () => Promise<{
       db: TeamDatabase;
       tickets: TicketPromotionPort;
-    }> = dependencies
+    }> = dependencies,
+    private readonly enqueueTranslations = queueTeamTicketTranslations,
   ) {}
   async transaction<T>(work: (tx: TeamAssignmentTransaction) => Promise<T>) {
     const { db, tickets } = await this.load();
-    return db.transaction(tx => work(new Transaction(tx, tickets)));
+    const { result, ticketToTranslate } = await db.transaction(async tx => {
+      const assignment = new Transaction(tx, tickets);
+      const result = await work(assignment);
+      return { result, ticketToTranslate: assignment.ticketToTranslate };
+    });
+    if (ticketToTranslate) {
+      void this.enqueueTranslations(ticketToTranslate).catch(error =>
+        console.error("[Ticket team] Could not queue sub-ticket translations", ticketToTranslate.ticketId, error)
+      );
+    }
+    return result;
   }
   async candidates() {
     const { db } = await this.load();

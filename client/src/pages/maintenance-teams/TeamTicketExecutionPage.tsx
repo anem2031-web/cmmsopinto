@@ -19,10 +19,12 @@ export default function TeamTicketExecutionPage() {
   const search = useSearch();
   const assignmentId = Number(new URLSearchParams(search).get("teamExecution"));
   const allowed = user?.isActive === 1 && canReadTicketTeamExecution(user.role);
-  const queue = trpc.ticketTeamAssignments.queue.useQuery(undefined, {
+  const technician = user?.role === "technician";
+  const queue = trpc.ticketTeamAssignments.queue.useQuery(technician ? { language } : undefined, {
     enabled:
       !!allowed && Number.isSafeInteger(assignmentId) && assignmentId > 0,
     retry: false,
+    refetchInterval: technician ? 30_000 : false,
   });
   const [busy, setBusy] = useState(false);
   useEffect(() => {

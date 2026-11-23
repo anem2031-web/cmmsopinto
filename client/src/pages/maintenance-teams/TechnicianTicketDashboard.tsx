@@ -27,7 +27,7 @@ export function TechnicianTicketDashboard() {
   useEffect(() => { writeHistoryEntryState("teamTicketBucket", bucket); }, [bucket]);
   const utils = trpc.useUtils();
   const allowed = user?.role === "technician" && user.isActive === 1;
-  const queue = trpc.ticketTeamAssignments.queue.useQuery(undefined, {
+  const queue = trpc.ticketTeamAssignments.queue.useQuery({ language }, {
     enabled: allowed,
     retry: false,
     refetchInterval: 30_000,

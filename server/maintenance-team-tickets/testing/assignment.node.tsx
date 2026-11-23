@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { TicketTeamAssignmentService } from "../assignment/service";
+import type { TeamTicketTranslationSource } from "../ticket-translations";
 import { SqlTicketTeamAssignmentRepository, type TicketPromotionPort } from "../../routers/maintenance-teams/assignment.repository";
 import { createTicketTeamAssignmentRouter } from "../../routers/maintenance-teams/assignment.router";
 import { router } from "../../routers/_shared/procedures";
@@ -142,12 +143,19 @@ function sqlFixture(failAt = "") {
     });
     tail = run.catch(() => {}); return run;
   } };
-  const repo = new SqlTicketTeamAssignmentRepository(async () => ({ db, tickets: port }));
-  return { repo, state, queries, lockOrder, committed: () => committed, rolledBack: () => rolledBack };
+  const queuedTranslations: TeamTicketTranslationSource[] = [];
+  const repo = new SqlTicketTeamAssignmentRepository(async () => ({ db, tickets: port }), async ticket => {
+    if (!committed.some(query => query.includes("INSERT INTO audit_logs"))) {
+      throw new Error("Translation was scheduled before the assignment committed");
+    }
+    queuedTranslations.push(ticket);
+  });
+  return { repo, state, queries, lockOrder, queuedTranslations, committed: () => committed, rolledBack: () => rolledBack };
 }
 test("SQL adapter writes original child/item plus team link/history/audit within one transaction", async () => {
   const f = sqlFixture(); const result = await new TicketTeamAssignmentService(f.repo).assign(actor, input);
   assert.equal(result.assignmentId, 33); assert.equal(f.state.promoted, true);
+  assert.deepEqual(f.queuedTranslations, [{ ticketId: 11, userId: actor.id, title: "إصلاح", description: "افحص الكهرباء" }]);
   assert.deepEqual(f.lockOrder, ["parent", "department", "task", "team"]);
   assert.ok(f.committed().some(q => q.includes("INSERT INTO ticket_team_assignments")));
   assert.ok(f.committed().some(q => q.includes("INSERT INTO audit_logs")));
@@ -163,12 +171,14 @@ test("SQL adapter failures roll back sequence, ticket, item, task and links incl
   for (const table of ["item", "INSERT INTO ticket_team_assignments", "INSERT INTO ticket_status_history", "INSERT INTO audit_logs"]) {
     const f = sqlFixture(table); await assert.rejects(new TicketTeamAssignmentService(f.repo).assign(actor, input));
     assert.equal(f.rolledBack(), true); assert.deepEqual(f.state, { sequence: 0, child: 0, item: 0, promoted: false }); assert.deepEqual(f.committed(), []);
+    assert.deepEqual(f.queuedTranslations, []);
   }
 });
 test("parallel requests serialize on the existing promotion locks and create only one sub-ticket", async () => {
   const f = sqlFixture(); const service = new TicketTeamAssignmentService(f.repo);
   const results = await Promise.all([service.assign(actor, input), service.assign(actor, input)]);
   assert.equal(f.state.sequence, 1); assert.equal(results.filter(r => r.alreadyExisting).length, 1);
+  assert.equal(f.queuedTranslations.length, 1);
   assert.equal(f.queries.filter(q => q.text.startsWith("INSERT INTO ticket_team_assignments")).length, 1);
 });
 test("queue SQL scopes technicians by membership and lets authorized managers view all teams", async () => {

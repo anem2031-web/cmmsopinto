@@ -3,6 +3,7 @@ import { z } from "zod";
 import { router, protectedProcedure } from "../_shared/procedures";
 import { TeamTicketError } from "../../../shared/maintenance-team-tickets/model";
 import type { TicketTeamAssignmentService } from "../../maintenance-team-tickets/assignment/service";
+import { localizeTeamTicketQueue } from "../../maintenance-team-tickets/ticket-translations";
 
 async function result<T>(work: () => Promise<T>) {
   try { return await work(); } catch (e) {
@@ -17,7 +18,15 @@ const actor = (ctx: any) => ({ id: ctx.user.id, role: ctx.user.role, active: ctx
 export function createTicketTeamAssignmentRouter(service: TicketTeamAssignmentService) {
   return router({
     candidates: protectedProcedure.query(({ ctx }) => result(() => service.candidates(actor(ctx)))),
-    queue: protectedProcedure.query(({ ctx }) => result(() => service.queue(actor(ctx)))),
+    queue: protectedProcedure
+      .input(z.object({ language: z.enum(["ar", "en", "ur"]) }).strict().optional())
+      .query(({ ctx, input }) => result(async () => {
+        const currentActor = actor(ctx);
+        const tickets = await service.queue(currentActor);
+        return currentActor.role === "technician" && input
+          ? localizeTeamTicketQueue(tickets, input.language)
+          : tickets;
+      })),
     warehouseRequests: protectedProcedure.input(z.object({ search: z.string().max(200).optional() }).optional()).query(({ ctx, input }) => result(() => service.warehouseRequests(actor(ctx), input?.search))),
     assign: protectedProcedure.input(z.object({ ticketId: z.number().int().positive(), taskId: z.number().int().positive(), teamId: z.number().int().positive(), inspectionMinutes: z.number().int().min(1).max(525600) }).strict())
       .mutation(({ ctx, input }) => result(() => service.assign(actor(ctx), input))),
