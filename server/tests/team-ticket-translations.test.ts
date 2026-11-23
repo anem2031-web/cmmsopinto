@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AssignedTeamTicket } from "../../shared/maintenance-team-tickets/assignment";
 import { localizeTeamTicketQueue, queueTeamTicketTranslations } from "../maintenance-team-tickets/ticket-translations";
+import { TicketTeamAssignmentService } from "../maintenance-team-tickets/assignment/service";
+import { createTicketTeamAssignmentRouter } from "../routers/maintenance-teams/assignment.router";
+import { router } from "../routers/_shared/procedures";
 
 const mocks = vi.hoisted(() => ({ queueTranslation: vi.fn(), getBatchTranslations: vi.fn() }));
 vi.mock("../services/translation/translationEngine", () => mocks);
@@ -48,6 +51,40 @@ describe("team ticket translations", () => {
 
   it("does not read translations when the technician has no scoped tickets", async () => {
     expect(await localizeTeamTicketQueue([], "en")).toEqual([]);
+    expect(mocks.getBatchTranslations).not.toHaveBeenCalled();
+  });
+
+  it("localizes the ticket detail for permitted roles through the existing queue", async () => {
+    const repository = {
+      queue: vi.fn().mockResolvedValue([ticket]),
+      candidates: vi.fn(),
+      transaction: vi.fn(),
+    };
+    const app = router({
+      ticketTeamAssignments: createTicketTeamAssignmentRouter(new TicketTeamAssignmentService(repository)),
+    });
+    const caller = (role: string) =>
+      app.createCaller({ user: { id: 7, role, isActive: 1 } } as Parameters<typeof app.createCaller>[0]);
+
+    mocks.getBatchTranslations.mockResolvedValue({
+      11: {
+        title: { text: "Motor repair", status: "completed" },
+        description: { text: "Inspect the power cable", status: "completed" },
+      },
+    });
+    for (const role of ["technician", "general_maintenance_manager", "admin"]) {
+      expect(await caller(role).ticketTeamAssignments.queue({ language: "en" })).toEqual([
+        { ...ticket, title: "Motor repair", description: "Inspect the power cable" },
+      ]);
+    }
+
+    expect(await caller("admin").ticketTeamAssignments.queue()).toEqual([ticket]);
+    expect(mocks.getBatchTranslations).toHaveBeenCalledTimes(3);
+
+    repository.queue.mockClear();
+    mocks.getBatchTranslations.mockClear();
+    await expect(caller("accountant").ticketTeamAssignments.queue({ language: "en" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(repository.queue).not.toHaveBeenCalled();
     expect(mocks.getBatchTranslations).not.toHaveBeenCalled();
   });
 });

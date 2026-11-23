@@ -23,9 +23,7 @@ export function createTicketTeamAssignmentRouter(service: TicketTeamAssignmentSe
       .query(({ ctx, input }) => result(async () => {
         const currentActor = actor(ctx);
         const tickets = await service.queue(currentActor);
-        return currentActor.role === "technician" && input
-          ? localizeTeamTicketQueue(tickets, input.language)
-          : tickets;
+        return input ? localizeTeamTicketQueue(tickets, input.language) : tickets;
       })),
     warehouseRequests: protectedProcedure.input(z.object({ search: z.string().max(200).optional() }).optional()).query(({ ctx, input }) => result(() => service.warehouseRequests(actor(ctx), input?.search))),
     assign: protectedProcedure.input(z.object({ ticketId: z.number().int().positive(), taskId: z.number().int().positive(), teamId: z.number().int().positive(), inspectionMinutes: z.number().int().min(1).max(525600) }).strict())
