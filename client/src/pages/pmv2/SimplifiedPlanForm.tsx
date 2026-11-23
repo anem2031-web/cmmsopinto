@@ -44,6 +44,7 @@ export type SimplifiedPlanFormProps = {
   activate: (planId: number) => Promise<void>;
   pause: (planId: number) => Promise<void>;
   resume: (planId: number) => Promise<void>;
+  deletePlan?: (planId: number) => Promise<void>;
 };
 
 const inputClass = "mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm";
@@ -159,6 +160,7 @@ export function SimplifiedPlanForm(props: SimplifiedPlanFormProps) {
   const [editor, setEditor] = useState<ItemEditor | null>(null);
   const [saved, setSaved] = useState<SavedSubtask[]>(props.initialPlan?.items ?? []);
   const [disableCandidate, setDisableCandidate] = useState<SavedSubtask | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [planState, setPlanState] = useState<"draft" | "active" | "paused">(props.initialPlan?.state ?? "draft");
@@ -244,16 +246,34 @@ export function SimplifiedPlanForm(props: SimplifiedPlanFormProps) {
     }, "تعذر تعطيل المهمة الفرعية. يرجى المحاولة مجددًا.");
   }
 
+  function deleteMain() {
+    const remove = props.deletePlan;
+    if (planId === null || !deleteOpen || !remove) return;
+
+    return run(async () => {
+      await remove(planId);
+      setDeleteOpen(false);
+    }, "تعذر حذف المهمة الرئيسية. يرجى المحاولة مجددًا.");
+  }
+
   return <div dir={props.dir} className="space-y-5">
-    {error && !disableCandidate && <div role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">{p(error)}</div>}
+    {error && !disableCandidate && !deleteOpen && <div role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">{p(error)}</div>}
     {showEffectiveNote && <p className="text-sm text-muted-foreground">{p("تسري التغييرات على المهام التي تُنشأ بعد الحفظ.")}</p>}
     <section className="space-y-3 rounded-lg border bg-background p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-semibold">{p("المهمة الرئيسية")}</h2>
-        {!editingMain && <button type="button" className={outlineButton} disabled={busy || !!editor}
-          onClick={() => { setError(""); setEditingMain(true); }}>
-          {p("تعديل المهمة الرئيسية")}
-        </button>}
+        {!editingMain && <div className="flex flex-wrap gap-2">
+          <button type="button" className={outlineButton} disabled={busy || !!editor}
+            onClick={() => { setError(""); setEditingMain(true); }}>
+            {p("تعديل المهمة الرئيسية")}
+          </button>
+          {planId !== null && props.deletePlan && (
+            <button type="button" className={`${outlineButton} text-destructive`} disabled={busy || !!editor}
+              onClick={() => { setError(""); setDeleteOpen(true); }}>
+              {p("حذف المهمة الرئيسية")}
+            </button>
+          )}
+        </div>}
       </div>
       {editingMain ? <TitleFields titles={mainTitles} maxLength={200} arabicLabel="عنوان المهمة الرئيسية" disabled={busy} label={p}
         onChange={titles => setMain(previous => ({ ...previous, title: titles.titleAr, titleEn: titles.titleEn, titleUr: titles.titleUr }))}
@@ -428,5 +448,29 @@ export function SimplifiedPlanForm(props: SimplifiedPlanFormProps) {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+    {props.deletePlan && <AlertDialog open={deleteOpen} onOpenChange={open => {
+      if (!open && !busy) {
+        setDeleteOpen(false);
+        setError("");
+      }
+    }}>
+      <AlertDialogContent dir={props.dir}>
+        <AlertDialogHeader className="sm:text-start">
+          <AlertDialogTitle>{p("حذف المهمة الرئيسية")}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {p("إذا لم يبدأ العمل على الخطة، تُحذف نهائيًا مع مهامها. إذا بدأ العمل، تتوقف الجدولة ويُلغى العمل المستقبلي الذي لم يبدأ، ويمكن إكمال المهام السابقة المفتوحة.")}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <p className="text-sm font-medium [overflow-wrap:anywhere]"><bdi>{shownMain}</bdi></p>
+        {error && <p role="alert" className="text-sm text-destructive">{p(error)}</p>}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>{p("إلغاء")}</AlertDialogCancel>
+          <AlertDialogAction className="bg-destructive text-white hover:bg-destructive/90" disabled={busy}
+            onClick={event => { event.preventDefault(); void deleteMain(); }}>
+            {p("تأكيد الحذف")}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>}
   </div>;
 }

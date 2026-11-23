@@ -2,11 +2,13 @@ import { canManagePmv2Foundation } from "../security/policy";
 import { buildSimplifiedSchedule, type SimplifiedScheduleInput } from "../checklists/simplified-recurrence";
 import { planResumeOccurrences, type ResumeOccurrence } from "../scheduler/resume-plan";
 import type { PausedScheduleItem } from "../scheduler/pause-recovery";
+import { isOwnerOrAdminRole } from "@shared/restricted-module-policy";
 
 export type SetupActor = { id: number; role: string; isActive: number };
 export type SetupPlan = { id: number; state: "draft" | "active" | "paused"; pausedOn: string | null; teamId: number; siteId: number; sectionId: number };
 export type SetupBase = { title: string; siteId: number; sectionId: number; teamId: number; titleEn?: string; titleUr?: string };
 export type SetupItem = { titleAr: string; titleEn: string; titleUr: string; recurrence: SimplifiedScheduleInput };
+export type DeleteSimplifiedPlanResult = { kind: "deleted" | "retired"; cancelledFutureTasks: number };
 export type SetupAudit = { action: string; planId: number; actorId: number; details?: unknown };
 
 /** Every method receives the SAME transactional repository instance. */
@@ -20,6 +22,7 @@ export interface SimplifiedSetupTx {
   addItem(planId: number, item: SetupItem, schedule: ReturnType<typeof buildSimplifiedSchedule>, actorId: number, effectiveOn?: string): Promise<number>;
   updateItem(planId: number, itemId: number, item: SetupItem, schedule: ReturnType<typeof buildSimplifiedSchedule>, effectiveOn: string, actorId: number): Promise<boolean>;
   disableItem(planId: number, itemId: number): Promise<boolean>;
+  deletePlan(planId: number, today: string): Promise<DeleteSimplifiedPlanResult>;
   listItems(planId: number, dates?: { from: string; to: string }): Promise<PausedScheduleItem[]>;
   /** State and generated work must be persisted atomically within this transaction. */
   generate(planId: number, date: string, occurrences: readonly ResumeOccurrence[]): Promise<void>;
@@ -149,6 +152,26 @@ export class SimplifiedSetupService {
       if (!plan || !await tx.disableItem(planId, itemId)) throw new Error("المهمة الفرعية غير متاحة ضمن هذه الخطة");
       await tx.audit({ action: "simplified_item_disabled", planId, actorId: actor.id, details: { id: itemId, effectiveOn } });
       return { id: itemId };
+    });
+  }
+  async deletePlan(actor: SetupActor, planId: number) {
+    requireActor(actor);
+    if (!isOwnerOrAdminRole(actor.role)) throw new Error("حذف الخطة متاح للمالك ومدير النظام فقط");
+    requireId(planId);
+    return this.repository.transaction(async tx => {
+      if (!await tx.validateActor(actor)) throw new Error("ليس لديك صلاحية لحذف الخطة");
+      const plan = await tx.lockPlan(planId);
+      if (!plan) throw new Error("المهمة الرئيسية غير موجودة");
+      const today = this.today();
+      validateDate(today);
+      const result = await tx.deletePlan(planId, today);
+      await tx.audit({
+        action: result.kind === "deleted" ? "simplified_plan_deleted" : "simplified_plan_retired",
+        planId,
+        actorId: actor.id,
+        details: { ...result, previousState: plan.state, effectiveOn: today },
+      });
+      return result;
     });
   }
   async activate(actor: SetupActor, planId: number) {

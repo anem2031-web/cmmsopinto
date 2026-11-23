@@ -1,8 +1,8 @@
 /**
  * Owner/admin-only modules and independent invoice receipt.
  *
- * This policy intentionally does not include PM V2 (/scheduled-maintenance or
- * pmv2.*). The independent receipt entry is distinct from purchase-order
+ * PM V2 management retains its own role policy. Only simplified plan deletion
+ * is owner/admin-only here. The independent receipt is distinct from purchase-order
  * receiving, which retains its existing warehouse permissions.
  */
 export function isOwnerOrAdminRole(role?: string | null): boolean {
@@ -22,6 +22,7 @@ export function isOwnerAdminOnlyPage(rawPath: string): boolean {
 export function isOwnerAdminOnlyRpc(path: string): boolean {
   return path === "achievement" || path.startsWith("achievement.")
     || path === "warehouseReceiptsV2.receiveStandaloneV2"
+    || path === "pmv2.simplified.deletePlan"
     || path === "catalogIntegrationTokens" || path.startsWith("catalogIntegrationTokens.")
     || path === "construction" || path.startsWith("construction.")
     || path === "preventive" || path.startsWith("preventive.");

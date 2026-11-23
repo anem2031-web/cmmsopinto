@@ -19,6 +19,7 @@ function fixture() {
       revisePlan: async () => {},
       updateItem: async () => false,
       disableItem: async () => false,
+      deletePlan: async () => ({ kind: "deleted", cancelledFutureTasks: 0 }),
       listItems: async () => draft.items,
       generate: async () => {},
       activate: async () => { draft.plan!.state = "active"; },

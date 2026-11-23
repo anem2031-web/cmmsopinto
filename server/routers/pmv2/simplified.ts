@@ -4,6 +4,7 @@ import { z } from "zod";
 import { router } from "../_shared/procedures";
 import { pmv2ManagementProcedure } from "../../pmv2/security/procedures";
 import { canManagePmv2Foundation } from "../../pmv2/security/policy";
+import { isOwnerOrAdminRole } from "@shared/restricted-module-policy";
 import { isPmv2SimplifiedEnabled } from "../../pmv2/simplified/feature";
 import { SimplifiedSetupService, type SetupActor } from "../../pmv2/simplified/setup-service";
 import { SimplifiedSqlRepository } from "../../pmv2/simplified/setup-repository";
@@ -65,7 +66,7 @@ function planRowsSql(condition: SQL, limit: 1 | 51) {
     WITH plan_page AS (
       SELECT programId,state,siteId,sectionId
       FROM pmv2_simplified_plans
-      ${condition}
+      WHERE state<>'retired' ${condition}
       ORDER BY programId DESC LIMIT ${limit}
     ), latest_revisions AS (
       SELECT r.planId,MAX(r.revisionNumber) AS revisionNumber
@@ -109,7 +110,7 @@ export function createPmv2SimplifiedRouter(deps: Deps) {
   return router({
     status: pmv2ManagementProcedure.query(async ({ ctx }) => {
       const actor=auth(ctx);
-      if (!deps.enabled()) return { enabled: false, legacyExists: false };
+      if (!deps.enabled()) return { enabled: false, legacyExists: false, canDelete: false };
       const db=await liveDb(deps,actor);
       const found=resultRows(await db.execute(sql`SELECT (
         EXISTS(SELECT 1 FROM pmv2_programs p WHERE NOT EXISTS (SELECT 1 FROM pmv2_simplified_plans s WHERE s.programId=p.id)
@@ -118,7 +119,11 @@ export function createPmv2SimplifiedRouter(deps: Deps) {
         OR EXISTS(SELECT 1 FROM pmv2_specialties sp WHERE NOT EXISTS (SELECT 1 FROM pmv2_teams t INNER JOIN pmv2_unified_team_links l ON l.pmv2TeamId=t.id WHERE t.specialtyId=sp.id))
         OR EXISTS(SELECT 1 FROM pmv2_checklists c WHERE NOT EXISTS (SELECT 1 FROM pmv2_programs p INNER JOIN pmv2_simplified_plans s ON s.programId=p.id WHERE p.checklistId=c.id))
       ) AS legacyExists`));
-      return { enabled: true, legacyExists: Number(found[0]?.legacyExists ?? 0) === 1 };
+      return {
+        enabled: true,
+        legacyExists: Number(found[0]?.legacyExists ?? 0) === 1,
+        canDelete: isOwnerOrAdminRole(actor.role) && isOwnerOrAdminRole(ctx.user.role),
+      };
     }),
     teams: pmv2ManagementProcedure.query(async ({ ctx }) => {
       const db = await liveDb(deps, auth(ctx));
@@ -130,7 +135,7 @@ export function createPmv2SimplifiedRouter(deps: Deps) {
     }),
     list: pmv2ManagementProcedure.input(z.object({ beforeId: z.number().int().positive().optional() }).optional()).query(async ({ ctx, input }) => {
       const db = await liveDb(deps, auth(ctx));
-      const before = input?.beforeId ? sql`WHERE programId < ${input.beforeId}` : sql``;
+      const before = input?.beforeId ? sql`AND programId < ${input.beforeId}` : sql``;
       const data = resultRows(await db.execute(planRowsSql(before, 51)));
       const rows = data.slice(0, 50);
       const titles = await loadMainTitles(db, rows.map(row => Number(row.currentProgramId)));
@@ -144,7 +149,7 @@ export function createPmv2SimplifiedRouter(deps: Deps) {
     }),
     get: pmv2ManagementProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ ctx, input }) => {
       const db = await liveDb(deps, auth(ctx));
-      const plans = resultRows(await db.execute(planRowsSql(sql`WHERE programId=${input.id}`, 1)));
+      const plans = resultRows(await db.execute(planRowsSql(sql`AND programId=${input.id}`, 1)));
       if (!plans[0]) throw new TRPCError({ code: "NOT_FOUND", message: "المهمة الرئيسية غير موجودة" });
       const plan = plans[0];
       const items = resultRows(await db.execute(sql`SELECT i.id,i.title,i.isActive,m.kind,i.frequency,i.frequencyValue,i.weekday,i.monthDay,DATE_FORMAT(i.anchorDate,'%Y-%m-%d') AS anchorDate
@@ -225,6 +230,20 @@ export function createPmv2SimplifiedRouter(deps: Deps) {
           return await deps.service.disableItem(actor, input.planId, input.itemId);
         } catch {
           throw mutationError();
+        }
+      }),
+    deletePlan: pmv2ManagementProcedure
+      .input(z.object({ planId: z.number().int().positive() }).strict())
+      .mutation(async ({ ctx, input }) => {
+        const actor = auth(ctx);
+        if (!isOwnerOrAdminRole(actor.role) || !isOwnerOrAdminRole(ctx.user.role)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "حذف الخطة متاح للمالك ومدير النظام فقط" });
+        }
+        enabled();
+        try {
+          return await deps.service.deletePlan(actor, input.planId);
+        } catch {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "تعذر حذف المهمة الرئيسية. أعد تحميل القائمة وحاول مجددًا." });
         }
       }),
     activate: pmv2ManagementProcedure.input(z.object({ planId:z.number().int().positive() }).strict()).mutation(async ({ ctx,input }) => { const actor=auth(ctx);enabled();try{return await deps.service.activate(actor,input.planId)}catch{throw mutationError()} }),

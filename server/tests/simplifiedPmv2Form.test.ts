@@ -17,6 +17,8 @@ describe("simplified maintenance setup form", () => {
     expect(html).toContain("الملقا");
     expect(html).toContain("الكهرباء");
     expect(html).not.toContain("إنشاء مهمة فرعية");
+    expect(renderToStaticMarkup(createElement(SimplifiedPlanForm, { ...props, deletePlan: noop })))
+      .not.toContain("حذف المهمة الرئيسية");
   });
   it.each([ ["draft", "إنشاء مهمة فرعية"], ["active", "إيقاف مؤقت"], ["paused", "إعادة التفعيل"] ] as const)("offers the correct action in %s", (state, expected) => {
     const initialPlan = { id: 4, title: "فحص فودوزو", titleEn: "", titleUr: "", siteId: 1, sectionId: 2, teamId: 3, state, items: [{ id: 10, isActive: true, titleAr: "فحص", titleEn: "Inspection", titleUr: "معائنہ", recurrence: { kind: "daily" as const, startDate: "2026-11-01" } }] };
@@ -27,6 +29,11 @@ describe("simplified maintenance setup form", () => {
     expect(html).toContain("إنشاء مهمة فرعية");
     expect(html).toContain("تعديل المهمة الفرعية");
     expect(html).toContain("تعطيل المهمة الفرعية");
+    expect(html).not.toContain("حذف المهمة الرئيسية");
+    const htmlWithDelete = renderToStaticMarkup(createElement(SimplifiedPlanForm, {
+      ...props, initialPlan, deletePlan: noop,
+    }));
+    expect(htmlWithDelete).toContain("حذف المهمة الرئيسية");
   });
 
   it("displays only the saved title for the selected language, with Arabic for older untranslated items", () => {

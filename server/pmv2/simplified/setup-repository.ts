@@ -6,6 +6,7 @@ import type { SetupActor, SetupAudit, SetupBase, SetupItem, SetupPlan, Simplifie
 import type { buildSimplifiedSchedule } from "../checklists/simplified-recurrence";
 import { addSimplifiedItemSql, createSimplifiedDraftSql, type SetupSqlTx } from "./setup-sql";
 import { writeSimplifiedOccurrencesSql } from "./generate-sql";
+import { deleteSimplifiedPlanSql } from "./delete-sql";
 import { createSimplifiedRevisionSql, disableSimplifiedItemSql, updateSimplifiedItemSql } from "./revision-sql";
 
 type SetupDb = { transaction<T>(work: (tx: SetupSqlTx) => Promise<T>): Promise<T> };
@@ -55,7 +56,7 @@ export class SimplifiedSqlTransaction implements SimplifiedSetupTx {
       await this.select(sql`SELECT id FROM maintenance_teams WHERE id=${teamId} FOR UPDATE`);
     }
     const [plan] = await this.select(sql`SELECT programId AS id,state,DATE_FORMAT(pausedOn,'%Y-%m-%d') AS pausedOn,siteId,sectionId
-      FROM pmv2_simplified_plans WHERE programId=${planId} FOR UPDATE`);
+      FROM pmv2_simplified_plans WHERE programId=${planId} AND state<>'retired' FOR UPDATE`);
     if (!plan) return null;
     const programId = await this.currentProgramId(planId);
     const [current] = await this.select(sql`SELECT l.maintenanceTeamId AS teamId FROM pmv2_programs p
@@ -78,6 +79,9 @@ export class SimplifiedSqlTransaction implements SimplifiedSetupTx {
   }
   async disableItem(planId: number, itemId: number) {
     return disableSimplifiedItemSql(this.tx, planId, itemId);
+  }
+  async deletePlan(planId: number, today: string) {
+    return deleteSimplifiedPlanSql(this.tx, planId, today);
   }
   async listItems(planId: number, dates?: { from: string; to: string }): Promise<PausedScheduleItem[]> {
     const data = await this.select(sql`SELECT i.id,i.frequency,i.frequencyValue,i.weekday,i.monthDay,

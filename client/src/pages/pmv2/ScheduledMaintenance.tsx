@@ -2176,7 +2176,7 @@ export default function ScheduledMaintenance() {
         </TabsContent>
         <TabsContent value="workload"><WorkloadTab onOpenOverdue={openOverdueTasks} /></TabsContent>
         {simplifiedEnabled ? <TabsContent value="simplified" className="space-y-5">
-          <SimplifiedSetupTab />
+          <SimplifiedSetupTab canDelete={simplifiedStatus.data?.canDelete === true} />
           {simplifiedStatus.data?.legacyExists && <details className="rounded-lg border bg-card p-4"><summary className="cursor-pointer font-medium">{p("إعدادات الصيانة المجدولة السابقة")}</summary>
             <Tabs defaultValue="programs" className="mt-4 space-y-3"><TabsList><TabsTrigger value="programs">{p("البرامج والأهداف")}</TabsTrigger><TabsTrigger value="checklists">{p("قوائم الصيانة")}</TabsTrigger><TabsTrigger value="organization">{p("التخصصات والفرق")}</TabsTrigger></TabsList>
               <TabsContent value="programs"><ProgramsTab /></TabsContent><TabsContent value="checklists"><ChecklistsTab /></TabsContent><TabsContent value="organization"><OrganizationTab /></TabsContent>

@@ -20,6 +20,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 function fixture() {
   const db = new DatabaseSync(":memory:");
   db.exec(`
+    PRAGMA foreign_keys = ON;
     CREATE TABLE sites(id INTEGER PRIMARY KEY,isActive INTEGER);
     CREATE TABLE sections(id INTEGER PRIMARY KEY,siteId INTEGER,isActive INTEGER);
     CREATE TABLE warehouses(id INTEGER PRIMARY KEY,type TEXT,isActive INTEGER);
@@ -31,9 +32,9 @@ function fixture() {
     CREATE TABLE pmv2_teams(id INTEGER PRIMARY KEY AUTOINCREMENT,specialtyId INTEGER,code TEXT UNIQUE,warehouseId INTEGER,isActive INTEGER);
     CREATE TABLE pmv2_unified_team_links(pmv2TeamId INTEGER PRIMARY KEY,maintenanceTeamId INTEGER,createdById INTEGER);
     CREATE TABLE pmv2_checklists(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,isActive INTEGER,createdById INTEGER);
-    CREATE TABLE pmv2_programs(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT,teamId INTEGER,checklistId INTEGER,isActive INTEGER,createdById INTEGER);
-    CREATE TABLE pmv2_program_targets(id INTEGER PRIMARY KEY AUTOINCREMENT,programId INTEGER,sectionId INTEGER,UNIQUE(programId,sectionId));
-    CREATE TABLE pmv2_simplified_plans(programId INTEGER PRIMARY KEY,siteId INTEGER,sectionId INTEGER,state TEXT,pausedOn TEXT,createdById INTEGER,updatedById INTEGER);
+    CREATE TABLE pmv2_programs(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT,teamId INTEGER,checklistId INTEGER REFERENCES pmv2_checklists(id),isActive INTEGER,createdById INTEGER);
+    CREATE TABLE pmv2_program_targets(id INTEGER PRIMARY KEY AUTOINCREMENT,programId INTEGER REFERENCES pmv2_programs(id),sectionId INTEGER,UNIQUE(programId,sectionId));
+    CREATE TABLE pmv2_simplified_plans(programId INTEGER PRIMARY KEY REFERENCES pmv2_programs(id),siteId INTEGER,sectionId INTEGER,state TEXT,pausedOn TEXT,createdById INTEGER,updatedById INTEGER);
     CREATE TABLE pmv2_simplified_plan_revisions(
       programId INTEGER PRIMARY KEY REFERENCES pmv2_programs(id),
       planId INTEGER NOT NULL REFERENCES pmv2_simplified_plans(programId),
@@ -42,12 +43,20 @@ function fixture() {
       createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(planId, revisionNumber)
     );
-    CREATE TABLE pmv2_checklist_items(id INTEGER PRIMARY KEY AUTOINCREMENT,checklistId INTEGER,title TEXT,sortOrder INTEGER,isRequired INTEGER,isActive INTEGER,frequency TEXT,frequencyValue INTEGER,weekday INTEGER,monthDay INTEGER,anchorDate TEXT,scheduleConfigJson TEXT);
-    CREATE TABLE pmv2_simplified_item_modes(checklistItemId INTEGER PRIMARY KEY,kind TEXT,effectiveOn TEXT);
+    CREATE TABLE pmv2_checklist_items(id INTEGER PRIMARY KEY AUTOINCREMENT,checklistId INTEGER REFERENCES pmv2_checklists(id),title TEXT,sortOrder INTEGER,isRequired INTEGER,isActive INTEGER,frequency TEXT,frequencyValue INTEGER,weekday INTEGER,monthDay INTEGER,anchorDate TEXT,scheduleConfigJson TEXT);
+    CREATE TABLE pmv2_simplified_item_modes(checklistItemId INTEGER PRIMARY KEY REFERENCES pmv2_checklist_items(id),kind TEXT,effectiveOn TEXT);
     CREATE TABLE entity_translations(id INTEGER PRIMARY KEY AUTOINCREMENT,entityType TEXT,entityId INTEGER,fieldName TEXT,languageCode TEXT,translatedText TEXT,translationStatus TEXT,versionNumber INTEGER,approvedById INTEGER,approvedAt TEXT);
-    CREATE TABLE translation_versions(id INTEGER PRIMARY KEY AUTOINCREMENT,entityTranslationId INTEGER,versionNumber INTEGER,translatedText TEXT,translationStatus TEXT,changedById INTEGER,changeReason TEXT);
-    CREATE TABLE pmv2_tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,programId INTEGER,programTargetId INTEGER,teamId INTEGER,taskNumber TEXT UNIQUE,dueDate TEXT,status TEXT,UNIQUE(programId,programTargetId,dueDate));
-    CREATE TABLE pmv2_task_items(id INTEGER PRIMARY KEY AUTOINCREMENT,taskId INTEGER,sourceChecklistItemId INTEGER,titleSnapshot TEXT,sortOrderSnapshot INTEGER,frequencySnapshot TEXT,frequencyValueSnapshot INTEGER,weekdaySnapshot INTEGER,monthDaySnapshot INTEGER,anchorDateSnapshot TEXT,recurrenceLabelSnapshot TEXT,scheduledDate TEXT,status TEXT,UNIQUE(taskId,sourceChecklistItemId,scheduledDate));
+    CREATE TABLE translation_versions(id INTEGER PRIMARY KEY AUTOINCREMENT,entityTranslationId INTEGER REFERENCES entity_translations(id),versionNumber INTEGER,translatedText TEXT,translationStatus TEXT,changedById INTEGER,changeReason TEXT);
+    CREATE TABLE pmv2_tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,programId INTEGER REFERENCES pmv2_programs(id),programTargetId INTEGER REFERENCES pmv2_program_targets(id),teamId INTEGER,taskNumber TEXT UNIQUE,dueDate TEXT,status TEXT,UNIQUE(programId,programTargetId,dueDate));
+    CREATE TABLE pmv2_task_items(id INTEGER PRIMARY KEY AUTOINCREMENT,taskId INTEGER REFERENCES pmv2_tasks(id),sourceChecklistItemId INTEGER REFERENCES pmv2_checklist_items(id),titleSnapshot TEXT,sortOrderSnapshot INTEGER,frequencySnapshot TEXT,frequencyValueSnapshot INTEGER,weekdaySnapshot INTEGER,monthDaySnapshot INTEGER,anchorDateSnapshot TEXT,recurrenceLabelSnapshot TEXT,scheduledDate TEXT,status TEXT,result TEXT,UNIQUE(taskId,sourceChecklistItemId,scheduledDate));
+    CREATE TABLE pmv2_visits(id INTEGER PRIMARY KEY AUTOINCREMENT,taskId INTEGER REFERENCES pmv2_tasks(id));
+    CREATE TABLE pmv2_item_actions(id INTEGER PRIMARY KEY AUTOINCREMENT,taskItemId INTEGER REFERENCES pmv2_task_items(id),visitId INTEGER REFERENCES pmv2_visits(id),action TEXT);
+    CREATE TABLE pmv2_material_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,taskItemId INTEGER REFERENCES pmv2_task_items(id),visitId INTEGER REFERENCES pmv2_visits(id));
+    CREATE TABLE pmv2_material_usages(id INTEGER PRIMARY KEY AUTOINCREMENT,taskItemId INTEGER REFERENCES pmv2_task_items(id),visitId INTEGER REFERENCES pmv2_visits(id));
+    CREATE TABLE pmv2_task_ticket_links(id INTEGER PRIMARY KEY AUTOINCREMENT,taskItemId INTEGER REFERENCES pmv2_task_items(id));
+    CREATE TABLE pmv2_alert_deliveries(id INTEGER PRIMARY KEY AUTOINCREMENT,taskId INTEGER REFERENCES pmv2_tasks(id),taskItemId INTEGER REFERENCES pmv2_task_items(id),notificationId INTEGER);
+    CREATE TABLE translation_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT,entityType TEXT,entityId INTEGER,fieldName TEXT);
+    CREATE TABLE material_execution_cost_contexts(executionSource TEXT,executionId INTEGER,executionItemId INTEGER);
     CREATE TABLE audit_logs(id INTEGER PRIMARY KEY AUTOINCREMENT,userId INTEGER,action TEXT,entityType TEXT,entityId INTEGER,newValues TEXT);
     INSERT INTO sites VALUES(1,1); INSERT INTO sections VALUES(2,1,1); INSERT INTO warehouses VALUES(5,'branch',1);
     INSERT INTO maintenance_teams VALUES(3,'فريق الكهرباء',5,1); INSERT INTO users VALUES(6,'technician',1),(7,'owner',1); INSERT INTO maintenance_team_members VALUES(3,6,1);
@@ -241,7 +250,7 @@ describe("simplified PMV2 management API integration", () => {
     let date="2026-11-01";const service=new SimplifiedSetupService(new SimplifiedSqlRepository(async()=>database),()=>date);
     const api=router({pmv2:router({simplified:createPmv2SimplifiedRouter({enabled:()=>true,db:async()=>database,service})})});
     const user={id:7,role:"owner",isActive:1};const caller=api.createCaller({user,authenticatedUser:user} as any).pmv2.simplified;
-    expect(await caller.status()).toEqual({enabled:true,legacyExists:false});
+    expect(await caller.status()).toEqual({enabled:true,legacyExists:false,canDelete:true});
     expect((await caller.teams()).map(x=>x.name)).toContain("فريق الكهرباء");
     const { id } = await caller.create(base);
     const input = { planId: id, ...subtask };
@@ -286,7 +295,7 @@ describe("technician receives a translated authorized task", () => {
 });
 
 
-describe("PMV2 edits affect only newly generated work", () => {
+describe("PMV2 changes preserve execution history", () => {
   const actor = { id: 7, role: "owner", isActive: 1 };
   function revisionFixture() {
     const f = fixture();
@@ -431,4 +440,115 @@ describe("PMV2 edits affect only newly generated work", () => {
       f.db.close();
     }
   });
+
+  it("deletes an untouched plan, its generated work, and revision dependencies while preserving another plan", async () => {
+    const f = revisionFixture();
+    try {
+      f.db.exec("ALTER TABLE sites ADD COLUMN name TEXT; ALTER TABLE sections ADD COLUMN name TEXT");
+      const daily = { ...subtask, recurrence: { kind: "daily" as const, startDate: "2026-11-01" } };
+      const main = { ...base, titleEn: "Inspect the restaurant", titleUr: "ریستوران کا معائنہ" };
+      const { id: planId } = await f.setup.create(actor, main);
+      const { id: itemId } = await f.setup.addItem(actor, planId, daily);
+      await f.setup.activate(actor, planId);
+      await f.setup.updatePlan(actor, planId, { ...main, title: "خطة معدلة" });
+      const { id: otherId } = await f.setup.create(actor, { ...main, title: "خطة مستقلة" });
+      await f.setup.addItem(actor, otherId, daily);
+      await f.setup.activate(actor, otherId);
+      await f.scheduler.runForDate("2026-11-02");
+
+      const old = f.db.prepare(`
+        SELECT t.id AS taskId, i.id AS taskItemId FROM pmv2_tasks t
+        JOIN pmv2_task_items i ON i.taskId=t.id WHERE t.programId=?
+      `).get(planId)!;
+      f.db.prepare("INSERT INTO pmv2_alert_deliveries (taskId,taskItemId) VALUES (?,?)").run(old.taskId, old.taskItemId);
+      f.db.prepare("INSERT INTO translation_jobs (entityType,entityId,fieldName) VALUES ('PMV2_CHECKLIST_ITEM',?,'title'),('ASSET',?,'name')").run(itemId, itemId);
+      expect(f.count("pmv2_simplified_plan_revisions")).toBe(1);
+      expect(f.count("pmv2_tasks")).toBe(4);
+      const translationCount = f.count("entity_translations");
+
+      // A failure after removing dependencies must restore the whole plan.
+      f.db.exec(`CREATE TRIGGER block_checklist_delete BEFORE DELETE ON pmv2_checklists
+        BEGIN SELECT RAISE(ABORT, 'test restriction'); END;`);
+      await expect(f.setup.deletePlan(actor, planId)).rejects.toThrow("test restriction");
+      expect(f.count("pmv2_simplified_plan_revisions")).toBe(1);
+      expect(f.count("pmv2_tasks")).toBe(4);
+      expect(f.count("pmv2_alert_deliveries")).toBe(1);
+      expect(f.count("entity_translations")).toBe(translationCount);
+      f.db.exec("DROP TRIGGER block_checklist_delete");
+
+      const result = await f.setup.deletePlan(actor, planId);
+      expect(result).toEqual({ kind: "deleted", cancelledFutureTasks: 0 });
+      expect(await f.caller.list()).toMatchObject({ items: [{ id: otherId, title: "خطة مستقلة" }], nextId: null });
+      await expect(f.caller.get({ id: planId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+      expect(f.count("pmv2_simplified_plan_revisions")).toBe(0);
+      expect(f.count("pmv2_programs")).toBe(1);
+      expect(f.count("pmv2_checklists")).toBe(1);
+      expect(f.count("pmv2_checklist_items")).toBe(1);
+      expect(f.count("pmv2_simplified_item_modes")).toBe(1);
+      expect(f.count("pmv2_program_targets")).toBe(1);
+      expect(f.count("pmv2_tasks")).toBe(2);
+      expect(f.count("pmv2_task_items")).toBe(2);
+      expect(f.count("pmv2_alert_deliveries")).toBe(0);
+      expect(f.count("entity_translations")).toBe(8);
+      expect(f.count("translation_versions")).toBe(8);
+      expect(f.db.prepare("SELECT entityType FROM translation_jobs").all()).toEqual([{ entityType: "ASSET" }]);
+      expect(f.count("pmv2_unified_team_links")).toBe(1);
+      expect(f.db.prepare("SELECT id FROM audit_logs WHERE entityType='pmv2.task' AND entityId=?").get(old.taskId)).toBeDefined();
+      expect(f.db.prepare(`
+        SELECT userId,entityType FROM audit_logs WHERE action='pmv2.simplified_plan_deleted' AND entityId=?
+      `).get(planId)).toMatchObject({ userId: actor.id, entityType: "pmv2.program" });
+
+      await f.scheduler.runForDate("2026-11-03");
+      expect(f.db.prepare("SELECT DISTINCT programId FROM pmv2_tasks").all()).toEqual([{ programId: otherId }]);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  it("retires a started plan, cancels only untouched future work, and prevents future generation", async () => {
+    const f = revisionFixture();
+    try {
+      f.db.exec("ALTER TABLE sites ADD COLUMN name TEXT; ALTER TABLE sections ADD COLUMN name TEXT");
+      const daily = { ...subtask, recurrence: { kind: "daily" as const, startDate: "2026-11-01" } };
+      const { id: planId } = await f.setup.create(actor, base);
+      await f.setup.addItem(actor, planId, daily);
+      await f.setup.activate(actor, planId);
+      await f.scheduler.runForDate("2026-11-02");
+      await f.scheduler.runForDate("2026-11-03");
+      const started = f.db.prepare(`
+        SELECT t.id AS taskId, i.id AS taskItemId FROM pmv2_tasks t
+        JOIN pmv2_task_items i ON i.taskId=t.id WHERE t.dueDate='2026-11-01'
+      `).get()!;
+      f.db.prepare("UPDATE pmv2_tasks SET status='in_progress' WHERE id=?").run(started.taskId);
+      f.db.prepare("UPDATE pmv2_task_items SET status='in_progress' WHERE id=?").run(started.taskItemId);
+      const visit = f.db.prepare("INSERT INTO pmv2_visits (taskId) VALUES (?)").run(started.taskId).lastInsertRowid;
+      f.db.prepare("INSERT INTO pmv2_item_actions (taskItemId,visitId,action) VALUES (?,?,'item_started')").run(started.taskItemId, visit);
+
+      f.setDate("2026-11-02");
+      const result = await f.setup.deletePlan(actor, planId);
+      expect(result).toEqual({ kind: "retired", cancelledFutureTasks: 1 });
+      expect(await f.caller.list()).toEqual({ items: [], nextId: null });
+      await expect(f.caller.get({ id: planId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+      await expect(f.setup.resume(actor, planId)).rejects.toThrow();
+      await expect(f.setup.addItem(actor, planId, daily)).rejects.toThrow();
+      expect(f.db.prepare("SELECT state FROM pmv2_simplified_plans WHERE programId=?").get(planId)?.state).toBe("retired");
+      expect(f.db.prepare("SELECT dueDate,status FROM pmv2_tasks ORDER BY dueDate").all()).toEqual([
+        { dueDate: "2026-11-01", status: "in_progress" },
+        { dueDate: "2026-11-02", status: "pending" },
+        { dueDate: "2026-11-03", status: "cancelled" },
+      ]);
+      expect(f.db.prepare("SELECT status FROM pmv2_task_items WHERE id=?").get(started.taskItemId)?.status).toBe("in_progress");
+      expect(f.count("pmv2_visits")).toBe(1);
+      expect(f.count("pmv2_item_actions")).toBe(1);
+      expect(f.db.prepare(`
+        SELECT userId,entityType FROM audit_logs WHERE action='pmv2.simplified_plan_retired' AND entityId=?
+      `).get(planId)).toMatchObject({ userId: actor.id, entityType: "pmv2.program" });
+      expect((await loadAuthorizedTaskItemTitles(f.tx, [Number(started.taskItemId)], "en")).get(Number(started.taskItemId))).toBe(daily.titleEn);
+      await f.scheduler.runForDate("2026-11-04");
+      expect(f.count("pmv2_tasks")).toBe(3);
+    } finally {
+      f.db.close();
+    }
+  });
+
 });
