@@ -16,7 +16,6 @@ import {
   Clock3,
   Eye,
   ListChecks,
-  Play,
   RefreshCcw,
   Settings2,
   Users,
@@ -1842,9 +1841,6 @@ function TasksTab({
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
-  const [runDate, setRunDate] = useState(today);
-  const [schedulerScope, setSchedulerScope] = useState<"all" | "program">("all");
-  const [schedulerProgramId, setSchedulerProgramId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
 
   useEffect(() => {
@@ -1898,29 +1894,6 @@ function TasksTab({
     { taskId: Number(selectedTaskId || 0) },
     { enabled: !!selectedTaskId },
   );
-  const dueProgramsQuery = trpc.pmv2.scheduler.duePrograms.useQuery(
-    { date: runDate },
-    { enabled: !!runDate },
-  );
-  const scheduler = trpc.pmv2.scheduler.runForDate.useMutation({
-    onSuccess: async result => {
-      toast.success(p("اكتملت الجدولة: {created} مهمة جديدة، {existing} موجودة", { created: result.createdTasks, existing: result.existingTasks }));
-      if (result.errors.length) toast.warning(p("اكتملت مع {count} ملاحظة", { count: result.errors.length }));
-      await Promise.all([tasksQuery.refetch(), allCount.refetch(), todayCount.refetch(), overdueCount.refetch(), tomorrowCount.refetch(), thisWeekCount.refetch(), nextWeekCount.refetch()]);
-    },
-    onError: error => toast.error(localizeApiError(error.message)),
-  });
-
-  const duePrograms = dueProgramsQuery.data ?? [];
-  const schedulerHasDuePrograms = duePrograms.length > 0;
-  const schedulerCanRun =
-    !!runDate &&
-    !scheduler.isPending &&
-    !dueProgramsQuery.isLoading &&
-    !dueProgramsQuery.isError &&
-    schedulerHasDuePrograms &&
-    (schedulerScope === "all" || !!schedulerProgramId);
-
   const activeTeams = (teamsQuery.data ?? []).filter((team: any) => Number(team.isActive) === 1);
   const cards = [
     { key: "all" as const, label: p("كل المهام"), count: allCount.data?.total ?? 0 },
@@ -1979,113 +1952,18 @@ function TasksTab({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">{p("تشغيل الجدولة اليدوي للاختبار")}</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[220px_240px_minmax(280px,1fr)_auto] xl:items-end">
-            <div>
-              <Label>{p("تاريخ التشغيل")}</Label>
-              <Input
-                type="date"
-                value={runDate}
-                onChange={e => {
-                  setRunDate(e.target.value);
-                  setSchedulerProgramId("");
-                  scheduler.reset();
-                }}
-              />
-            </div>
-            <div>
-              <Label>{p("نطاق التشغيل")}</Label>
-              <select
-                className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm"
-                value={schedulerScope}
-                onChange={e => {
-                  const nextScope = e.target.value as "all" | "program";
-                  setSchedulerScope(nextScope);
-                  if (nextScope === "all") setSchedulerProgramId("");
-                  scheduler.reset();
-                }}
-              >
-                <option value="all">{p("كل البرامج المستحقة")}</option>
-                <option value="program">{p("برنامج محدد")}</option>
-              </select>
-            </div>
-            {schedulerScope === "program" ? (
-              <div>
-                <Label>{p("البرنامج المستحق")}</Label>
-                <select
-                  className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm"
-                  value={schedulerProgramId}
-                  disabled={dueProgramsQuery.isLoading || duePrograms.length === 0}
-                  onChange={e => { setSchedulerProgramId(e.target.value); scheduler.reset(); }}
-                >
-                  <option value="">{dueProgramsQuery.isLoading ? p("جارٍ فحص البرامج...") : p("اختر برنامجًا مستحقًا")}</option>
-                  {duePrograms.map((program: any) => (
-                    <option key={program.id} value={program.id}>
-                      {program.title?.trim() ? `${program.title} — برنامج #${program.id}` : `${p("برنامج محدد")} #${program.id}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div className="rounded-md border bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
-                {dueProgramsQuery.isLoading
-                  ? p("جارٍ فحص البرامج المستحقة...")
-                  : dueProgramsQuery.isError
-                    ? p("تعذر تحميل البرامج المستحقة")
-                    : p("{count} برنامج مستحق في هذا التاريخ", { count: duePrograms.length })}
-              </div>
-            )}
-            <Button
-              disabled={!schedulerCanRun}
-              onClick={() => scheduler.mutate({
-                date: runDate,
-                ...(schedulerScope === "program" ? { programId: Number(schedulerProgramId) } : {}),
-              })}
-            >
-              <Play className="ms-2 h-4 w-4" />
-              {schedulerScope === "program" ? p("تشغيل البرنامج المحدد") : p("تشغيل كل البرامج المستحقة")}
-            </Button>
-          </div>
-
-          {!dueProgramsQuery.isLoading && !dueProgramsQuery.isError && runDate && duePrograms.length === 0 && (
-            <div className="rounded-lg border border-dashed bg-muted/20 p-3 text-sm text-muted-foreground">{p("لا توجد برامج مستحقة في هذا التاريخ.")}</div>
-          )}
-
-          <div className="flex flex-wrap gap-2">
-            {scope === "all" && dateFrom && dateFrom === dateTo && (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setRunDate(dateFrom);
-                  setSchedulerProgramId("");
-                  scheduler.reset();
-                }}
-              >
-                {p("استخدام تاريخ البحث")}
-              </Button>
-            )}
-            <Button variant="outline" onClick={() => tasksQuery.refetch()}><RefreshCcw className="ms-2 h-4 w-4" />{p("تحديث المهام")}</Button>
-          </div>
-          <p className="text-xs text-muted-foreground">{p("اختر التاريخ أولًا؛ قائمة «برنامج محدد» تعرض فقط البرامج المستحقة في ذلك اليوم. التشغيل التلقائي الحقيقي يبقى كما هو ويعالج كل البرامج المستحقة.")}</p>
-          {scheduler.data && (
-            <div className="mt-4 grid gap-2 rounded-lg border bg-muted/30 p-3 sm:grid-cols-4">
-              <div>{p("جديدة:")}<strong>{scheduler.data.createdTasks}</strong></div>
-              <div>{p("موجودة:")}<strong>{scheduler.data.existingTasks}</strong></div>
-              <div>{p("بنود جديدة:")}<strong>{scheduler.data.createdTaskItems}</strong></div>
-              <div>{p("ملاحظات:")}<strong>{scheduler.data.errors.length}</strong></div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       <div className="grid gap-6 xl:grid-cols-[1fr_440px]">
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between gap-3">
-              <CardTitle className="text-lg">{p("المهام المجدولة")}</CardTitle>
-              <span className="text-sm text-muted-foreground">{p("{count} مهمة", { count: tasksQuery.data?.total ?? 0 })}</span>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <CardTitle className="text-lg">{p("المهام المجدولة")}</CardTitle>
+                <span className="text-sm text-muted-foreground">{p("{count} مهمة", { count: tasksQuery.data?.total ?? 0 })}</span>
+              </div>
+              <Button variant="outline" onClick={() => tasksQuery.refetch()}>
+                <RefreshCcw className="ms-2 h-4 w-4" />
+                {p("تحديث المهام")}
+              </Button>
             </div>
           </CardHeader>
           <CardContent className="space-y-2">

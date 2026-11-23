@@ -107,16 +107,10 @@ await test("normal scheduler run still processes all due programs", async () => 
   assert.deepEqual(repo.tasks.map((task) => task.programId), [1, 2]);
 });
 
-await test("router and manager UI expose due-only optional program scope", async () => {
+await test("router exposes due-only optional program scope", async () => {
   const router = read("server/routers/pmv2/scheduler.ts");
-  const page = read("client/src/pages/pmv2/ScheduledMaintenance.tsx");
   assert.match(router, /duePrograms:/);
   assert.match(router, /programId: z\.number\(\)\.int\(\)\.positive\(\)\.optional\(\)/);
-  assert.match(page, /كل البرامج المستحقة/);
-  assert.match(page, /برنامج محدد/);
-  assert.match(page, /اختر برنامجًا مستحقًا/);
-  assert.match(page, /لا توجد برامج مستحقة في هذا التاريخ/);
-  assert.match(page, /تشغيل البرنامج المحدد/);
 });
 
 console.log(`PM V2 manual scheduler program scope: ${passed}/4 PASS`);
