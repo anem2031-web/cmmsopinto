@@ -1,17 +1,17 @@
 import { useEffect, useState } from "react";
-import { useLocation, useSearch } from "wouter";
+import { useSearch } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
-import { Button } from "@/components/ui/button";
 import { canReadTicketTeamExecution } from "@shared/maintenance-team-tickets/execution-permissions";
 import { ExecutionPanel } from "./ExecutionPanel";
-import {
-  ExecutionLeaveGuard,
-  useExecutionCanLeave,
-} from "./ExecutionLeaveGuard";
+import { ExecutionLeaveGuard } from "./ExecutionLeaveGuard";
 import { TicketSequentialTasksView } from "./TicketSequentialTasksView";
-import { TicketReportMedia } from "./TicketReportMedia";
+import {
+  TicketExecutionDetail,
+  TicketExecutionBackButton as TeamExecutionBackButton,
+  useReturnToTicketTasks,
+} from "./TicketExecutionDetail";
 
 export default function TeamTicketExecutionPage() {
   const { user, loading } = useAuth();
@@ -20,12 +20,15 @@ export default function TeamTicketExecutionPage() {
   const assignmentId = Number(new URLSearchParams(search).get("teamExecution"));
   const allowed = user?.isActive === 1 && canReadTicketTeamExecution(user.role);
   const technician = user?.role === "technician";
-  const queue = trpc.ticketTeamAssignments.queue.useQuery({ language, assignmentId }, {
-    enabled:
-      !!allowed && Number.isSafeInteger(assignmentId) && assignmentId > 0,
-    retry: false,
-    refetchInterval: technician ? 30_000 : false,
-  });
+  const queue = trpc.ticketTeamAssignments.queue.useQuery(
+    { language, assignmentId },
+    {
+      enabled:
+        !!allowed && Number.isSafeInteger(assignmentId) && assignmentId > 0,
+      retry: false,
+      refetchInterval: technician ? 30_000 : false,
+    }
+  );
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -62,75 +65,33 @@ export default function TeamTicketExecutionPage() {
         ) : (
           <>
             <TeamExecutionBackButton language={language} disabled={busy} />
-            <header>
-              <h1 className="text-xl font-bold" dir="ltr">
-                {selected.ticketNumber}
-              </h1>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {selected.siteName} / {selected.sectionName} ·{" "}
-                {selected.teamName}
-              </p>
-            </header>
-            <h2 className="text-lg font-semibold">{selected.title}</h2>
-            <p className="whitespace-pre-wrap text-sm">
-              {selected.description}
-            </p>
-            <TicketReportMedia
+            <TicketExecutionDetail
+              ticketNumber={selected.ticketNumber}
+              title={selected.title}
+              description={selected.description}
+              language={language}
               media={selected.reportMedia}
-              language={language}
-            />
-            <ExecutionPanel
-              key={assignmentId}
-              assignmentId={assignmentId}
-              actorId={user!.id}
-              role={user!.role}
-              language={language}
-              onBusyChange={setBusy}
-              onChanged={() => void queue.refetch()}
-            />
+              location={
+                <>
+                  {selected.siteName} / {selected.sectionName} ·{" "}
+                  {selected.teamName}
+                </>
+              }
+            >
+              <ExecutionPanel
+                key={assignmentId}
+                assignmentId={assignmentId}
+                actorId={user!.id}
+                role={user!.role}
+                language={language}
+                onBusyChange={setBusy}
+                onChanged={() => void queue.refetch()}
+              />
+            </TicketExecutionDetail>
           </>
         )}
       </ExecutionLeaveGuard>
     </div>
-  );
-}
-
-function useReturnToTeamTasks() {
-  const [path, navigate] = useLocation();
-  const search = useSearch();
-  return () => {
-    if (window.history.state?.fromTeamTicketList) window.history.back();
-    else {
-      const params = new URLSearchParams(search);
-      params.delete("teamExecution");
-      navigate(`${path}${params.size ? `?${params}` : ""}`);
-    }
-  };
-}
-
-function TeamExecutionBackButton({
-  language,
-  disabled,
-}: {
-  language: string;
-  disabled?: boolean;
-}) {
-  const canLeave = useExecutionCanLeave(),
-    back = useReturnToTeamTasks();
-  return (
-    <Button
-      variant="outline"
-      disabled={disabled}
-      onClick={() => {
-        if (canLeave()) back();
-      }}
-    >
-      {language === "ar"
-        ? "العودة إلى مهام الفريق"
-        : language === "ur"
-          ? "ٹیم کے کاموں پر واپس"
-          : "Back to team tasks"}
-    </Button>
   );
 }
 
@@ -151,7 +112,7 @@ function TeamExecutionContent({
   onBusyChange: (busy: boolean) => void;
   onChanged: () => void;
 }) {
-  const back = useReturnToTeamTasks();
+  const back = useReturnToTicketTasks();
   return (
     <TicketSequentialTasksView
       key={assignmentId}

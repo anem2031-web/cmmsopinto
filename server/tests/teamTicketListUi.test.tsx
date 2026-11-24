@@ -221,11 +221,20 @@ vi.mock("../../client/src/pages/maintenance-teams/ExecutionPanel", () => ({
 }));
 vi.mock(
   "../../client/src/pages/maintenance-teams/team-execution-navigation",
-  () => ({ useRestoreTeamTicketList: () => {} })
+  async original => ({
+    ...(await original<
+      typeof import("../../client/src/pages/maintenance-teams/team-execution-navigation")
+    >()),
+    useRestoreTeamTicketList: () => {},
+  })
 );
 vi.mock(
   "../../client/src/pages/maintenance-teams/TeamTicketExecutionPage",
   () => ({ default: () => <p>existing team execution page</p> })
+);
+vi.mock(
+  "../../client/src/pages/maintenance-teams/ItTicketExecutionPage",
+  () => ({ default: () => <p>IT execution details</p> })
 );
 import AssignedMaintenanceTickets from "../../client/src/pages/maintenance-teams/AssignedMaintenanceTickets";
 
@@ -429,7 +438,7 @@ describe("Team ticket search and department tabs", () => {
       language: "ar",
     });
   });
-  it("shows IT child tickets once with an executor filter and opens their existing ticket route", () => {
+  it("shows IT child tickets once with an executor filter and opens their compact execution details", () => {
     state.role = "it_manager";
     state.search = `?department=${D.IT}&search=كاميرا&executorId=71&siteId=3&sectionId=5&sort=newest`;
     state.data.items = [];
@@ -481,7 +490,16 @@ describe("Team ticket search and department tabs", () => {
     render();
     expect(state.query.at(-1).input).toMatchObject({ executorId: 72, page: 1 });
     state.itViews[0].onOpen(741);
-    expect(state.navigation.at(-1).url).toBe("/tickets/741");
+    const opened = new URL(state.navigation.at(-1).url, "http://fixture.local");
+    expect(opened.pathname).toBe("/maintenance-team-tickets");
+    expect(opened.searchParams.get("itExecution")).toBe("741");
+    expect(opened.searchParams.get("executorId")).toBe("72");
+    expect(opened.searchParams.get("search")).toBe("كاميرا");
+    expect(opened.searchParams.has("teamExecution")).toBe(false);
+    expect(state.navigation.at(-1).options.state).toEqual({
+      fromTeamTicketList: true,
+    });
+    expect(render()).toContain("IT execution details");
     expect(state.execution).toHaveLength(0);
   });
   it("switches into IT without retaining a team ID and clears the executor when leaving IT", () => {

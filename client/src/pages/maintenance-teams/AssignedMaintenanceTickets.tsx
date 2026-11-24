@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
-import { writeHistoryEntryState } from "@/lib/backStack";
+import ItTicketExecutionPage from "./ItTicketExecutionPage";
 import { ItExecutionTicketsView } from "./ItExecutionTicketsView";
 import { keepPreviousData } from "@tanstack/react-query";
 import { MAINTENANCE_RESPONSIBLE_DEPARTMENT } from "@shared/roles";
@@ -12,7 +12,10 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RefreshCw } from "lucide-react";
 import { ExecutionPanel } from "./ExecutionPanel";
-import { useRestoreTeamTicketList } from "./team-execution-navigation";
+import {
+  useRestoreTeamTicketList,
+  useOpenItExecution,
+} from "./team-execution-navigation";
 import { useLocation, useSearch } from "wouter";
 import TeamTicketExecutionPage from "./TeamTicketExecutionPage";
 import { TicketListFilters } from "./TicketListFilters";
@@ -29,6 +32,11 @@ import {
 export default function AssignedMaintenanceTickets() {
   const search = useSearch();
   const [path] = useLocation();
+  if (
+    path === "/maintenance-team-tickets" &&
+    new URLSearchParams(search).has("itExecution")
+  )
+    return <ItTicketExecutionPage />;
   if (new URLSearchParams(search).has("teamExecution"))
     return <TeamTicketExecutionPage />;
   return path === "/maintenance-team-tickets" ? (
@@ -51,6 +59,7 @@ export function AssignedMaintenanceTicketList() {
   const [searchInput, setSearchInput] = useState(state.search);
   const defaultResolved = useRef(false);
   const utils = trpc.useUtils();
+  const openItTicket = useOpenItExecution();
   const allowed = user?.isActive === 1 && canReadTicketTeamExecution(user.role);
   const update = (changes: Partial<TicketListState>) => {
     const next = updateTicketListState(state, {
@@ -136,13 +145,6 @@ export function AssignedMaintenanceTicketList() {
   );
   const waiting = queue.isLoading || queue.isPlaceholderData;
   const it = state.department === MAINTENANCE_RESPONSIBLE_DEPARTMENT.IT;
-  const openItTicket = (ticketId: number) => {
-    writeHistoryEntryState(
-      "teamTicketListScroll",
-      typeof window === "undefined" ? 0 : window.scrollY
-    );
-    navigate(`/tickets/${ticketId}`);
-  };
   return (
     <div className="space-y-4 p-3 sm:p-6" dir={dir}>
       <div className="flex items-center justify-between gap-3">

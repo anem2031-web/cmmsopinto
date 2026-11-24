@@ -3,17 +3,30 @@ import { useLocation, useSearch } from "wouter";
 import { readHistoryEntryState, writeHistoryEntryState } from "@/lib/backStack";
 
 const LIST_SCROLL = "teamTicketListScroll";
-export function useOpenTeamExecution() {
+function useOpenTicketExecution(parameter: "teamExecution" | "itExecution") {
   const [path, navigate] = useLocation();
   const search = useSearch();
-  return (assignmentId: number) => {
-    writeHistoryEntryState(LIST_SCROLL, window.scrollY);
+  return (id: number) => {
+    writeHistoryEntryState(
+      LIST_SCROLL,
+      typeof window === "undefined" ? 0 : window.scrollY
+    );
     const params = new URLSearchParams(search);
-    params.set("teamExecution", String(assignmentId));
+    params.delete(
+      parameter === "teamExecution" ? "itExecution" : "teamExecution"
+    );
+    params.set(parameter, String(id));
     navigate(`${path}?${params}`, {
       state: { fromTeamTicketList: true },
     });
   };
+}
+
+export function useOpenTeamExecution() {
+  return useOpenTicketExecution("teamExecution");
+}
+export function useOpenItExecution() {
+  return useOpenTicketExecution("itExecution");
 }
 
 export function useRestoreTeamTicketList(ready: boolean) {

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -12,6 +12,7 @@ import { useTranslation } from "@/contexts/LanguageContext";
 import { localizeApiError } from "@/i18n/apiError";
 import { canExecuteItSubTicket, canStartItSubTicket, itExecutionOutcomeRequiresNote, type ItExecutionOutcome } from "@shared/it-execution-workflow";
 import { ExecutionPanel } from "../maintenance-teams/ExecutionPanel";
+import { useExecutionDraftDirty } from "../maintenance-teams/ExecutionLeaveGuard";
 import { TicketMaterialCatalogPicker, type TicketCatalogCandidate } from "../maintenance-teams/TicketMaterialCatalogPicker";
 import { PURCHASE_REVIEW_ROLES, purchaseReviewRoleSchema, type PurchaseReviewRole } from "@shared/purchase-item-review";
 
@@ -20,7 +21,9 @@ const format = (template: string, values: Record<string, string | number>) =>
   Object.entries(values).reduce((text, [key, value]) => text.replace(`{${key}}`, String(value)), template);
 
 type ItMaterialDraft = { catalogItemId?: number; itemName: string; quantity: number; unit: string };
-function ItMaterialRequestForm({ ticketId, onSaved, onCancel }: { ticketId: number; onSaved: () => void; onCancel: () => void }) {
+function ItMaterialRequestForm({ ticketId, onSaved, onCancel, onBusyChange }: {
+  ticketId: number; onSaved: () => void; onCancel: () => void; onBusyChange?: (busy: boolean) => void;
+}) {
   const { language } = useTranslation();
   const l = (ar: string, en: string, ur: string) => language === "ar" ? ar : language === "ur" ? ur : en;
   const [search, setSearch] = useState("");
@@ -32,6 +35,11 @@ function ItMaterialRequestForm({ ticketId, onSaved, onCancel }: { ticketId: numb
     onSuccess: () => { toast.success(l("أُرسل احتياج المواد إلى المستودع", "Material needs sent to the warehouse", "مواد کی ضرورت گودام کو بھیج دی گئی")); onSaved(); },
     onError: error => toast.error(localizeApiError(error.message, language)),
   });
+  useExecutionDraftDirty(items.length > 0 || reason.length > 0);
+  useEffect(() => {
+    onBusyChange?.(request.isPending);
+    return () => onBusyChange?.(false);
+  }, [request.isPending, onBusyChange]);
   const candidates: TicketCatalogCandidate[] = (catalog.data ?? []).map((item: any) => ({ id: item.id, code: item.code, name: item.nameAr, nameEn: item.nameEn, unit: item.unit }));
   const valid = items.length > 0 && items.length <= 20 && items.every(item => item.itemName.trim() && item.unit.trim() && Number.isSafeInteger(item.quantity) && item.quantity > 0);
   return <div className="space-y-3 rounded-md border border-amber-200 bg-background p-3">
@@ -85,7 +93,9 @@ export function ItTaskActions({ ticketId, taskId, assigneeIds, canAssign, onChan
   </div>;
 }
 
-function ItExecutionPanel({ ticket, onChanged }: { ticket: any; onChanged: () => void }) {
+export function ItExecutionPanel({ ticket, onChanged, onBusyChange }: {
+  ticket: any; onChanged: () => void; onBusyChange?: (busy: boolean) => void;
+}) {
   const { user } = useAuth();
   const { language } = useTranslation();
   const l = (ar: string, en: string, ur: string) => language === "ar" ? ar : language === "ur" ? ur : en;
@@ -94,6 +104,8 @@ function ItExecutionPanel({ ticket, onChanged }: { ticket: any; onChanged: () =>
   const [materialsUsed, setMaterialsUsed] = useState("");
   const [pendingOutcome, setPendingOutcome] = useState<ItExecutionOutcome | null>(null);
   const [materialsOpen, setMaterialsOpen] = useState(false);
+  const [materialsBusy, setMaterialsBusy] = useState(false);
+  const [linkedBusy, setLinkedBusy] = useState(false);
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const assigned = canExecuteItSubTicket(user, ticket);
   const utils = trpc.useUtils();
@@ -113,9 +125,16 @@ function ItExecutionPanel({ ticket, onChanged }: { ticket: any; onChanged: () =>
     },
     onError: fail,
   });
-  if (!assigned || ["closed", "requester_confirmed"].includes(ticket.status)) return null;
+  const visible = assigned && !["closed", "requester_confirmed"].includes(ticket.status);
+  useExecutionDraftDirty(visible && !materialAssignment.data && (note.length > 0 || materialsUsed.length > 0));
+  const busy = visible && (start.isPending || resume.isPending || outcome.isPending || materialsOpen && materialsBusy || !!materialAssignment.data && linkedBusy);
+  useEffect(() => {
+    onBusyChange?.(busy);
+    return () => onBusyChange?.(false);
+  }, [busy, onBusyChange]);
+  if (!visible) return null;
   if (materialAssignment.data) return <section className="rounded-lg border border-blue-200 bg-blue-50/40 p-4 dark:border-blue-800 dark:bg-blue-950/20">
-    <ExecutionPanel assignmentId={materialAssignment.data.assignmentId} actorId={user!.id} role={user!.role} language={language} mode="execution" onChanged={onChanged} />
+    <ExecutionPanel assignmentId={materialAssignment.data.assignmentId} actorId={user!.id} role={user!.role} language={language} mode="execution" onChanged={onChanged} onBusyChange={onBusyChange ? setLinkedBusy : undefined} />
   </section>;
   const canStart = canStartItSubTicket(user, ticket);
   const canResume = ticket.status === "received_warehouse" && ["B", "C"].includes(ticket.maintenancePath);
@@ -164,7 +183,7 @@ function ItExecutionPanel({ ticket, onChanged }: { ticket: any; onChanged: () =>
           <Button variant="ghost" disabled={outcome.isPending} onClick={() => { setPendingOutcome(null); setNote(""); }}>{l("إلغاء", "Cancel", "منسوخ")}</Button>
         </div>
       </div>}
-      {materialsOpen && <ItMaterialRequestForm ticketId={ticket.id} onCancel={() => setMaterialsOpen(false)} onSaved={() => { setMaterialsOpen(false); void Promise.all([materialAssignment.refetch(), utils.tickets.getById.invalidate()]); onChanged(); }} />}
+      {materialsOpen && <ItMaterialRequestForm ticketId={ticket.id} onBusyChange={onBusyChange ? setMaterialsBusy : undefined} onCancel={() => setMaterialsOpen(false)} onSaved={() => { setMaterialsOpen(false); void Promise.all([materialAssignment.refetch(), utils.tickets.getById.invalidate()]); onChanged(); }} />}
     </>}
   </section>;
 }
