@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
+import { writeHistoryEntryState } from "@/lib/backStack";
+import { ItExecutionTicketsView } from "./ItExecutionTicketsView";
 import { keepPreviousData } from "@tanstack/react-query";
 import { MAINTENANCE_RESPONSIBLE_DEPARTMENT } from "@shared/roles";
 import { canReadTicketTeamExecution } from "@shared/maintenance-team-tickets/execution-permissions";
@@ -16,6 +18,7 @@ import TeamTicketExecutionPage from "./TeamTicketExecutionPage";
 import { TicketListFilters } from "./TicketListFilters";
 import { ticketListText } from "@/i18n/ticketList";
 import {
+  canSeeItTicketTab,
   readTicketListState,
   ticketListUrl,
   updateTicketListState,
@@ -86,6 +89,7 @@ export function AssignedMaintenanceTicketList() {
         !state.search &&
         !searchInput &&
         state.teamId == null &&
+        state.executorId == null &&
         state.siteId == null &&
         state.sectionId == null;
       if (
@@ -120,6 +124,7 @@ export function AssignedMaintenanceTicketList() {
       search: "",
       status: "open",
       teamId: undefined,
+      executorId: undefined,
       siteId: undefined,
       sectionId: undefined,
       sort: "oldest",
@@ -130,6 +135,14 @@ export function AssignedMaintenanceTicketList() {
     Math.ceil((data?.total ?? 0) / (data?.pageSize ?? 20))
   );
   const waiting = queue.isLoading || queue.isPlaceholderData;
+  const it = state.department === MAINTENANCE_RESPONSIBLE_DEPARTMENT.IT;
+  const openItTicket = (ticketId: number) => {
+    writeHistoryEntryState(
+      "teamTicketListScroll",
+      typeof window === "undefined" ? 0 : window.scrollY
+    );
+    navigate(`/tickets/${ticketId}`);
+  };
   return (
     <div className="space-y-4 p-3 sm:p-6" dir={dir}>
       <div className="flex items-center justify-between gap-3">
@@ -159,6 +172,11 @@ export function AssignedMaintenanceTicketList() {
           <TabsTrigger value={MAINTENANCE_RESPONSIBLE_DEPARTMENT.GENERAL}>
             {text.general}
           </TabsTrigger>
+          {canSeeItTicketTab(user?.role) && (
+            <TabsTrigger value={MAINTENANCE_RESPONSIBLE_DEPARTMENT.IT}>
+              {text.it}
+            </TabsTrigger>
+          )}
         </TabsList>
         <TicketListFilters
           value={state}
@@ -184,7 +202,13 @@ export function AssignedMaintenanceTicketList() {
                 <p className="text-sm text-muted-foreground" aria-live="polite">
                   {text.results}: {data.total}
                 </p>
-                {data.items.length ? (
+                {it && data.itTickets?.length ? (
+                  <ItExecutionTicketsView
+                    tickets={data.itTickets}
+                    language={language}
+                    onOpen={openItTicket}
+                  />
+                ) : !it && data.items.length ? (
                   <TicketExecutionTasksView
                     sequential={user!.role === "technician"}
                     tickets={data.items}

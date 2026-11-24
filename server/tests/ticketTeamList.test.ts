@@ -101,7 +101,7 @@ describe("Ticket team list filters before pagination", () => {
     expect((await f.list({sort:'newest',pageSize:2})).items.map(row=>row.assignmentId)).toEqual([5,4]);
     expect(await f.list({page:99,pageSize:2})).toMatchObject({page:3,total:5,items:[{assignmentId:5}]});
     expect(ticketTeamListInput.safeParse({pageSize:1000}).success).toBe(false);
-    expect(ticketTeamListInput.safeParse({department:'maintenance_report_department_it'}).success).toBe(false);
+    expect(ticketTeamListInput.safeParse({department:'unknown_department'}).success).toBe(false);
   });
   it("uses each child item's department, with no inference from its multi-department parent", async () => {
     const f=fixture();f.add(1,'general');

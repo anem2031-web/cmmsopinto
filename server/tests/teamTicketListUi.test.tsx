@@ -27,6 +27,7 @@ const state = vi.hoisted(() => ({
   queue: [] as any[],
   execution: [] as any[],
   views: [] as any[],
+  itViews: [] as any[],
   navigation: [] as any[],
   changeTab: undefined as any,
   data: undefined as any,
@@ -197,6 +198,21 @@ vi.mock(
     },
   })
 );
+vi.mock(
+  "../../client/src/pages/maintenance-teams/ItExecutionTicketsView",
+  async original => {
+    const actual =
+      await original<
+        typeof import("../../client/src/pages/maintenance-teams/ItExecutionTicketsView")
+      >();
+    return {
+      ItExecutionTicketsView: (props: any) => {
+        state.itViews.push(props);
+        return <actual.ItExecutionTicketsView {...props} />;
+      },
+    };
+  }
+);
 vi.mock("../../client/src/pages/maintenance-teams/ExecutionPanel", () => ({
   ExecutionPanel: (props: any) => {
     state.execution.push(props);
@@ -220,6 +236,7 @@ function render() {
   state.inputs = [];
   state.selects = [];
   state.views = [];
+  state.itViews = [];
   const html = renderToStaticMarkup(<AssignedMaintenanceTickets />);
   for (const effect of state.pending) effect();
   return html;
@@ -247,6 +264,7 @@ beforeEach(() => {
     queue: [],
     execution: [],
     views: [],
+    itViews: [],
     navigation: [],
     error: null,
     placeholder: false,
@@ -297,6 +315,32 @@ describe("Team ticket list URL state", () => {
     expect(
       readTicketListState("", "construction_procurement_manager").department
     ).toBe(D.CONSTRUCTION);
+  });
+  it("defaults IT accounts to their department and keeps the IT executor separate from team filters", () => {
+    for (const role of ["it_manager", "it_member"]) {
+      expect(readTicketListState("", role).department).toBe(D.IT);
+    }
+    const filters = readTicketListState(
+      `?department=${D.IT}&executorId=71&teamId=20&search=MT-8&page=2`,
+      "it_manager"
+    );
+    expect(filters).toMatchObject({
+      department: D.IT,
+      executorId: 71,
+      teamId: undefined,
+      search: "MT-8",
+      page: 2,
+    });
+    const url = ticketListUrl("/maintenance-team-tickets", "", filters);
+    expect(readTicketListState(url.split("?")[1], "it_manager")).toEqual(
+      filters
+    );
+    expect(
+      updateTicketListState(filters, { department: D.GENERAL })
+    ).toMatchObject({ executorId: undefined, teamId: undefined, page: 1 });
+    expect(
+      readTicketListState(`?department=${D.IT}&executorId=71`, "warehouse")
+    ).toMatchObject({ department: D.GENERAL, executorId: undefined });
   });
   it("normalizes malformed filters and oversized pages without changing the permitted department values", () => {
     expect(
@@ -355,9 +399,9 @@ describe("Team ticket list URL state", () => {
   });
 });
 describe("Team ticket search and department tabs", () => {
-  it("renders exactly two department tabs, filters and scoped data with unchanged execution props", () => {
+  it("renders three department tabs, filters and scoped data with unchanged execution props", () => {
     const html = render();
-    expect(html.match(/role="tab"/g) || []).toHaveLength(2);
+    expect(html.match(/role="tab"/g) || []).toHaveLength(3);
     expect(html).toContain("الإنشاءات");
     expect(html).toContain("الصيانة العامة");
     expect(html).toContain("فريق الكهرباء");
@@ -384,6 +428,118 @@ describe("Team ticket search and department tabs", () => {
       role: "owner",
       language: "ar",
     });
+  });
+  it("shows IT child tickets once with an executor filter and opens their existing ticket route", () => {
+    state.role = "it_manager";
+    state.search = `?department=${D.IT}&search=كاميرا&executorId=71&siteId=3&sectionId=5&sort=newest`;
+    state.data.items = [];
+    state.data.itTickets = [
+      {
+        id: 741,
+        ticketNumber: "MT-IT-741-01",
+        title: "فحص جهاز التسجيل",
+        description: "فحص التسجيل",
+        status: "in_progress",
+        state: "in_progress",
+        assignedToId: 71,
+        assignedToName: "خالد تقنية",
+        siteId: 3,
+        sectionId: 5,
+        siteName: "الملقا",
+        sectionName: "فودوزو",
+        parentTicketNumber: "MT-IT-741",
+        assignedAt: null,
+      },
+    ];
+    state.data.options.executors = [{ id: 71, name: "خالد تقنية" }];
+    state.data.total = 1;
+    const html = render();
+    expect(html).toContain("تقنية المعلومات");
+    expect(html).toContain("MT-IT-741-01");
+    expect(html).toContain("فحص جهاز التسجيل");
+    expect(html).toContain("البلاغ الرئيسي");
+    expect(html).toContain("قيد التنفيذ");
+    expect(html).toContain("خالد تقنية");
+    expect(state.views).toHaveLength(0);
+    expect(state.queue).toHaveLength(0);
+    expect(
+      state.selects.some(control => control.id === "ticket-list-team")
+    ).toBe(false);
+    expect(
+      state.selects.find(control => control.id === "ticket-list-executor").value
+    ).toBe(71);
+    expect(state.query.at(-1).input).toMatchObject({
+      department: D.IT,
+      executorId: 71,
+      teamId: undefined,
+      siteId: 3,
+      sectionId: 5,
+      search: "كاميرا",
+      sort: "newest",
+    });
+    select("ticket-list-executor", "72");
+    render();
+    expect(state.query.at(-1).input).toMatchObject({ executorId: 72, page: 1 });
+    state.itViews[0].onOpen(741);
+    expect(state.navigation.at(-1).url).toBe("/tickets/741");
+    expect(state.execution).toHaveLength(0);
+  });
+  it("switches into IT without retaining a team ID and clears the executor when leaving IT", () => {
+    state.search = "?teamId=20&siteId=3&search=MT-7";
+    render();
+    state.changeTab(D.IT);
+    state.data.items = [];
+    state.data.itTickets = [];
+    render();
+    expect(state.query.at(-1).input).toMatchObject({
+      department: D.IT,
+      teamId: undefined,
+      executorId: undefined,
+      siteId: 3,
+      search: "MT-7",
+      page: 1,
+    });
+    state.data.options.executors = [{ id: 71, name: "منفذ" }];
+    select("ticket-list-executor", "71");
+    render();
+    expect(state.query.at(-1).input.executorId).toBe(71);
+    state.changeTab(D.CONSTRUCTION);
+    render();
+    expect(state.query.at(-1).input).toMatchObject({
+      department: D.CONSTRUCTION,
+      executorId: undefined,
+      teamId: undefined,
+    });
+  });
+  it("does not show an IT tab or use the IT reader for the warehouse role", () => {
+    state.role = "warehouse";
+    state.search = `?department=${D.IT}&executorId=71`;
+    const html = render();
+    expect(html.match(/role="tab"/g) || []).toHaveLength(2);
+    expect(html).not.toContain("تقنية المعلومات");
+    expect(state.query.at(-1).input).toMatchObject({
+      department: D.GENERAL,
+      executorId: undefined,
+    });
+  });
+  it("preserves unknown IT stages as their real localized status rather than inventing completion", () => {
+    state.role = "it_manager";
+    state.data.items = [];
+    state.data.itTickets = [
+      {
+        id: 741,
+        ticketNumber: "MT-IT-OTHER",
+        title: "فحص",
+        status: "unknown",
+        state: "other",
+        assignedToId: null,
+        assignedToName: null,
+        siteName: "الملقا",
+        sectionName: "فودوزو",
+      },
+    ];
+    expect(render()).toContain("حالة أخرى — افتح التفاصيل");
+    expect(render()).toContain("لم يُحدد المنفذ");
   });
   it("debounces literal substring search into the server query and replaces the URL history entry", () => {
     render();

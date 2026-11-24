@@ -1,3 +1,4 @@
+import { MAINTENANCE_RESPONSIBLE_DEPARTMENT } from "@shared/roles";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ticketListText } from "@/i18n/ticketList";
@@ -10,6 +11,7 @@ import {
 type ListOption = { id: number; name: string };
 export type TicketListOptions = {
   teams: ListOption[];
+  executors?: ListOption[];
   sites: ListOption[];
   sections: Array<ListOption & { siteId: number }>;
 };
@@ -31,6 +33,7 @@ export function TicketListFilters({
   language: "ar" | "en" | "ur";
 }) {
   const text = ticketListText[language];
+  const it = value.department === MAINTENANCE_RESPONSIBLE_DEPARTMENT.IT;
   const selectClass =
     "h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const sections = options.sections.filter(
@@ -56,7 +59,7 @@ export function TicketListFilters({
           type="search"
           maxLength={200}
           value={searchInput}
-          placeholder={text.searchPlaceholder}
+          placeholder={it ? text.searchPlaceholderIt : text.searchPlaceholder}
           onChange={event => onSearchInput(event.currentTarget.value)}
         />
       </div>
@@ -87,31 +90,62 @@ export function TicketListFilters({
             ))}
           </select>
         </div>
-        <div className="space-y-1.5">
-          <label htmlFor="ticket-list-team" className="text-sm font-medium">
-            {text.team}
-          </label>
-          <select
-            id="ticket-list-team"
-            className={selectClass}
-            value={value.teamId ?? "all"}
-            onChange={event =>
-              onChange({
-                teamId:
-                  event.currentTarget.value === "all"
-                    ? undefined
-                    : Number(event.currentTarget.value),
-              })
-            }
-          >
-            <option value="all">{text.allTeams}</option>
-            {options.teams.map(team => (
-              <option key={team.id} value={team.id}>
-                {team.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        {it ? (
+          <div className="space-y-1.5">
+            <label
+              htmlFor="ticket-list-executor"
+              className="text-sm font-medium"
+            >
+              {text.executor}
+            </label>
+            <select
+              id="ticket-list-executor"
+              className={selectClass}
+              value={value.executorId ?? "all"}
+              onChange={event =>
+                onChange({
+                  executorId:
+                    event.currentTarget.value === "all"
+                      ? undefined
+                      : Number(event.currentTarget.value),
+                })
+              }
+            >
+              <option value="all">{text.allExecutors}</option>
+              {(options.executors || []).map(executor => (
+                <option key={executor.id} value={executor.id}>
+                  {executor.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <label htmlFor="ticket-list-team" className="text-sm font-medium">
+              {text.team}
+            </label>
+            <select
+              id="ticket-list-team"
+              className={selectClass}
+              value={value.teamId ?? "all"}
+              onChange={event =>
+                onChange({
+                  teamId:
+                    event.currentTarget.value === "all"
+                      ? undefined
+                      : Number(event.currentTarget.value),
+                })
+              }
+            >
+              <option value="all">{text.allTeams}</option>
+              {options.teams.map(team => (
+                <option key={team.id} value={team.id}>
+                  {team.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="space-y-1.5">
           <label htmlFor="ticket-list-site" className="text-sm font-medium">
             {text.site}

@@ -1,4 +1,5 @@
 import { MAINTENANCE_RESPONSIBLE_DEPARTMENT } from "@shared/roles";
+import { canReadTicketTeamExecution } from "@shared/maintenance-team-tickets/execution-permissions";
 import {
   ticketTeamListStatuses,
   type TicketTeamListInput,
@@ -11,6 +12,7 @@ export type TicketListState = {
   search: string;
   status: TicketListStatus;
   teamId?: number;
+  executorId?: number;
   siteId?: number;
   sectionId?: number;
   sort: "oldest" | "newest";
@@ -25,6 +27,10 @@ const positiveId = (value: string | null) =>
   Number.isSafeInteger(Number(value))
     ? Number(value)
     : undefined;
+export function canSeeItTicketTab(role?: string): boolean {
+  return role !== "warehouse" && canReadTicketTeamExecution(role);
+}
+
 export function readTicketListState(
   search: string,
   role?: string
@@ -33,11 +39,15 @@ export function readTicketListState(
   const requestedDepartment = params.get("department");
   const department =
     requestedDepartment === MAINTENANCE_RESPONSIBLE_DEPARTMENT.GENERAL ||
-    requestedDepartment === MAINTENANCE_RESPONSIBLE_DEPARTMENT.CONSTRUCTION
+    requestedDepartment === MAINTENANCE_RESPONSIBLE_DEPARTMENT.CONSTRUCTION ||
+    (requestedDepartment === MAINTENANCE_RESPONSIBLE_DEPARTMENT.IT &&
+      canSeeItTicketTab(role))
       ? requestedDepartment
       : role === "construction_procurement_manager"
         ? MAINTENANCE_RESPONSIBLE_DEPARTMENT.CONSTRUCTION
-        : MAINTENANCE_RESPONSIBLE_DEPARTMENT.GENERAL;
+        : role === "it_manager" || role === "it_member"
+          ? MAINTENANCE_RESPONSIBLE_DEPARTMENT.IT
+          : MAINTENANCE_RESPONSIBLE_DEPARTMENT.GENERAL;
   const status = params.get("status");
   const page = positiveId(params.get("page")) || 1;
   return {
@@ -46,7 +56,14 @@ export function readTicketListState(
     status: ticketTeamListStatuses.includes(status as TicketListStatus)
       ? (status as TicketListStatus)
       : "open",
-    teamId: positiveId(params.get("teamId")),
+    teamId:
+      department === MAINTENANCE_RESPONSIBLE_DEPARTMENT.IT
+        ? undefined
+        : positiveId(params.get("teamId")),
+    executorId:
+      department === MAINTENANCE_RESPONSIBLE_DEPARTMENT.IT
+        ? positiveId(params.get("executorId"))
+        : undefined,
     siteId: positiveId(params.get("siteId")),
     sectionId: positiveId(params.get("sectionId")),
     sort: params.get("sort") === "newest" ? "newest" : "oldest",
@@ -64,6 +81,7 @@ export function ticketListUrl(
     "search",
     "status",
     "teamId",
+    "executorId",
     "siteId",
     "sectionId",
     "sort",
@@ -83,7 +101,7 @@ export function updateTicketListState(
     ...current,
     ...changes,
     ...(changes.department != null && changes.department !== current.department
-      ? { teamId: undefined }
+      ? { teamId: undefined, executorId: undefined }
       : {}),
     ...(Object.prototype.hasOwnProperty.call(changes, "siteId") &&
     changes.siteId !== current.siteId

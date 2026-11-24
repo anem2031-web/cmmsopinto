@@ -2,6 +2,15 @@ export const ticketListText = {
   ar: {
     construction: "الإنشاءات",
     general: "الصيانة العامة",
+    it: "تقنية المعلومات",
+    otherStatus: "حالة أخرى — افتح التفاصيل",
+    executor: "المنفذ",
+    allExecutors: "كل المنفذين",
+    unassigned: "لم يُحدد المنفذ",
+    parentReport: "البلاغ الرئيسي",
+    openDetails: "فتح التفاصيل والتنفيذ",
+    searchPlaceholderIt:
+      "ابحث برقم التذكرة أو البلاغ أو العنوان أو الموقع أو المنفذ...",
     departments: "الجهة المسؤولة",
     search: "البحث",
     searchPlaceholder:
@@ -46,6 +55,15 @@ export const ticketListText = {
   en: {
     construction: "Construction",
     general: "General maintenance",
+    it: "Information technology",
+    otherStatus: "Other status — open details",
+    executor: "Executor",
+    allExecutors: "All executors",
+    unassigned: "Executor not assigned",
+    parentReport: "Main report",
+    openDetails: "Open details and execution",
+    searchPlaceholderIt:
+      "Search ticket, report, title, location or executor...",
     departments: "Responsible department",
     search: "Search",
     searchPlaceholder: "Search ticket, report, title, location or team...",
@@ -89,6 +107,14 @@ export const ticketListText = {
   ur: {
     construction: "تعمیرات",
     general: "عمومی مرمت",
+    it: "انفارمیشن ٹیکنالوجی",
+    otherStatus: "دوسری حالت — تفصیل کھولیں",
+    executor: "کام کرنے والا",
+    allExecutors: "تمام کارکن",
+    unassigned: "کارکن مقرر نہیں",
+    parentReport: "اصل رپورٹ",
+    openDetails: "تفصیل اور کارروائی کھولیں",
+    searchPlaceholderIt: "ٹکٹ، رپورٹ، عنوان، مقام یا کارکن تلاش کریں...",
     departments: "ذمہ دار شعبہ",
     search: "تلاش",
     searchPlaceholder: "ٹکٹ، رپورٹ، عنوان، مقام یا ٹیم تلاش کریں...",

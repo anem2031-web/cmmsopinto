@@ -41,6 +41,10 @@ async function sessions(db: Database, assignments: Array<{ assignmentId: number;
 
 /** Filters precede page enrichment. The array queue used by existing workflows remains unchanged. */
 export async function loadTicketTeamList(db: Database, actor: TeamManagementActor, input: TicketTeamListInput): Promise<TicketTeamListResult> {
+  if (input.department === "maintenance_report_department_it") {
+    const { loadItExecutionList } = await import("./it-execution-list");
+    return loadItExecutionList(db, actor, input);
+  }
   const scope = ticketTeamQueueScope(actor);
   const departmentScope = sql`(${scope}) AND i.responsibleDepartment=${input.department}`;
   const terms: SQL[] = [departmentScope];
