@@ -27,7 +27,7 @@ const baseNodes=[
 const nodes=cfg.missing?baseNodes.filter(n=>n.id!==100):cfg.ambiguous?[...baseNodes,{id:300,parentId:null,code:'10',nameAr:'Ambiguous IT',nameEn:'Ambiguous IT',level:1,isActive:1}]:baseNodes;
 const units=[{id:1,nameAr:'Piece',nameEn:'Piece',isActive:1}];
 const items=[{id:11,nodeId:101,code:'10-01-001',nameAr:'IT Screen',nameEn:'IT Screen',unit:'Piece',manufacturer:'IT Maker',isActive:1,primaryImageUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='},{id:22,nodeId:201,code:'20-01-001',nameAr:'Foreign Hammer',nameEn:'Foreign Hammer',unit:'Piece',manufacturer:'Other Maker',isActive:1,primaryImageUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='}];
-window.__reads=[];window.__writes=[];window.__captions={add:t.catalog.items.addNew,duplicate:t.catalog.items.addFrom,save:t.common.save};
+window.__reads=[];window.__writes=[];window.__refetches=[];window.__created=0;window.__closed=0;window.__captions={add:t.catalog.items.addNew,duplicate:t.catalog.items.addFrom,save:t.common.save};
 function data(route,input){
  if(route==='catalog.nodes.list')return nodes;
  if(route==='catalog.items.list')return items;
@@ -37,8 +37,8 @@ function data(route,input){
 }
 const rpc=(parts=[])=>new Proxy(()=>{},{get(_,key){
  if(key==='useUtils')return()=>rpc();if(key==='invalidate')return async()=>{};
- if(key==='useQuery')return(input,options={})=>{const route=parts.join('.');if(options.enabled!==false)window.__reads.push({route,input});return {data:options.enabled===false?undefined:data(route,input),isLoading:false,isFetching:false,error:null,refetch:async()=>({})};};
- if(key==='useMutation')return(options={})=>{const run=async input=>{window.__writes.push({route:parts.join('.'),input});await options.onSuccess?.({});return {};};return {isPending:false,mutate:run,mutateAsync:run};};
+ if(key==='useQuery')return(input,options={})=>{const route=parts.join('.');if(options.enabled!==false)window.__reads.push({route,input});return {data:options.enabled===false?undefined:data(route,input),isLoading:false,isFetching:false,error:null,refetch:async()=>{window.__refetches.push(route);return {};}};};
+ if(key==='useMutation')return(options={})=>{const run=async input=>{window.__writes.push({route:parts.join('.'),input});if(cfg.failSave&&parts.join('.')==='catalog.items.create')throw new Error('Fixture save failed');if(cfg.deferSave&&parts.join('.')==='catalog.items.create')await new Promise(resolve=>{window.__finishSave=resolve;});await options.onSuccess?.({});return {};};return {isPending:false,mutate:run,mutateAsync:run};};
  return rpc([...parts,String(key)]);
 }});
 window.XMLHttpRequest=class {upload={};status=200;responseText=JSON.stringify({url:'data:image/png;base64,AA==',fileKey:'fixture/image.png'});open(){}send(){queueMicrotask(()=>this.onload?.());}};
@@ -47,7 +47,7 @@ export const useAuth=()=>({user,authenticatedUser:user,loading:false});
 export const useTranslation=()=>({language,t,dir:language==='en'?'ltr':'rtl',isRTL:language!=='en'});
 `;
 const output = await build({
-  stdin: { contents: "import React from 'react';import{createRoot}from'react-dom/client';import{Toaster}from'sonner';import ItemsManager from './client/src/components/catalog/ItemsManager';createRoot(document.getElementById('root')).render(<><ItemsManager/><Toaster/></>);", resolveDir:root,loader:'tsx' },
+  stdin: { contents: "import React from 'react';import{createRoot}from'react-dom/client';import{Toaster}from'sonner';import ItemsManager,{CatalogItemCreateDialog} from './client/src/components/catalog/ItemsManager';createRoot(document.getElementById('root')).render(<>{window.__itCase.dialogOnly?<CatalogItemCreateDialog onClose={()=>window.__closed++} onCreated={()=>window.__created++}/>:<ItemsManager/>}<Toaster/></>);", resolveDir:root,loader:'tsx' },
   bundle:true,write:false,platform:'browser',format:'iife',jsx:'automatic',alias:{'@':path.join(root,'client/src'),'@shared':path.join(root,'shared')},define:{'process.env.NODE_ENV':'"production"'},
   plugins:[{name:'offline-it-scope',setup(p){p.onResolve({filter:/^@\/(?:lib\/trpc|_core\/hooks\/useAuth|contexts\/LanguageContext)$/},()=>({path:'fixture',namespace:'offline-it-scope'}));p.onLoad({filter:/.*/,namespace:'offline-it-scope'},()=>({contents:fixture,loader:'tsx',resolveDir:root}));}}],
 });
@@ -62,7 +62,7 @@ async function pageFor(config){
  await page.setContent('<html><body><div id="root"></div></body></html>');
  await page.evaluate(cfg=>{window.__itCase=cfg;document.documentElement.dir=cfg.language==='ar'?'rtl':'ltr';},config);
  await page.addScriptTag({content:output.outputFiles[0].text});
- await page.waitForFunction(()=>document.body.innerText.includes('Foreign Hammer'));
+ await page.waitForFunction(()=>window.__itCase.dialogOnly?!!document.querySelector('[role=dialog]'):document.body.innerText.includes('Foreign Hammer'));
  return page;
 }
 async function clickText(page,text,scope='body'){
@@ -126,6 +126,42 @@ try{
  for(const mode of ['missing','ambiguous']){
   await test('IT '+mode+' root fails closed without other categories',async()=>{const page=await pageFor({role:'it_manager',[mode]:true});await openCreate(page);await clickCategory(page);const text=await pickerText(page);assert(text.includes('category (10) is unavailable'));assert(!text.includes('Other Root'));await clickText(page,await page.evaluate(()=>window.__captions.save),'[role=dialog]');assert.equal(await page.evaluate(()=>window.__writes.length),0);await page.close();});
  }
+
+ for(const role of ['construction_procurement_manager','admin','owner']){
+  await test(role+' reuses the create form without a manager list or refetch',async()=>{
+   const page=await pageFor({role,dialogOnly:true});
+   assert(!await page.evaluate(()=>document.body.innerText.includes('Foreign Hammer')));
+   assert(!await page.evaluate(()=>window.__reads.some(r=>r.route==='catalog.items.list')));
+   await chooseItLeaf(page);
+   await page.type('[role=dialog] input[dir=rtl]','New Arabic name');
+   await page.type('[role=dialog] input[placeholder="Example: Water Pump"][dir=ltr]','New English name');
+   await page.select('[role=dialog] select','Piece');await addImage(page);
+   await clickText(page,await page.evaluate(()=>window.__captions.save),'[role=dialog]');
+   await page.waitForFunction(()=>window.__created===1);
+   const result=await page.evaluate(()=>({writes:window.__writes,closed:window.__closed,refetches:window.__refetches}));
+   assert.equal(result.writes.length,1);assert.equal(result.writes[0].route,'catalog.items.create');
+   assert.equal(result.writes[0].input.nodeId,101);assert.equal(result.writes[0].input.nameAr,'New Arabic name');assert.equal(result.writes[0].input.nameEn,'New English name');assert.equal(result.writes[0].input.unit,'Piece');assert.equal(result.writes[0].input.image.fileName,'fixture.png');
+   assert.equal(result.closed,0);assert.deepEqual(result.refetches,[]);await page.close();
+  });
+ }
+ await test('create-dialog validation keeps the form open without callbacks or writes',async()=>{
+  const page=await pageFor({role:'admin',dialogOnly:true});await clickText(page,await page.evaluate(()=>window.__captions.save),'[role=dialog]');
+  assert(await page.$('[role=dialog]'));assert.deepEqual(await page.evaluate(()=>[window.__created,window.__closed,window.__writes.length]),[0,0,0]);await page.close();
+ });
+ await test('create-dialog save failure retains entered values and allows retry',async()=>{
+  const page=await pageFor({role:'admin',dialogOnly:true,failSave:true});await chooseItLeaf(page);await page.type('[role=dialog] input[dir=rtl]','Retained name');await page.type('[role=dialog] input[placeholder="Example: Water Pump"][dir=ltr]','Retained English');await addImage(page);await clickText(page,await page.evaluate(()=>window.__captions.save),'[role=dialog]');
+  await page.waitForFunction(()=>document.body.innerText.includes('Fixture save failed'));
+  assert.equal((await formValues(page)).nameAr,'Retained name');assert.deepEqual(await page.evaluate(()=>[window.__created,window.__closed]),[0,0]);
+  assert.equal(await page.evaluate(()=>[...document.querySelector('[role=dialog]').querySelectorAll('button')].find(b=>b.textContent.trim()===window.__captions.save).disabled),false);await page.close();
+ });
+ await test('create-dialog cancellation calls only onClose without writes',async()=>{
+  const page=await pageFor({role:'admin',dialogOnly:true});await page.click('[role=dialog] [data-slot=dialog-close]');await page.waitForFunction(()=>window.__closed===1);assert.deepEqual(await page.evaluate(()=>[window.__created,window.__writes.length,window.__refetches.length]),[0,0,0]);await page.close();
+ });
+ await test('create-dialog refuses X and Escape while saving and notifies success once',async()=>{
+  const page=await pageFor({role:'admin',dialogOnly:true,deferSave:true});await chooseItLeaf(page);await page.type('[role=dialog] input[dir=rtl]','Busy name');await page.type('[role=dialog] input[placeholder="Example: Water Pump"][dir=ltr]','Busy English');await addImage(page);await clickText(page,await page.evaluate(()=>window.__captions.save),'[role=dialog]');await page.waitForFunction(()=>typeof window.__finishSave==='function');
+  await page.click('[role=dialog] [data-slot=dialog-close]');await page.keyboard.press('Escape');assert(await page.$('[role=dialog]'));assert.deepEqual(await page.evaluate(()=>[window.__created,window.__closed]),[0,0]);
+  await page.evaluate(()=>window.__finishSave());await page.waitForFunction(()=>window.__created===1);assert.equal(await page.evaluate(()=>window.__closed),0);assert.deepEqual(await page.evaluate(()=>window.__refetches),[]);await page.close();
+ });
  assert.deepEqual(errors,[],'Browser runtime errors');
  console.log(JSON.stringify({passed,network:'blocked',database:'not used',realComponent:'ItemsManager'}));
 }finally{await browser.close();}

@@ -1,10 +1,11 @@
 import { trpc } from "@/lib/trpc";
 import { CatalogPickerDialog } from "@/components/catalog/CatalogPickerDialog";
+import { CatalogItemCreateDialog } from "@/components/catalog/ItemsManager";
 import { CatalogStockField } from "@/components/purchase/CatalogStockField";
 import { PurchaseItemNeedFields } from "@/components/purchase/PurchaseItemNeedFields";
 import { DEFAULT_PURCHASE_DELIVERY_DAYS, purchaseNeedTimingFromDate, purchaseNeedTimingFromDays, remainingPurchaseCalendarDays, validPurchaseDeliveryDays } from "@shared/purchaseItemNeedDate";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { canRoleReadPurchaseCatalogStock } from "@shared/roles";
+import { canRoleReadPurchaseCatalogStock, canCreateCatalogItemFromPurchaseOrder } from "@shared/roles";
 import { goBackOrFallback } from "@/lib/backStack";
 import { useLocation, useSearch, useRoute } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -92,7 +93,8 @@ export default function CreatePurchaseOrder() {
   const utils = trpc.useUtils();
   const [, setLocation] = useLocation();
   const { t, language, dir } = useTranslation();
-  const { user } = useAuth();
+  const { user, authenticatedUser } = useAuth();
+  const canCreateCatalogFromOrder = canCreateCatalogItemFromPurchaseOrder(authenticatedUser);
   const defaultReviewRole: PurchaseReviewRole | "" = user?.role === "construction_procurement_manager" ? "construction_procurement_manager" : "";
   const searchStr = useSearch();
   const params = new URLSearchParams(searchStr);
@@ -449,6 +451,8 @@ export default function CreatePurchaseOrder() {
 
   // ── Dialog States ──────────────────────────────────────────
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
+  const [showCatalogCreate, setShowCatalogCreate] = useState(false);
+  const [catalogRefreshKey, setCatalogRefreshKey] = useState(0);
   const [catalogTargetIndex, setCatalogTargetIndex] = useState<number | null>(null);
 
   const updateItem = (idx: number, field: keyof ItemForm, value: any) => {
@@ -1258,7 +1262,21 @@ const handleCatalogSelect = (catalogItem: any) => {
         open={showCatalogPicker}
         onClose={() => setShowCatalogPicker(false)}
         onSelect={handleCatalogSelect}
+        onCreateNew={canCreateCatalogFromOrder ? () => setShowCatalogCreate(true) : undefined}
+        suspended={showCatalogCreate && canCreateCatalogFromOrder}
+        refreshKey={catalogRefreshKey}
       />
+      {showCatalogCreate && canCreateCatalogFromOrder && (
+        <CatalogItemCreateDialog
+          onClose={() => setShowCatalogCreate(false)}
+          onCreated={() => {
+            setShowCatalogCreate(false);
+            setCatalogRefreshKey(value => value + 1);
+            void utils.catalog.items.list.invalidate();
+            void utils.catalog.items.count.invalidate();
+          }}
+        />
+      )}
     </div>
   );
 }

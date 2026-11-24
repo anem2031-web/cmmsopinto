@@ -186,7 +186,17 @@ function NodeSelector({
 
 
 // ── Main Component ─────────────────────────────────────────────────────────
-export default function ItemsManager() {
+type CatalogItemCreateDialogProps = {
+  onClose: () => void;
+  onCreated: () => void;
+};
+
+/** Reuse the Catalog form without mounting its item list in a purchase picker. */
+export function CatalogItemCreateDialog(props: CatalogItemCreateDialogProps) {
+  return <ItemsManager createDialog={props} />;
+}
+
+export default function ItemsManager({ createDialog }: { createDialog?: CatalogItemCreateDialogProps } = {}) {
   const { user } = useAuth();
   const isCatalogAdmin = isCatalogAdminRole(user?.role);
   const canCreateItem = canCreateCatalogItem(user?.role);
@@ -196,7 +206,7 @@ export default function ItemsManager() {
   const { t, language } = useTranslation();
   const text = getCatalogItemsText(language);
 
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isDialogOpen, setIsDialogOpen] = useState(!!createDialog);
   const [viewItem, setViewItem] = useState<any | null>(null);
   const [previewImage, setPreviewImage] = useState<{ url: string; alt: string } | null>(null);
   const [editingItem, setEditingItem] = useState<any | null>(null);
@@ -306,7 +316,7 @@ export default function ItemsManager() {
       includeInactive: (isCatalogAdmin || canDeactivateCatalogItem(user?.role)) || undefined,
       search: debouncedSearch || undefined,
       nodeIds: catalogFilterNodeId !== null ? catalogFilterNodeIds : undefined,
-    });
+    }, createDialog ? { enabled: false } : undefined);
 
   const pageItems = items ?? [];
   const hasNextPage = pageItems.length === PAGE_SIZE;
@@ -322,6 +332,7 @@ export default function ItemsManager() {
 
   // إعادة التحميل من الصفحة الأولى (تُستخدم بعد إضافة/تعديل/حذف صنف)
   const reloadFromStart = () => {
+    if (createDialog) return;
     setPage(0);
     refetch();
   };
@@ -555,6 +566,7 @@ export default function ItemsManager() {
       resetForm();
       setIsDialogOpen(false);
       toast.success(editingItem ? text.itemUpdated : text.itemAdded);
+      createDialog?.onCreated();
     } catch (error) {
       const message = getCatalogError(error, language, text.saveFailed);
       setImageSaveStage("error");
@@ -564,6 +576,208 @@ export default function ItemsManager() {
       setIsSavingItem(false);
     }
   };
+
+  const itemDialog = (
+      <Dialog
+        open={isDialogOpen}
+        onOpenChange={open => {
+          if (!open && isSavingItem) return;
+          if (!open) resetForm();
+          setIsDialogOpen(open);
+          if (!open) createDialog?.onClose();
+        }}
+      >
+        <DialogContent dir={language === "en" ? "ltr" : "rtl"} className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {editingItem ? text.editItem : t.catalog.items.addNew}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">{text.categoryRequiredLabel}</label>
+              <NodeSelector value={selectedNode?.id || null} onChange={handleNodeChange} creationRole={editingItem ? undefined : user?.role} />
+              {!editingItem && creationNodeIds !== null && (
+                <p className="text-xs text-muted-foreground">{creationNodeIds.size > 0 ? text.itCreationScopeHint : text.itCreationCategoryUnavailable}</p>
+              )}
+            </div>
+
+            {selectedNode && (
+              <div className="space-y-1">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Hash className="w-3.5 h-3.5 text-muted-foreground" />
+                  {text.itemCode}
+                  <span className="text-xs text-muted-foreground font-normal">{text.editable}</span>
+                </label>
+                <div className="relative">
+                  <Input
+                    value={customCode}
+                    onChange={e => {
+                      setCustomCode(e.target.value);
+                      setCodeEdited(true);
+                    }}
+                    dir="ltr"
+                    className="font-mono pr-10"
+                    placeholder={generatedCode}
+                  />
+                  {customCode !== generatedCode && generatedCode && (
+                    <button
+                      onClick={() => { setCustomCode(generatedCode); setCodeEdited(false); }}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-primary hover:underline"
+                      title={text.regenerateCode}
+                    >
+                      {text.automatic}
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {text.expectedCode} <span className="font-mono text-primary font-medium">{generatedCode}</span>
+                  {" "}{text.codeFormatHelp} {String(((catalogNodes as CatalogNode[]).find(node => Number(node.id) === Number(selectedNode.id))?.code || codePreviewQuery.data?.nodeCode || selectedNode.code || "11")).trim()}-001)
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">{t.catalog.fields.nameAr} *</label>
+              <Input value={formData.nameAr}
+                onChange={e => setFormData({ ...formData, nameAr: e.target.value })}
+                placeholder={text.itemNameExample} dir="rtl" />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">{t.catalog.fields.nameEn} *</label>
+              <Input value={formData.nameEn}
+                onChange={e => setFormData({ ...formData, nameEn: e.target.value })}
+                placeholder={text.itemNameEnglishExample} dir="ltr" />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">
+                {t.catalog.fields.nameUr}
+                <span className="text-muted-foreground text-xs mr-2">{text.optional}</span>
+              </label>
+              <Input value={formData.nameUr}
+                onChange={e => setFormData({ ...formData, nameUr: e.target.value })}
+                placeholder={text.optionalPlaceholder} />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">
+                {text.itemImage}
+                {!editingItem || REQUIRE_CATALOG_IMAGE_ON_EDIT ? (
+                  <span className="text-destructive text-xs mr-2">{text.required}</span>
+                ) : (
+                  <span className="text-muted-foreground text-xs mr-2">{text.optional}</span>
+                )}
+              </label>
+              <Input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] || null;
+                  setSelectedImage(file);
+                  setImageUploadProgress(0);
+                  setImageSaveStage("idle");
+                  setImageSaveMessage(file ? text.imageReady : "");
+                }}
+                disabled={isSavingItem}
+              />
+              {editingItem?.primaryImageUrl && !selectedImage && (
+                <p className="text-xs text-muted-foreground">{text.existingImageKept}</p>
+              )}
+              {selectedImage && (
+                <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <span className="truncate text-muted-foreground" title={selectedImage.name}>
+                      {selectedImage.name}
+                    </span>
+                    {(imageSaveStage === "uploading" || imageSaveStage === "linking" || imageSaveStage === "success") && (
+                      <span className="shrink-0 font-medium tabular-nums">{imageUploadProgress}%</span>
+                    )}
+                  </div>
+
+                  {(imageSaveStage === "uploading" || imageSaveStage === "linking" || imageSaveStage === "success") && (
+                    <Progress value={imageUploadProgress} className="h-2" />
+                  )}
+
+                  <div className={cn(
+                    "flex items-start gap-2 text-xs",
+                    imageSaveStage === "success" && "text-emerald-700",
+                    imageSaveStage === "error" && "text-destructive",
+                    imageSaveStage !== "success" && imageSaveStage !== "error" && "text-muted-foreground",
+                  )}>
+                    {imageSaveStage === "success" ? (
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                    ) : imageSaveStage === "error" ? (
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    ) : imageSaveStage === "uploading" || imageSaveStage === "linking" ? (
+                      <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+                    ) : null}
+                    <span>{imageSaveMessage || text.imageReady}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">{t.catalog.fields.unit}</label>
+                <select
+                  value={formData.unit}
+                  onChange={e => setFormData({ ...formData, unit: e.target.value })}
+                  className="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">{text.selectUnit}</option>
+                  {(units || []).map((u: any) => (
+                    <option key={u.id} value={u.nameAr}>{u.nameAr} / {u.nameEn}</option>
+                  ))}
+                </select>
+                {editingItem?.unit && !(units || []).some((u: any) => u.nameAr === editingItem.unit || u.nameEn === editingItem.unit) && (
+                  <p className="text-xs text-amber-700">
+                    {formatCatalogText(text.historicalUnit, { unit: editingItem.unit })}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">{t.catalog.fields.manufacturer}</label>
+                <Input value={formData.manufacturer}
+                  onChange={e => setFormData({ ...formData, manufacturer: e.target.value })}
+                  placeholder={text.manufacturerExample} />
+              </div>
+            </div>
+
+            {editingItem && (
+              <div className="border-t pt-4 mt-2">
+                <SupplierPickerSection itemId={editingItem.id} />
+              </div>
+            )}
+
+            <Button
+              onClick={handleCreate}
+              disabled={isSavingItem}
+              className="w-full"
+            >
+              {isSavingItem && (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              )}
+              {isSavingItem
+                ? imageSaveStage === "uploading"
+                  ? formatCatalogText(text.uploadImageProgress, { percent: imageUploadProgress })
+                  : imageSaveStage === "linking"
+                    ? text.savingImage
+                    : t.common.saving
+                : editingItem
+                  ? text.updateItem
+                  : t.common.save}
+            </Button>
+
+          </div>
+        </DialogContent>
+      </Dialog>
+  );
+
+  if (createDialog) return itemDialog;
 
   return (
     <div className="space-y-4">
@@ -853,202 +1067,7 @@ export default function ItemsManager() {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={isDialogOpen}
-        onOpenChange={open => {
-          if (!open && isSavingItem) return;
-          if (!open) resetForm();
-          setIsDialogOpen(open);
-        }}
-      >
-        <DialogContent dir={language === "en" ? "ltr" : "rtl"} className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              {editingItem ? text.editItem : t.catalog.items.addNew}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 pt-2">
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">{text.categoryRequiredLabel}</label>
-              <NodeSelector value={selectedNode?.id || null} onChange={handleNodeChange} creationRole={editingItem ? undefined : user?.role} />
-              {!editingItem && creationNodeIds !== null && (
-                <p className="text-xs text-muted-foreground">{creationNodeIds.size > 0 ? text.itCreationScopeHint : text.itCreationCategoryUnavailable}</p>
-              )}
-            </div>
-
-            {selectedNode && (
-              <div className="space-y-1">
-                <label className="text-sm font-medium flex items-center gap-2">
-                  <Hash className="w-3.5 h-3.5 text-muted-foreground" />
-                  {text.itemCode}
-                  <span className="text-xs text-muted-foreground font-normal">{text.editable}</span>
-                </label>
-                <div className="relative">
-                  <Input
-                    value={customCode}
-                    onChange={e => {
-                      setCustomCode(e.target.value);
-                      setCodeEdited(true);
-                    }}
-                    dir="ltr"
-                    className="font-mono pr-10"
-                    placeholder={generatedCode}
-                  />
-                  {customCode !== generatedCode && generatedCode && (
-                    <button
-                      onClick={() => { setCustomCode(generatedCode); setCodeEdited(false); }}
-                      className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-primary hover:underline"
-                      title={text.regenerateCode}
-                    >
-                      {text.automatic}
-                    </button>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {text.expectedCode} <span className="font-mono text-primary font-medium">{generatedCode}</span>
-                  {" "}{text.codeFormatHelp} {String(((catalogNodes as CatalogNode[]).find(node => Number(node.id) === Number(selectedNode.id))?.code || codePreviewQuery.data?.nodeCode || selectedNode.code || "11")).trim()}-001)
-                </p>
-              </div>
-            )}
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">{t.catalog.fields.nameAr} *</label>
-              <Input value={formData.nameAr}
-                onChange={e => setFormData({ ...formData, nameAr: e.target.value })}
-                placeholder={text.itemNameExample} dir="rtl" />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">{t.catalog.fields.nameEn} *</label>
-              <Input value={formData.nameEn}
-                onChange={e => setFormData({ ...formData, nameEn: e.target.value })}
-                placeholder={text.itemNameEnglishExample} dir="ltr" />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">
-                {t.catalog.fields.nameUr}
-                <span className="text-muted-foreground text-xs mr-2">{text.optional}</span>
-              </label>
-              <Input value={formData.nameUr}
-                onChange={e => setFormData({ ...formData, nameUr: e.target.value })}
-                placeholder={text.optionalPlaceholder} />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">
-                {text.itemImage}
-                {!editingItem || REQUIRE_CATALOG_IMAGE_ON_EDIT ? (
-                  <span className="text-destructive text-xs mr-2">{text.required}</span>
-                ) : (
-                  <span className="text-muted-foreground text-xs mr-2">{text.optional}</span>
-                )}
-              </label>
-              <Input
-                type="file"
-                accept="image/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0] || null;
-                  setSelectedImage(file);
-                  setImageUploadProgress(0);
-                  setImageSaveStage("idle");
-                  setImageSaveMessage(file ? text.imageReady : "");
-                }}
-                disabled={isSavingItem}
-              />
-              {editingItem?.primaryImageUrl && !selectedImage && (
-                <p className="text-xs text-muted-foreground">{text.existingImageKept}</p>
-              )}
-              {selectedImage && (
-                <div className="space-y-2 rounded-md border bg-muted/20 p-3">
-                  <div className="flex items-center justify-between gap-3 text-xs">
-                    <span className="truncate text-muted-foreground" title={selectedImage.name}>
-                      {selectedImage.name}
-                    </span>
-                    {(imageSaveStage === "uploading" || imageSaveStage === "linking" || imageSaveStage === "success") && (
-                      <span className="shrink-0 font-medium tabular-nums">{imageUploadProgress}%</span>
-                    )}
-                  </div>
-
-                  {(imageSaveStage === "uploading" || imageSaveStage === "linking" || imageSaveStage === "success") && (
-                    <Progress value={imageUploadProgress} className="h-2" />
-                  )}
-
-                  <div className={cn(
-                    "flex items-start gap-2 text-xs",
-                    imageSaveStage === "success" && "text-emerald-700",
-                    imageSaveStage === "error" && "text-destructive",
-                    imageSaveStage !== "success" && imageSaveStage !== "error" && "text-muted-foreground",
-                  )}>
-                    {imageSaveStage === "success" ? (
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-                    ) : imageSaveStage === "error" ? (
-                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                    ) : imageSaveStage === "uploading" || imageSaveStage === "linking" ? (
-                      <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
-                    ) : null}
-                    <span>{imageSaveMessage || text.imageReady}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-sm font-medium">{t.catalog.fields.unit}</label>
-                <select
-                  value={formData.unit}
-                  onChange={e => setFormData({ ...formData, unit: e.target.value })}
-                  className="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                >
-                  <option value="">{text.selectUnit}</option>
-                  {(units || []).map((u: any) => (
-                    <option key={u.id} value={u.nameAr}>{u.nameAr} / {u.nameEn}</option>
-                  ))}
-                </select>
-                {editingItem?.unit && !(units || []).some((u: any) => u.nameAr === editingItem.unit || u.nameEn === editingItem.unit) && (
-                  <p className="text-xs text-amber-700">
-                    {formatCatalogText(text.historicalUnit, { unit: editingItem.unit })}
-                  </p>
-                )}
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium">{t.catalog.fields.manufacturer}</label>
-                <Input value={formData.manufacturer}
-                  onChange={e => setFormData({ ...formData, manufacturer: e.target.value })}
-                  placeholder={text.manufacturerExample} />
-              </div>
-            </div>
-
-            {editingItem && (
-              <div className="border-t pt-4 mt-2">
-                <SupplierPickerSection itemId={editingItem.id} />
-              </div>
-            )}
-
-            <Button
-              onClick={handleCreate}
-              disabled={isSavingItem}
-              className="w-full"
-            >
-              {isSavingItem && (
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              )}
-              {isSavingItem
-                ? imageSaveStage === "uploading"
-                  ? formatCatalogText(text.uploadImageProgress, { percent: imageUploadProgress })
-                  : imageSaveStage === "linking"
-                    ? text.savingImage
-                    : t.common.saving
-                : editingItem
-                  ? text.updateItem
-                  : t.common.save}
-            </Button>
-
-          </div>
-        </DialogContent>
-      </Dialog>
+      {itemDialog}
     </div>
   );
 }

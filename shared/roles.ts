@@ -132,6 +132,18 @@ export function canCreateCatalogItem(role?: string | null): boolean {
   ] as readonly string[]).includes(role);
 }
 
+/** Purchase-order shortcut only; the existing Catalog creation grant is unchanged. */
+export function canCreateCatalogItemFromPurchaseOrder(actor?: {
+  role?: string | null;
+  isActive?: number | boolean | null;
+} | null): boolean {
+  return Number(actor?.isActive) === 1 && !!actor?.role && ([
+    APP_ROLE.OWNER,
+    APP_ROLE.ADMIN,
+    APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER,
+  ] as readonly string[]).includes(actor.role);
+}
+
 export function canUpdateCatalogItem(role?: string | null): boolean {
   return role === APP_ROLE.SENIOR_MANAGEMENT || canCreateCatalogItem(role);
 }

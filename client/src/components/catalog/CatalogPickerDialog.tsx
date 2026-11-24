@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { BookOpen, Search, ChevronDown, ChevronRight, FolderOpen, Loader2 } from "lucide-react";
+import { BookOpen, Search, ChevronDown, ChevronRight, FolderOpen, Loader2, Plus } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { getLocalizedCatalogDescription, getLocalizedCatalogName, getLocalizedCatalogUnitName } from "@/i18n/catalogMasterData";
 
@@ -26,8 +26,15 @@ export function CatalogPickerDialog({
   onClose,
   onSelect,
   requiredUnit,
+  onCreateNew,
+  suspended = false,
+  refreshKey = 0,
 }: {
   open: boolean;
+  /** Opt-in shortcut used only by the purchase-order form. */
+  onCreateNew?: () => void;
+  suspended?: boolean;
+  refreshKey?: number;
   /** Matching material needs keeps the existing exact-unit rule. */
   requiredUnit?: string;
   onClose: () => void;
@@ -47,6 +54,15 @@ onSelect: (item: {
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
+  const lastRefreshKey = useRef(refreshKey);
+  const pickerVisible = open && !suspended;
+
+  useEffect(() => {
+    if (lastRefreshKey.current === refreshKey) return;
+    lastRefreshKey.current = refreshKey;
+    // A new item may belong to another category; keep the typed search usable.
+    setSelectedNodeId(null);
+  }, [refreshKey]);
 
   // debounce: انتظر 350ms بعد توقف الكتابة ثم ابعث للسيرفر
   useEffect(() => {
@@ -56,10 +72,10 @@ onSelect: (item: {
 
   const { data: allNodes, error: nodesError, refetch: refetchNodes, isFetching: nodesFetching } = trpc.catalog.nodes.list.useQuery(
     { isActive: true },
-    { enabled: open, retry: false, ...independentReadOptions }
+    { enabled: pickerVisible, retry: false, ...independentReadOptions }
   );
 
-  const { data: catalogUnits, error: unitsError, refetch: refetchUnits, isFetching: unitsFetching } = trpc.catalog.units.list.useQuery(undefined, { enabled: open, retry: false, ...independentReadOptions });
+  const { data: catalogUnits, error: unitsError, refetch: refetchUnits, isFetching: unitsFetching } = trpc.catalog.units.list.useQuery(undefined, { enabled: pickerVisible, retry: false, ...independentReadOptions });
 
   // جمع ID التصنيف المختار + كل أحفاده بشكل تكراري
   const getDescendantIds = (nodeId: number, nodes: CatalogNode[]): number[] => {
@@ -80,7 +96,7 @@ onSelect: (item: {
       search: debouncedSearch || undefined,
       nodeIds: selectedNodeIds,
     },
-    { enabled: open, retry: false, ...independentReadOptions }
+    { enabled: pickerVisible, retry: false, ...independentReadOptions }
   );
 
   const catalogError = itemsError || nodesError || unitsError;
@@ -162,19 +178,25 @@ onSelect: (item: {
   };
 
   return (
-    <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
-      <DialogContent dir={language === "en" ? "ltr" : "rtl"} className="!max-w-none w-[42rem] max-h-[85vh] flex flex-col p-0 resize overflow-auto min-w-[320px] min-h-[300px]">
-        <DialogHeader className="px-5 pt-5 pb-3 border-b">
-          <DialogTitle className="flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-primary" />
+    <Dialog open={pickerVisible} onOpenChange={o => { if (!o && !suspended) onClose(); }}>
+      <DialogContent dir={language === "en" ? "ltr" : "rtl"} style={onCreateNew ? { width: "min(42rem, calc(100vw - 2rem))", minWidth: 0 } : undefined} className="!max-w-none w-[42rem] max-h-[85vh] flex flex-col p-0 resize overflow-auto min-w-[320px] min-h-[300px]">
+        <DialogHeader style={onCreateNew ? { paddingRight: "3rem" } : undefined} className={cn("px-5 pt-5 pb-3 border-b", onCreateNew && "flex-row items-center justify-between gap-2 text-start")}>
+          <DialogTitle className={cn("flex items-center gap-2", onCreateNew && "min-w-0 text-sm sm:text-lg")}>
+            <BookOpen className="w-4 h-4 shrink-0 text-primary" />
             {t.workflow.purchase.catalogPickItem}
           </DialogTitle>
+          {onCreateNew && (
+            <Button type="button" size="sm" variant="outline" className="shrink-0 gap-1.5 text-xs sm:text-sm" onClick={onCreateNew}>
+              <Plus className="w-4 h-4" />
+              {t.workflow.purchase.catalogCreateItem}
+            </Button>
+          )}
         </DialogHeader>
 
         <div className="flex flex-1 overflow-hidden">
 
           {/* Sidebar — شجرة التصنيفات */}
-          <div className={`w-48 shrink-0 overflow-y-auto p-2 bg-muted/20 ${isRTL ? "border-l" : "border-r"}`}>
+          <div style={onCreateNew ? { width: "clamp(7rem, 28vw, 12rem)" } : undefined} className={`w-48 shrink-0 overflow-y-auto p-2 bg-muted/20 ${isRTL ? "border-l" : "border-r"}`}>
             <p className="text-xs text-muted-foreground px-2 pb-2 font-medium">{t.workflow.purchase.categoriesLabel}</p>
             <button
               onClick={() => setSelectedNodeId(null)}

@@ -202,7 +202,7 @@ describe("actual catalog dialog save handler", () => {
       selectedNode: { id: 7, code: "7" }, catalogNodes: [{ id: 7, code: "7" }],
       formData: { nameAr: "صنف", nameEn: "Item", unit: "piece" }, customCode: "", codeEdited: false,
       editingItem: null, selectedImage: null, codePreviewQuery: {}, REQUIRE_CATALOG_IMAGE_ON_EDIT,
-      creationNodeIds: null, language: "ar", text: getCatalogItemsText("ar"), getCatalogError,
+      createDialog: undefined, creationNodeIds: null, language: "ar", text: getCatalogItemsText("ar"), getCatalogError,
       t: { catalog: { validation: { requiredFields: "required" } } },
       toast: { error: vi.fn(), success: vi.fn() },
       setIsSavingItem: vi.fn(), setImageSaveStage: vi.fn(), setImageUploadProgress: vi.fn(), setImageSaveMessage: vi.fn(),

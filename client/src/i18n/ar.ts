@@ -2307,6 +2307,7 @@ const ar = {
       once: "مرة",
       times: "مرات",
       catalogPickItem: "اختر صنفاً من الكاتلوج",
+      catalogCreateItem: "إضافة صنف جديد",
       catalogLoadFailed: "تعذر تحميل بيانات الكتالوج. أعد المحاولة.",
       catalogAccessDenied: "ليس لديك صلاحية لقراءة بيانات الكتالوج. راجع مسؤول النظام.",
       catalogRetry: "إعادة المحاولة",

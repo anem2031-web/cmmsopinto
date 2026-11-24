@@ -2227,6 +2227,7 @@ const ur: TranslationKeys = {
       once: "بار",
       times: "بار",
       catalogPickItem: "کیٹلاگ سے آئٹم منتخب کریں",
+      catalogCreateItem: "نیا آئٹم شامل کریں",
       catalogLoadFailed: "کیٹلاگ کی معلومات لوڈ نہیں ہو سکیں۔ دوبارہ کوشش کریں۔",
       catalogAccessDenied: "آپ کو کیٹلاگ کی معلومات پڑھنے کی اجازت نہیں ہے۔ منتظم سے رابطہ کریں۔",
       catalogRetry: "دوبارہ کوشش کریں",

@@ -2247,6 +2247,7 @@ const en: TranslationKeys = {
       once: "time",
       times: "times",
       catalogPickItem: "Choose an item from the catalog",
+      catalogCreateItem: "Add new item",
       catalogLoadFailed: "Unable to load catalog data. Please try again.",
       catalogAccessDenied: "You do not have permission to read catalog data. Contact your administrator.",
       catalogRetry: "Retry",
