@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
-import { router } from "../routers/_shared/procedures";
+import { router, inventoryReadProcedure, warehouseProcedure } from "../routers/_shared/procedures";
+import { canRoleAccessPath, canRoleReadPurchaseCatalogStock } from "../../shared/roles";
 import { createCatalogStockProcedure } from "../routers/inventory/catalog-stock.procedure";
 import { summarizeCatalogStock, type CatalogStockRow } from "../../shared/catalog-stock";
 import { observerRpcAllowed } from "../../shared/observer-policy";
@@ -55,7 +56,7 @@ function caller(role: string | null, getDatabase: () => Promise<any>, isActive =
 }
 
 describe("Stock read authorization and limited payload", () => {
-  it.each(["owner", "admin", "warehouse", "maintenance_manager", "purchase_requester"])("permits the existing inventory reader %s", async role => {
+  it.each(["owner", "admin", "warehouse", "maintenance_manager", "purchase_requester", "construction_procurement_manager"])("permits the existing inventory reader %s", async role => {
     const fake = fakeDatabase();
     const result = await caller(role, async () => fake.database).catalogStock({ catalogItemIds: [1, 1, 2] });
     expect(result[0].totals[0].quantity).toBe(2);
@@ -65,9 +66,29 @@ describe("Stock read authorization and limited payload", () => {
     expect(result[0]).not.toHaveProperty("inventoryId");
     expect(JSON.stringify(result)).not.toMatch(/unitCost|supplier|trackingToken/);
   });
-  it.each(["general_maintenance_manager", "construction_procurement_manager", "it_manager", "it_member", "technician"])("keeps %s excluded before any database access", async role => {
+  it.each(["general_maintenance_manager", "it_manager", "it_member", "technician"])("keeps %s excluded before any database access", async role => {
     const getDatabase = vi.fn();
     await expect(caller(role, getDatabase).catalogStock({ catalogItemIds: [1] })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(getDatabase).not.toHaveBeenCalled();
+  });
+  it("permits only the construction purchase-form reference and retains inventory read/write denials", async () => {
+    expect(canRoleReadPurchaseCatalogStock("construction_procurement_manager")).toBe(true);
+    expect(canRoleReadPurchaseCatalogStock("general_maintenance_manager")).toBe(false);
+    expect(canRoleAccessPath("construction_procurement_manager", "/inventory")).toBe(false);
+    const read = vi.fn(), write = vi.fn();
+    const api = router({ inventory: router({
+      list: inventoryReadProcedure.query(read),
+      update: warehouseProcedure.mutation(write),
+    }) });
+    const client = api.createCaller({ user: { id: 101, role: "construction_procurement_manager", isActive: 1 } } as any).inventory;
+    await expect(client.list()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(client.update()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(read).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
+  it("denies inactive construction accounts before loading any inventory data", async () => {
+    const getDatabase = vi.fn();
+    await expect(caller("construction_procurement_manager", getDatabase, 0).catalogStock({ catalogItemIds: [1] })).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(getDatabase).not.toHaveBeenCalled();
   });
   it("permits the observer's reviewed read without permitting mutations", async () => {

@@ -4,7 +4,7 @@ import { CatalogStockField } from "@/components/purchase/CatalogStockField";
 import { PurchaseItemNeedFields } from "@/components/purchase/PurchaseItemNeedFields";
 import { DEFAULT_PURCHASE_DELIVERY_DAYS, purchaseNeedTimingFromDate, purchaseNeedTimingFromDays, remainingPurchaseCalendarDays, validPurchaseDeliveryDays } from "@shared/purchaseItemNeedDate";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { canRoleAccessPath } from "@shared/roles";
+import { canRoleReadPurchaseCatalogStock } from "@shared/roles";
 import { goBackOrFallback } from "@/lib/backStack";
 import { useLocation, useSearch, useRoute } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -343,7 +343,7 @@ export default function CreatePurchaseOrder() {
       : prev);
   }, [draftId, defaultReviewRole]);
 
-  const canReadCatalogStock = canRoleAccessPath(user?.role, "/inventory");
+  const canReadCatalogStock = canRoleReadPurchaseCatalogStock(user?.role);
   const stockCatalogItemIds = useMemo(() => Array.from(new Set(items
     .filter(item => item.sourceType === "catalog" && Number(item.catalogItemId) > 0)
     .map(item => Number(item.catalogItemId)))).sort((a, b) => a - b), [items]);

@@ -360,6 +360,11 @@ export function canRoleAccessPath(role: string | null | undefined, path: string)
   return true;
 }
 
+/** Purchase-form quantity reference; does not grant inventory page or movement access. */
+export function canRoleReadPurchaseCatalogStock(role?: string | null): boolean {
+  return role === APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER || canRoleAccessPath(role, "/inventory");
+}
+
 /** One IT team; roles retain separate procurement authority. */
 export function isItTeamRole(role?: string | null): boolean {
   return role === APP_ROLE.IT_MANAGER || role === APP_ROLE.IT_MEMBER;

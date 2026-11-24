@@ -2,21 +2,25 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { eq, inArray, sql } from "drizzle-orm";
 import { catalogItems, catalogUnits, inventory, warehouses } from "../../../drizzle/schema";
-import { canRoleAccessPath } from "../../../shared/roles";
+import { APP_ROLE, canRoleReadPurchaseCatalogStock } from "../../../shared/roles";
 import { isBusinessGuardedRole } from "../../../shared/business-role-policy";
 import { summarizeCatalogStock } from "../../../shared/catalog-stock";
-import { inventoryReadProcedure } from "../_shared/procedures";
+import { protectedProcedure } from "../_shared/procedures";
 
 /** A bounded batch read for the purchase form; no prices, suppliers, lots or stock writes. */
 export function createCatalogStockProcedure(getDatabase: () => Promise<any>) {
-  return inventoryReadProcedure.input(z.object({
-    catalogItemIds: z.array(z.number().int().positive()).min(1).max(500),
-  })).query(async ({ input, ctx }) => {
-    // Purchase-form availability remains a reference capability even when the
-    // standalone inventory-management page is not part of this role's workspace.
-    if (!isBusinessGuardedRole(ctx.user.role) && !canRoleAccessPath(ctx.user.role, "/inventory")) {
+  return protectedProcedure.use(({ ctx, next }) => {
+    const role = ctx.user.role;
+    const construction = role === APP_ROLE.CONSTRUCTION_PROCUREMENT_MANAGER;
+    if (role === APP_ROLE.GENERAL_MAINTENANCE_MANAGER
+      || construction && Number(ctx.user.isActive) !== 1
+      || !isBusinessGuardedRole(role) && !canRoleReadPurchaseCatalogStock(role)) {
       throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لعرض أرصدة المخزون" });
     }
+    return next({ ctx });
+  }).input(z.object({
+    catalogItemIds: z.array(z.number().int().positive()).min(1).max(500),
+  })).query(async ({ input }) => {
     const database = await getDatabase();
     if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر تحميل أرصدة المخزون" });
     const [rows, units] = await Promise.all([
