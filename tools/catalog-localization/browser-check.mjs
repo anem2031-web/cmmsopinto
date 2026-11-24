@@ -16,13 +16,14 @@ const language=new URLSearchParams(location.search).get('lang')||'en';
 document.documentElement.lang=language;document.documentElement.dir=language==='en'?'ltr':'rtl';
 const user={id:1,role:'admin',isActive:1};
 // Latin stored values, even nameAr, make static Arabic leaks detectable.
-const nodes=[{id:1,parentId:null,code:'01',nameAr:'Electrical',nameEn:'Electrical',level:1,isActive:1},{id:2,parentId:1,code:'01-01',nameAr:'Lighting',nameEn:'Lighting',level:2,isActive:1},{id:3,parentId:null,code:'02',nameAr:'Tools',nameEn:'Tools',level:1,isActive:1}];
+const distinctCategories=new URLSearchParams(location.search).get('categoryNames')==='distinct';
+const nodes=distinctCategories?[{id:1,parentId:null,code:'01',nameAr:'  الكهرباء العربية  ',nameEn:'  Electrical category EN  ',level:1,isActive:1},{id:2,parentId:1,code:'01-01',nameAr:'الإنارة العربية',nameEn:'Lighting category EN',level:2,isActive:1},{id:3,parentId:null,code:'02',nameAr:'تصنيف بلا ترجمة',nameEn:'',level:1,isActive:1},{id:4,parentId:null,code:'03',nameAr:'تصنيف باسم فارغ',nameEn:'   ',level:1,isActive:1}]:[{id:1,parentId:null,code:'01',nameAr:'Electrical',nameEn:'Electrical',level:1,isActive:1},{id:2,parentId:1,code:'01-01',nameAr:'Lighting',nameEn:'Lighting',level:2,isActive:1},{id:3,parentId:null,code:'02',nameAr:'Tools',nameEn:'Tools',level:1,isActive:1}];
 const units=[{id:1,nameAr:'Piece',nameEn:'Piece',isActive:1},{id:2,nameAr:'Box',nameEn:'Box',isActive:0}];
 const suppliers=[{id:1,nameAr:'Gulf Supplies',nameEn:'Gulf Supplies',phone:'0500000001',email:'supplier@example.invalid',country:'Saudi Arabia',contactName:'Sam',taxNumber:'300000000000001',commercialRegistration:'100001',address:'Riyadh',notes:'Fixture notes',isManufacturer:true,isActive:true}];
 const supplierCandidates=[{id:21,extractedName:'New Supplier',invoiceNumber:'INV-21',taxNumber:'300000000000021',createdAt:'2026-11-24'}];
 const items=[{id:11,code:'01-01-001',itemCode:'01-01-001',nameAr:'LED Fixture',nameEn:'LED Fixture',nameUr:'LED Fixture',descriptionAr:'Lamp fixture',descriptionEn:'Lamp fixture',nodeId:2,unit:'Piece',manufacturer:'Fixture maker',isActive:1,inventoryPageCount:1}];
 const candidates=[31,32].map((id,i)=>({id,inventoryId:800+id,sourceReceiptId:900+id,sourceReceiptItemId:id,purchaseOrderId:100+id,purchaseOrderItemId:200+id,catalogSupplierId:1,supplierCandidateId:null,invoiceNumber:'INV-'+id,itemName:'New Lamp '+id,itemNameAr:'New Lamp '+id,itemNameEn:'New Lamp '+id,supplierItemCode:'SKU-'+id,purchaseUnit:'Piece',manufacturerBarcode:'123'+id,createdAt:'2026-11-'+(20+i),supplierNameAr:'Gulf Supplies',supplierNameEn:'Gulf Supplies',poNumber:'PR-MOCK-'+id}));
-window.__reads=[];window.__mutations=[];
+window.__reads=[];window.__mutations=[];window.__catalogCaptions={itemsTab:({ar,en,ur})[language].catalog.tabs.items,addItem:({ar,en,ur})[language].catalog.items.addNew};
 function read(route,input={}){
  if(route==='inventory.bookPages')return {master:items[0],pages:[{id:801,itemName:'LED Fixture',warehouseId:1,isFrozen:0,quantity:3,unit:'Piece',movements:{incoming:4,outgoing:1},lots:[]}],nextId:null};
  if(route==='inventory.getItemSummary')return {itemName:'LED Fixture',description:'Fixture lamp',internalCode:'INV-MOCK',quantity:3,unit:'Piece',location:'Main warehouse',updatedAt:'2026-11-24',lastPurchasePrice:14};
@@ -132,9 +133,11 @@ try {
       ? r.respond({ status: 200, contentType: "text/html", body: html })
       : r.abort()
   );
-  const goto = async (lang = "en", width = 1366) => {
+  const goto = async (lang = "en", width = 1366, extraQuery = "") => {
     await page.setViewport({ width, height: 960 });
-    await page.goto("http://catalog-fixture.invalid/catalog?lang=" + lang);
+    await page.goto(
+      "http://catalog-fixture.invalid/catalog?lang=" + lang + extraQuery
+    );
     await page.waitForSelector("[role=tab]");
   };
   const click = async (label, selector = "button") => {
@@ -241,221 +244,342 @@ try {
     checked.push(label);
     console.log("Checked " + label);
   };
-  await goto();
-  assert.equal(await page.$$eval("[role=tab]", xs => xs.length), 7);
-  for (const label of [
-    "Overview",
-    "Categories",
-    "Items",
-    "Units",
-    "Suppliers",
-    "New items",
-    "Settings",
-  ]) {
-    await tab(label);
-    await clean("EN tab " + label);
-    assert.deepEqual(await page.evaluate(() => window.__mutations), []);
-  }
-  await tab("Categories");
-  await click("Add Root Category");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Add category");
-  assert.equal(
-    await page.$eval(
-      "[role=dialog] input[dir=rtl]",
-      e => getComputedStyle(e).direction
-    ),
-    "rtl"
-  );
-  await close();
-  await title("Edit");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Edit category");
-  await close();
-  await title("Move / restructure");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Move category");
-  await click("Preview numbering before applying");
-  await page.waitForFunction(() =>
-    document.body.innerText.includes("Previous code")
-  );
-  await clean("Move preview");
-  await close();
-  await tab("Units");
-  await click("Add unit");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Add unit");
-  assert.equal(
-    await page.$eval("[role=dialog] input[dir=rtl]", e =>
-      e.getAttribute("dir")
-    ),
-    "rtl"
-  );
-  await close();
-  await title("Edit");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Edit unit");
-  await close();
-  await tab("Items");
-  await click("Add Item");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Add item");
-  assert.equal(
-    await page.$eval("[role=dialog] input[dir=rtl]", e =>
-      e.getAttribute("dir")
-    ),
-    "rtl"
-  );
-  await close();
-  await click("Edit");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Edit item");
-  await close();
-  await click("View");
-  await page.waitForSelector("[role=dialog]");
-  await clean("View item");
-  await close();
-  await page.click('[aria-label="Item book details"]');
-  await page.waitForFunction(() =>
-    document.body.innerText.includes("Detailed movements and documents")
-  );
-  await clean("Item book pages");
-  await click("Detailed movements and documents");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Item book history");
-  await tab("Receipt history");
-  await clean("Book receipt history");
-  await tab("Movement history");
-  await clean("Book movement history");
-  await page.keyboard.press("Escape");
-  await page.waitForFunction(() => !document.querySelector("[role=dialog]"));
-  await page.evaluate(() => {
-    const input =
-      document.querySelector('input[type=file][accept*=".xlsx"]') ||
-      document.querySelector("input[type=file]");
-    if (!input) throw Error("Import input missing");
-    const d = new DataTransfer();
-    d.items.add(
-      new File(["fixture-only"], "fixture.xlsx", {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      })
+  if (process.argv.includes("--category-chooser")) {
+    const selector = "[role=dialog] div.relative > button[type=button]";
+    const rowLabels = () =>
+      page.$$eval("[role=dialog] div[style] > span.text-sm.truncate", nodes =>
+        nodes.map(node => node.textContent.trim())
+      );
+    const choose = async (label, expand = false) => {
+      const handle = await page.evaluateHandle(
+        (label, expand) => {
+          const row = [
+            ...document.querySelectorAll("[role=dialog] div[style]"),
+          ].find(
+            node =>
+              node
+                .querySelector(":scope > span.text-sm.truncate")
+                ?.textContent.trim() === label
+          );
+          return expand
+            ? row?.querySelector("button") || null
+            : row?.querySelector(":scope > span.text-sm.truncate") || null;
+        },
+        label,
+        expand
+      );
+      const target = handle.asElement();
+      assert.ok(target, "Missing category row " + label);
+      await target.click();
+      await handle.dispose();
+    };
+    const selected = async (label, id) => {
+      await page.waitForFunction(
+        id =>
+          window.__reads
+            .filter(read => read.route === "catalog.items.previewNextCode")
+            .at(-1)?.input.nodeId === id,
+        {},
+        id
+      );
+      assert.ok(
+        (await page.$eval(selector, node => node.textContent)).includes(label)
+      );
+      assert.deepEqual(await page.evaluate(() => window.__mutations), []);
+    };
+    for (const lang of ["en", "ar", "ur"]) {
+      await goto(lang, 1280, "&categoryNames=distinct");
+      const captions = await page.evaluate(() => window.__catalogCaptions);
+      await tab(captions.itemsTab);
+      await click(captions.addItem);
+      await page.waitForSelector("[role=dialog]");
+      await page.click(selector);
+      const roots = await rowLabels();
+      assert.deepEqual(roots, [
+        lang === "en" ? "Electrical category EN" : "الكهرباء العربية",
+        "تصنيف بلا ترجمة",
+        "تصنيف باسم فارغ",
+      ]);
+      await choose(
+        lang === "en" ? "Electrical category EN" : "الكهرباء العربية",
+        true
+      );
+      const childLabel =
+        lang === "en" ? "Lighting category EN" : "الإنارة العربية";
+      await page.waitForFunction(
+        label =>
+          [...document.querySelectorAll("[role=dialog] span")].some(
+            node => node.textContent === label
+          ),
+        {},
+        childLabel
+      );
+      const indentation = await page.evaluate(label => {
+        const row = [
+          ...document.querySelectorAll("[role=dialog] div[style]"),
+        ].find(
+          node =>
+            node.querySelector(":scope > span.text-sm.truncate")
+              ?.textContent === label
+        );
+        const css = getComputedStyle(row);
+        return {
+          inline: css.paddingInlineStart,
+          edge:
+            document.documentElement.dir === "ltr"
+              ? css.paddingLeft
+              : css.paddingRight,
+        };
+      }, childLabel);
+      assert.deepEqual(indentation, { inline: "24px", edge: "24px" });
+      await choose(childLabel);
+      await selected(childLabel, 2);
+      if (lang === "en") {
+        for (const [label, id] of [
+          ["تصنيف بلا ترجمة", 3],
+          ["تصنيف باسم فارغ", 4],
+        ]) {
+          await page.click(selector);
+          await choose(label);
+          await selected(label, id);
+        }
+      }
+      await page.screenshot({
+        path: path.join(screenshots, "category-chooser-" + lang + ".png"),
+        fullPage: false,
+      });
+      await close();
+      console.log(
+        "Checked category chooser " +
+          lang +
+          ": rows, selected label, canonical node ID, no writes, logical indentation"
+      );
+    }
+    assert.deepEqual(errors, []);
+    console.log(
+      "PASS focused category chooser: English names and trimmed Arabic fallbacks for empty/whitespace English; Arabic/Urdu preserved; selected IDs 2/3/4; no mutations or external network."
     );
-    input.files = d.files;
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  await page.waitForFunction(() =>
-    document
-      .querySelector("[role=dialog]")
-      ?.innerText.includes("Confirm import")
-  );
-  await clean("Import preview");
-  await close();
-  await tab("Suppliers");
-  await click("Add supplier");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Add supplier");
-  assert.equal(
-    await page.$eval("[role=dialog] input[dir=rtl]", e =>
-      e.getAttribute("dir")
-    ),
-    "rtl"
-  );
-  await close();
-  await click("Edit");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Edit supplier");
-  await close();
-  await click("Link existing");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Link supplier");
-  await close();
-  await tab("New items");
-  await click("Check duplicates");
-  await page.waitForFunction(() =>
-    document.body.innerText.includes("Same item")
-  );
-  await clean("Duplicate suggestions");
-  await click("Same item");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Choose primary candidate");
-  await close();
-  await click("Link existing");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Link item candidate");
-  await close();
-  await click("Approve new");
-  await page.waitForSelector("[role=dialog]");
-  await clean("Approve new candidate");
-  await close();
-  await tab("Items");
-  await page.screenshot({
-    path: path.join(screenshots, "en-desktop-items.png"),
-    fullPage: false,
-  });
-  await page.setViewport({ width: 390, height: 844 });
-  for (const label of [
-    "Overview",
-    "Categories",
-    "Items",
-    "Units",
-    "Suppliers",
-    "New items",
-    "Settings",
-  ]) {
-    await tab(label);
-    await clean("EN mobile " + label);
+  } else {
+    await goto();
+    assert.equal(await page.$$eval("[role=tab]", xs => xs.length), 7);
+    for (const label of [
+      "Overview",
+      "Categories",
+      "Items",
+      "Units",
+      "Suppliers",
+      "New items",
+      "Settings",
+    ]) {
+      await tab(label);
+      await clean("EN tab " + label);
+      assert.deepEqual(await page.evaluate(() => window.__mutations), []);
+    }
+    await tab("Categories");
+    await click("Add Root Category");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Add category");
+    assert.equal(
+      await page.$eval(
+        "[role=dialog] input[dir=rtl]",
+        e => getComputedStyle(e).direction
+      ),
+      "rtl"
+    );
+    await close();
+    await title("Edit");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Edit category");
+    await close();
+    await title("Move / restructure");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Move category");
+    await click("Preview numbering before applying");
+    await page.waitForFunction(() =>
+      document.body.innerText.includes("Previous code")
+    );
+    await clean("Move preview");
+    await close();
+    await tab("Units");
+    await click("Add unit");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Add unit");
+    assert.equal(
+      await page.$eval("[role=dialog] input[dir=rtl]", e =>
+        e.getAttribute("dir")
+      ),
+      "rtl"
+    );
+    await close();
+    await title("Edit");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Edit unit");
+    await close();
+    await tab("Items");
+    await click("Add Item");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Add item");
+    assert.equal(
+      await page.$eval("[role=dialog] input[dir=rtl]", e =>
+        e.getAttribute("dir")
+      ),
+      "rtl"
+    );
+    await close();
+    await click("Edit");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Edit item");
+    await close();
+    await click("View");
+    await page.waitForSelector("[role=dialog]");
+    await clean("View item");
+    await close();
+    await page.click('[aria-label="Item book details"]');
+    await page.waitForFunction(() =>
+      document.body.innerText.includes("Detailed movements and documents")
+    );
+    await clean("Item book pages");
+    await click("Detailed movements and documents");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Item book history");
+    await tab("Receipt history");
+    await clean("Book receipt history");
+    await tab("Movement history");
+    await clean("Book movement history");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector("[role=dialog]"));
+    await page.evaluate(() => {
+      const input =
+        document.querySelector('input[type=file][accept*=".xlsx"]') ||
+        document.querySelector("input[type=file]");
+      if (!input) throw Error("Import input missing");
+      const d = new DataTransfer();
+      d.items.add(
+        new File(["fixture-only"], "fixture.xlsx", {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        })
+      );
+      input.files = d.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await page.waitForFunction(() =>
+      document
+        .querySelector("[role=dialog]")
+        ?.innerText.includes("Confirm import")
+    );
+    await clean("Import preview");
+    await close();
+    await tab("Suppliers");
+    await click("Add supplier");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Add supplier");
+    assert.equal(
+      await page.$eval("[role=dialog] input[dir=rtl]", e =>
+        e.getAttribute("dir")
+      ),
+      "rtl"
+    );
+    await close();
+    await click("Edit");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Edit supplier");
+    await close();
+    await click("Link existing");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Link supplier");
+    await close();
+    await tab("New items");
+    await click("Check duplicates");
+    await page.waitForFunction(() =>
+      document.body.innerText.includes("Same item")
+    );
+    await clean("Duplicate suggestions");
+    await click("Same item");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Choose primary candidate");
+    await close();
+    await click("Link existing");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Link item candidate");
+    await close();
+    await click("Approve new");
+    await page.waitForSelector("[role=dialog]");
+    await clean("Approve new candidate");
+    await close();
+    await tab("Items");
+    await page.screenshot({
+      path: path.join(screenshots, "en-desktop-items.png"),
+      fullPage: false,
+    });
+    await page.setViewport({ width: 390, height: 844 });
+    for (const label of [
+      "Overview",
+      "Categories",
+      "Items",
+      "Units",
+      "Suppliers",
+      "New items",
+      "Settings",
+    ]) {
+      await tab(label);
+      await clean("EN mobile " + label);
+    }
+    await tab("Items");
+    await page.screenshot({
+      path: path.join(screenshots, "en-mobile-items.png"),
+      fullPage: false,
+    });
+    await click("Add Item");
+    await page.waitForSelector("[role=dialog]");
+    await clean("EN mobile add item");
+    await page.screenshot({
+      path: path.join(screenshots, "en-mobile-add-item.png"),
+      fullPage: false,
+    });
+    await close();
+    const allowed = [
+      "catalog.nodes.previewMove",
+      "catalog.importExport.importPreview",
+      "catalog.itemCandidates.suggestExisting",
+    ];
+    const mutations = await page.evaluate(() => window.__mutations);
+    assert.ok(mutations.length > 0);
+    assert.deepEqual(
+      mutations.filter(x => !allowed.includes(x.route)),
+      [],
+      "Unexpected data-changing operation"
+    );
+    await goto("ar");
+    assert.equal(await page.$eval("html", e => e.dir), "rtl");
+    assert.ok(
+      await page.evaluate(() => document.body.innerText.includes("الكتالوج"))
+    );
+    await page.screenshot({
+      path: path.join(screenshots, "ar-desktop-smoke.png"),
+      fullPage: false,
+    });
+    assert.deepEqual(errors, []);
+    console.log(
+      JSON.stringify(
+        {
+          checked: checked.length,
+          fixtureOnlyActions: mutations.map(x => x.route),
+          screenshots,
+          failures,
+        },
+        null,
+        2
+      )
+    );
+    assert.equal(
+      failures.length,
+      0,
+      "English static text/layout failures above"
+    );
+    console.log(
+      "PASS offline catalog browser: seven tabs; add/edit/move/item/unit/supplier/candidate/link/merge/import-preview dialogs; desktop/mobile LTR; Arabic smoke/input direction; blocked network; no data writes."
+    );
   }
-  await tab("Items");
-  await page.screenshot({
-    path: path.join(screenshots, "en-mobile-items.png"),
-    fullPage: false,
-  });
-  await click("Add Item");
-  await page.waitForSelector("[role=dialog]");
-  await clean("EN mobile add item");
-  await page.screenshot({
-    path: path.join(screenshots, "en-mobile-add-item.png"),
-    fullPage: false,
-  });
-  await close();
-  const allowed = [
-    "catalog.nodes.previewMove",
-    "catalog.importExport.importPreview",
-    "catalog.itemCandidates.suggestExisting",
-  ];
-  const mutations = await page.evaluate(() => window.__mutations);
-  assert.ok(mutations.length > 0);
-  assert.deepEqual(
-    mutations.filter(x => !allowed.includes(x.route)),
-    [],
-    "Unexpected data-changing operation"
-  );
-  await goto("ar");
-  assert.equal(await page.$eval("html", e => e.dir), "rtl");
-  assert.ok(
-    await page.evaluate(() => document.body.innerText.includes("الكتالوج"))
-  );
-  await page.screenshot({
-    path: path.join(screenshots, "ar-desktop-smoke.png"),
-    fullPage: false,
-  });
-  assert.deepEqual(errors, []);
-  console.log(
-    JSON.stringify(
-      {
-        checked: checked.length,
-        fixtureOnlyActions: mutations.map(x => x.route),
-        screenshots,
-        failures,
-      },
-      null,
-      2
-    )
-  );
-  assert.equal(failures.length, 0, "English static text/layout failures above");
-  console.log(
-    "PASS offline catalog browser: seven tabs; add/edit/move/item/unit/supplier/candidate/link/merge/import-preview dialogs; desktop/mobile LTR; Arabic smoke/input direction; blocked network; no data writes."
-  );
 } catch (error) {
   console.error("Browser checks reached:", checked);
   console.error(
@@ -468,12 +592,10 @@ try {
     }))
   );
   const pages = await browser.pages();
-  await pages
-    .at(-1)
-    ?.screenshot({
-      path: path.join(screenshots, "failure.png"),
-      fullPage: false,
-    });
+  await pages.at(-1)?.screenshot({
+    path: path.join(screenshots, "failure.png"),
+    fullPage: false,
+  });
   throw error;
 } finally {
   await browser.close();

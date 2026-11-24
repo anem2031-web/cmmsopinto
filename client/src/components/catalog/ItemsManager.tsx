@@ -1,5 +1,6 @@
 import { formatCatalogText, getCatalogError } from "@/i18n/catalogUi";
 import { getCatalogItemsText } from "@/i18n/catalogItems";
+import { getLocalizedCatalogName } from "@/i18n/catalogMasterData";
 import { InventoryBookPages } from "@/components/inventory/InventoryBooks";
 import CatalogExportButton from "@/components/catalog/CatalogExportButton";
 import CatalogImportButton from "@/components/catalog/CatalogImportButton";
@@ -67,6 +68,10 @@ function NodeSelector({
 }) {
   const { language } = useTranslation();
   const text = getCatalogItemsText(language);
+  const categoryName = (node: CatalogNode) => getLocalizedCatalogName(
+    { nameAr: node.nameAr?.trim(), nameEn: node.nameEn?.trim() },
+    language === "en" ? "en" : "ar"
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
@@ -103,7 +108,7 @@ function NodeSelector({
             "flex items-center gap-1.5 py-1.5 px-2 rounded cursor-pointer hover:bg-muted/60 transition-colors",
             value === node.id && "bg-primary/10 text-primary font-medium"
           )}
-          style={{ paddingRight: `${depth * 16 + 8}px` }}
+          style={{ paddingInlineStart: `${depth * 16 + 8}px` }}
           onClick={() => { onChange(node.id, node); setIsOpen(false); }}
         >
           <button onClick={e => toggle(node.id, e)}
@@ -115,7 +120,7 @@ function NodeSelector({
               {node.code}
             </span>
           )}
-          <span className="text-sm truncate">{node.nameAr}</span>
+          <span className="text-sm truncate">{categoryName(node)}</span>
         </div>
         {isExpanded && hasChildren && (
           <div>{children.map(child => renderNode(child, depth + 1))}</div>
@@ -141,9 +146,9 @@ function NodeSelector({
           {selectedNode ? (
             <span className="truncate">
               {selectedNode.code && (
-                <span className="font-mono text-xs text-muted-foreground ml-1">{selectedNode.code} — </span>
+                <span className="font-mono text-xs text-muted-foreground me-1">{selectedNode.code} — </span>
               )}
-              {selectedNode.nameAr}
+              {categoryName(selectedNode)}
             </span>
           ) : (
             <span>{text.selectCategory}</span>
