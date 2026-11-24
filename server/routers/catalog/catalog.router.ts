@@ -19,6 +19,7 @@ import { getTableColumns, eq, and, or, like, ne, count, desc, asc, inArray, sql,
 import { TRPCError } from "@trpc/server";
 import { APP_ROLE } from "@shared/roles";
 import { REQUIRE_CATALOG_IMAGE_ON_EDIT } from "@shared/catalog-item-image-policy";
+import { isItCatalogCreationRoot, IT_CATALOG_CREATION_DENIED } from "@shared/catalog-item-create-scope";
 import { getDb } from "../../_core/db";
 
 import {
@@ -70,9 +71,10 @@ async function loadResolutionGroup(tx: any, candidateId: number): Promise<any[]>
   return rows as any[];
 }
 
-async function assertActiveCatalogNodePath(db: any, nodeId: number): Promise<any> {
+async function assertActiveCatalogNodePath(db: any, nodeId: number, creationRole?: string): Promise<any> {
   let currentId: number | null = nodeId;
   let selectedNode: any = null;
+  let rootNode: any = null;
   const visited = new Set<number>();
 
   for (let depth = 0; currentId != null && depth < 8; depth += 1) {
@@ -81,9 +83,12 @@ async function assertActiveCatalogNodePath(db: any, nodeId: number): Promise<any
     }
     visited.add(currentId);
 
-    const rows = await db.select().from(catalogNodes)
+    const query = db.select().from(catalogNodes)
       .where(eq(catalogNodes.id, currentId))
       .limit(1);
+    // Only IT creation needs a current, locked ancestry decision. A waited leaf
+    // lock must not authorize the old transaction snapshot after a taxonomy move.
+    const rows = await (creationRole === APP_ROLE.IT_MANAGER ? query.for("update") : query);
     const node = rows[0] as any;
     if (!node) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "التصنيف المختار أو أحد آبائه غير موجود" });
@@ -92,11 +97,15 @@ async function assertActiveCatalogNodePath(db: any, nodeId: number): Promise<any
       throw new TRPCError({ code: "BAD_REQUEST", message: `لا يمكن استخدام التصنيف غير النشط «${node.nameAr || node.id}» في علاقة جديدة` });
     }
     if (!selectedNode) selectedNode = node;
+    rootNode = node;
     currentId = node.parentId == null ? null : Number(node.parentId);
   }
 
   if (currentId != null) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "تعذر التحقق من مسار التصنيف بالكامل" });
+  }
+  if (creationRole === APP_ROLE.IT_MANAGER && !isItCatalogCreationRoot(rootNode)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: IT_CATALOG_CREATION_DENIED });
   }
   return selectedNode;
 }
@@ -178,7 +187,7 @@ async function nextAvailableCatalogNodeCode(db: any, parentId?: number | null): 
   return candidate;
 }
 
-async function getLeafCategoryCodeState(db: any, nodeId: number, lockNode = false): Promise<{ node: any; code: string }> {
+async function getLeafCategoryCodeState(db: any, nodeId: number, lockNode = false, creationRole?: string): Promise<{ node: any; code: string }> {
   if (lockNode) {
     // Serialize code allocation per category during approveNew so two reviewers
     // cannot intentionally receive the same next code from the same leaf.
@@ -187,7 +196,7 @@ async function getLeafCategoryCodeState(db: any, nodeId: number, lockNode = fals
 
   // 2B-10-2B: ليس كافياً أن تكون العقدة نفسها نشطة؛ يجب أن يكون كامل
   // مسارها حتى الجذر نشطاً أيضاً قبل إنشاء علاقة Master Data جديدة.
-  const node = await assertActiveCatalogNodePath(db, nodeId);
+  const node = await assertActiveCatalogNodePath(db, nodeId, creationRole);
 
   const activeChildren = await db.select({ id: catalogNodes.id }).from(catalogNodes).where(and(
     eq(catalogNodes.parentId, nodeId),
@@ -1003,7 +1012,7 @@ create: catalogItemManagerProcedure
     await (db as any).transaction(async (tx: any) => {
       // Allocate/validate the code under the category row lock so automatic
       // numbering stays safe when two users create items concurrently.
-      const categoryState = await getLeafCategoryCodeState(tx, input.nodeId, true);
+      const categoryState = await getLeafCategoryCodeState(tx, input.nodeId, true, ctx.user.role);
       const categoryCode = String(categoryState.node.code || "").trim();
       const finalCode = requestedCode || categoryState.code;
 

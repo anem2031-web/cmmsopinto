@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { router, catalogProcedure, catalogItemManagerProcedure, catalogItemUpdateProcedure, catalogItemDeactivateProcedure, catalogItemLifecycleProcedure } from "../routers/_shared/procedures";
 import { APP_ROLE } from "../../shared/roles";
 import { REQUIRE_CATALOG_IMAGE_ON_EDIT } from "../../shared/catalog-item-image-policy";
+import { getCatalogItemsText } from "../../client/src/i18n/catalogItems";
+import { getCatalogError } from "../../client/src/i18n/catalogUi";
 import { catalogItems, attachments, auditLogs, catalogAuditLogs } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { catalogItemImageSchema, assertCatalogImageUpload, saveRequiredCatalogImage } from "../routers/catalog/item-image";
@@ -200,6 +202,7 @@ describe("actual catalog dialog save handler", () => {
       selectedNode: { id: 7, code: "7" }, catalogNodes: [{ id: 7, code: "7" }],
       formData: { nameAr: "صنف", nameEn: "Item", unit: "piece" }, customCode: "", codeEdited: false,
       editingItem: null, selectedImage: null, codePreviewQuery: {}, REQUIRE_CATALOG_IMAGE_ON_EDIT,
+      creationNodeIds: null, language: "ar", text: getCatalogItemsText("ar"), getCatalogError,
       t: { catalog: { validation: { requiredFields: "required" } } },
       toast: { error: vi.fn(), success: vi.fn() },
       setIsSavingItem: vi.fn(), setImageSaveStage: vi.fn(), setImageUploadProgress: vi.fn(), setImageSaveMessage: vi.fn(),

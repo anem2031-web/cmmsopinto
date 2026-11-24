@@ -10,6 +10,7 @@ import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { isCatalogAdminRole, canManageCatalogItemLifecycle, canDeactivateCatalogItem, canCreateCatalogItem, canUpdateCatalogItem, canImportExportCatalog } from "@shared/roles";
 import { REQUIRE_CATALOG_IMAGE_ON_EDIT } from "@shared/catalog-item-image-policy";
+import { getCatalogCreationNodeIds } from "@shared/catalog-item-create-scope";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -62,9 +63,11 @@ interface CatalogNode {
 function NodeSelector({
   value,
   onChange,
+  creationRole,
 }: {
   value: number | null;
   onChange: (id: number, node: CatalogNode) => void;
+  creationRole?: string;
 }) {
   const { language } = useTranslation();
   const text = getCatalogItemsText(language);
@@ -77,13 +80,23 @@ function NodeSelector({
 
   const { data: allNodes } = trpc.catalog.nodes.list.useQuery({ isActive: true });
 
+  const creationNodeIds = useMemo(
+    () => getCatalogCreationNodeIds(creationRole, allNodes || []),
+    [creationRole, allNodes],
+  );
+  const selectableNodes = useMemo(
+    () => creationNodeIds === null
+      ? (allNodes || [])
+      : (allNodes || []).filter((node: CatalogNode) => creationNodeIds.has(Number(node.id))),
+    [allNodes, creationNodeIds],
+  );
   const roots = useMemo(
-    () => (allNodes || []).filter((n: CatalogNode) => !n.parentId),
-    [allNodes]
+    () => selectableNodes.filter((n: CatalogNode) => !n.parentId),
+    [selectableNodes]
   );
 
   const getChildren = (parentId: number) =>
-    (allNodes || []).filter((n: CatalogNode) => n.parentId === parentId);
+    selectableNodes.filter((n: CatalogNode) => n.parentId === parentId);
 
   const toggle = (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -94,7 +107,7 @@ function NodeSelector({
     });
   };
 
-  const selectedNode = allNodes?.find((n: CatalogNode) => n.id === value);
+  const selectedNode = selectableNodes.find((n: CatalogNode) => n.id === value);
 
   const renderNode = (node: CatalogNode, depth = 0): React.ReactNode => {
     const children = getChildren(node.id);
@@ -162,7 +175,7 @@ function NodeSelector({
           <div className="p-1">
             {roots.length > 0
               ? roots.map(node => renderNode(node))
-              : <p className="text-sm text-muted-foreground text-center py-4">{text.noCategories}</p>
+              : <p className="text-sm text-muted-foreground text-center py-4">{creationNodeIds === null ? text.noCategories : text.itCreationCategoryUnavailable}</p>
             }
           </div>
         </div>
@@ -214,9 +227,17 @@ export default function ItemsManager() {
   >("idle");
   const [imageSaveMessage, setImageSaveMessage] = useState("");
 
+  const { data: catalogNodes = [] } = trpc.catalog.nodes.list.useQuery({ isActive: true });
+  const creationNodeIds = useMemo(
+    () => getCatalogCreationNodeIds(user?.role, catalogNodes),
+    [user?.role, catalogNodes],
+  );
+  const selectedCreationNodeAllowed = creationNodeIds === null
+    || (selectedNode !== null && creationNodeIds.has(Number(selectedNode.id)));
+
   const codePreviewQuery = trpc.catalog.items.previewNextCode.useQuery(
     { nodeId: selectedNode?.id || 0 },
-    { enabled: !!selectedNode && canCreateItem }
+    { enabled: !!selectedNode && canCreateItem && (!!editingItem || selectedCreationNodeAllowed) }
   );
 
   useEffect(() => {
@@ -235,12 +256,15 @@ export default function ItemsManager() {
   }, [selectedNode, codePreviewQuery.data?.code, codeEdited]);
 
   const handleNodeChange = (id: number, node: CatalogNode) => {
+    if (!editingItem && creationNodeIds !== null && !creationNodeIds.has(Number(node.id))) {
+      toast.error(text.itCreationCategoryRequired);
+      return;
+    }
     setSelectedNode(node);
     setCodeEdited(false);
   };
 
   const { data: units } = trpc.catalog.units.list.useQuery();
-  const { data: catalogNodes = [] } = trpc.catalog.nodes.list.useQuery({ isActive: true });
 
   const catalogTreeNodes = catalogNodes as CatalogTreeNode[];
   const catalogFilterNodeIds = useMemo(
@@ -316,7 +340,7 @@ export default function ItemsManager() {
     }
 
     setEditingItem(null);
-    setSelectedNode(itemNode);
+    setSelectedNode(creationNodeIds === null || creationNodeIds.has(Number(itemNode.id)) ? itemNode : null);
     setFormData({
       nameAr: item.nameAr || "",
       nameEn: item.nameEn || "",
@@ -447,6 +471,11 @@ export default function ItemsManager() {
       return;
     }
 
+    if (!editingItem && creationNodeIds !== null && !creationNodeIds.has(Number(selectedNode.id))) {
+      toast.error(text.itCreationCategoryRequired);
+      return;
+    }
+
     if (!formData.nameAr || !formData.nameEn) {
       toast.error(t.catalog.validation.requiredFields);
       return;
@@ -555,7 +584,7 @@ export default function ItemsManager() {
           {canCreateItem && <Button
             size="sm"
             className="gap-2"
-            onClick={() => setIsDialogOpen(true)}
+            onClick={() => { resetForm(); setIsDialogOpen(true); }}
           >
             <Plus className="w-4 h-4" />
             {t.catalog.items.addNew}
@@ -842,7 +871,10 @@ export default function ItemsManager() {
 
             <div className="space-y-1">
               <label className="text-sm font-medium">{text.categoryRequiredLabel}</label>
-              <NodeSelector value={selectedNode?.id || null} onChange={handleNodeChange} />
+              <NodeSelector value={selectedNode?.id || null} onChange={handleNodeChange} creationRole={editingItem ? undefined : user?.role} />
+              {!editingItem && creationNodeIds !== null && (
+                <p className="text-xs text-muted-foreground">{creationNodeIds.size > 0 ? text.itCreationScopeHint : text.itCreationCategoryUnavailable}</p>
+              )}
             </div>
 
             {selectedNode && (

@@ -16,6 +16,8 @@ const catalogErrors: Record<string, string> = {
   "كود التصنيف مطلوب": "Category code is required.",
   "كود الصنف مطلوب": "Item code is required.",
   "الحساب غير نشط": "This account is inactive.",
+  "يمكن لمدير تقنية المعلومات إضافة أصناف جديدة ضمن تصنيف تقنية المعلومات (10) وتفرعاته فقط":
+    "IT managers can create new items only under Information Technology (10) and its subcategories.",
   "يرجى رفع صورة صالحة للصنف من حسابك":
     "Upload a valid item image from your account.",
   "صورة الصنف إلزامية؛ يرجى إضافة صورة قبل الحفظ":

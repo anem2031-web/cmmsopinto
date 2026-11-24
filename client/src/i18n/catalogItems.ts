@@ -1,6 +1,9 @@
 /** Static catalog item UI only. Stored master-data names are never translated here. */
 export const catalogItemsAr = {
   "selectCategory": "اختر التصنيف *",
+  "itCreationScopeHint": "يمكن إنشاء الأصناف الجديدة ضمن تصنيف تقنية المعلومات (10) وتفرعاته فقط.",
+  "itCreationCategoryUnavailable": "تصنيف تقنية المعلومات (10) غير متاح. لا يمكن إنشاء صنف جديد حتى مراجعة إعداد التصنيف.",
+  "itCreationCategoryRequired": "يرجى اختيار تصنيف ضمن تقنية المعلومات (10) وتفرعاته لإنشاء الصنف الجديد.",
   "noCategories": "لا توجد تصنيفات — أضف تصنيفاً أولاً",
   "categoryLoadFailed": "تعذر تحميل بيانات تصنيف الصنف. أعد فتح الصفحة وحاول مرة أخرى.",
   "itemDisabled": "تم تعطيل الصنف",
@@ -151,6 +154,9 @@ export const catalogItemsAr = {
 
 export const catalogItemsEn: Record<keyof typeof catalogItemsAr, string> = {
   "selectCategory": "Select a category *",
+  "itCreationScopeHint": "New items can only be created under Information Technology (10) and its subcategories.",
+  "itCreationCategoryUnavailable": "Information Technology category (10) is unavailable. Review the category setup before creating a new item.",
+  "itCreationCategoryRequired": "Select a category under Information Technology (10) or its subcategories to create the new item.",
   "noCategories": "No categories — add a category first",
   "categoryLoadFailed": "Could not load the item category. Reopen the page and try again.",
   "itemDisabled": "Item deactivated",
