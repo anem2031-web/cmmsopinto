@@ -1,3 +1,4 @@
+import { getCatalogFoundationText } from "@/i18n/catalogFoundation";
 import SuppliersManager from "@/components/catalog/SuppliersManager";
 import React, { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "@/contexts/LanguageContext";
@@ -28,7 +29,8 @@ import UnitsManager from "@/components/catalog/UnitsManager";
 import SmartSearch from "@/components/catalog/SmartSearch";
 
 export default function CatalogDashboard() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const text = getCatalogFoundationText(language);
   const { user, authenticatedUser, loading } = useAuth();
   const canViewAdministrationTabs = isOwnerOrAdminRole(user?.role);
   const canManageIntegrationTokens = authenticatedUser?.isActive === 1 && isOwnerOrAdminRole(authenticatedUser.role);
@@ -60,7 +62,7 @@ export default function CatalogDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
+    <div dir={language === "en" ? "ltr" : "rtl"} className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-6">
@@ -105,23 +107,23 @@ export default function CatalogDashboard() {
       </div>
 
       {/* Main Content */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="flex w-full flex-row h-auto mb-6 gap-1 p-1">
+      <Tabs dir={language === "en" ? "ltr" : "rtl"} value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="flex w-full flex-row flex-wrap h-auto mb-6 gap-1 p-1">
           {canViewAdministrationTabs && (
             <TabsTrigger value="overview" className="flex-1">{t.catalog.tabs.overview}</TabsTrigger>
           )}
           {!itemsOnly && <TabsTrigger value="taxonomy" className="flex-1">{t.catalog.tabs.taxonomy}</TabsTrigger>}
           <TabsTrigger value="items" className="flex-1">{t.catalog.tabs.items}</TabsTrigger>
           {!itemsOnly && <TabsTrigger value="units" className="flex-1 gap-1">
-            <Ruler className="w-3.5 h-3.5" />وحدات
+            <Ruler className="w-3.5 h-3.5" />{text.tabsUnits}
           </TabsTrigger>}
           {!itemsOnly && <TabsTrigger value="suppliers" className="flex-1 gap-1">
             <Truck className="w-3.5 h-3.5" />
-            الموردون
+            {text.tabsSuppliers}
           </TabsTrigger>}
           {!itemsOnly && <TabsTrigger value="new-items" className="flex-1 gap-1">
             <Inbox className="w-3.5 h-3.5" />
-            الأصناف الجديدة
+            {text.tabsNewItems}
           </TabsTrigger>}
           {canViewAdministrationTabs && (
             <TabsTrigger value="settings" className="flex-1">{t.catalog.tabs.settings}</TabsTrigger>

@@ -1,3 +1,5 @@
+import { formatCatalogText, getCatalogError } from "@/i18n/catalogUi";
+import { getCatalogFoundationText } from "@/i18n/catalogFoundation";
 import { useState } from "react";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
@@ -13,7 +15,8 @@ import { Plus, Trash2, Edit2, Loader2, Ruler, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 export default function UnitsManager() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const text = getCatalogFoundationText(language);
   const { user } = useAuth();
   const isCatalogAdmin = isCatalogAdminRole(user?.role);
   const [dialogMode, setDialogMode] = useState<"add" | "edit" | null>(null);
@@ -26,23 +29,23 @@ export default function UnitsManager() {
   });
 
   const createMut = trpc.catalog.units.create.useMutation({
-    onSuccess: () => { refetch(); close(); toast.success("تمت إضافة الوحدة"); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: () => { refetch(); close(); toast.success(text.unitAdded); },
+    onError: (e) => toast.error(getCatalogError(e, language, text.operationFailed)),
   });
 
   const updateMut = trpc.catalog.units.update.useMutation({
-    onSuccess: () => { refetch(); close(); toast.success("تم تعديل الوحدة"); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: () => { refetch(); close(); toast.success(text.unitUpdated); },
+    onError: (e) => toast.error(getCatalogError(e, language, text.operationFailed)),
   });
 
   const deleteMut = trpc.catalog.units.delete.useMutation({
-    onSuccess: () => { refetch(); toast.success("تم تعطيل الوحدة"); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: () => { refetch(); toast.success(text.unitDeactivated); },
+    onError: (e) => toast.error(getCatalogError(e, language, text.operationFailed)),
   });
 
   const reactivateMut = trpc.catalog.units.reactivate.useMutation({
-    onSuccess: () => { refetch(); toast.success("تمت إعادة تفعيل الوحدة"); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: () => { refetch(); toast.success(text.unitReactivated); },
+    onError: (e) => toast.error(getCatalogError(e, language, text.operationFailed)),
   });
 
   const close = () => {
@@ -63,7 +66,7 @@ export default function UnitsManager() {
 
   const handleSubmit = async () => {
     if (!nameAr.trim() || !nameEn.trim()) {
-      toast.error("الاسم بالعربية والإنجليزية مطلوبان");
+      toast.error(text.namesRequired);
       return;
     }
     if (dialogMode === "edit" && selected) {
@@ -78,10 +81,10 @@ export default function UnitsManager() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">وحدات القياس</h3>
+        <h3 className="text-lg font-semibold">{text.unitsTitle}</h3>
         <Button size="sm" className="gap-2" onClick={openAdd}>
           <Plus className="w-4 h-4" />
-          إضافة وحدة
+          {text.addUnit}
         </Button>
       </div>
 
@@ -101,7 +104,7 @@ export default function UnitsManager() {
                         <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-medium text-sm">{unit.nameAr}</p>
                           {!isActive && (
-                            <span className="text-[11px] font-medium rounded-full border px-2 py-0.5 text-muted-foreground">معطّل</span>
+                            <span className="text-[11px] font-medium rounded-full border px-2 py-0.5 text-muted-foreground">{text.inactive}</span>
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground">{unit.nameEn}</p>
@@ -111,19 +114,19 @@ export default function UnitsManager() {
                       <button
                         onClick={() => openEdit(unit)}
                         className="p-1 rounded hover:bg-blue-100 hover:text-blue-700 transition-colors"
-                        title="تعديل"
+                        title={text.edit}
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
                       {isCatalogAdmin && isActive && (
                         <button
                           onClick={() => {
-                            if (confirm(`تعطيل وحدة "${unit.nameAr}"؟\n\nستختفي من الاختيارات الجديدة، مع بقاء السجلات التاريخية كما هي.`)) {
+                            if (confirm(formatCatalogText(text.confirmDeactivateUnit, { p0: String(unit.nameAr ?? "") }))) {
                               deleteMut.mutate(unit.id);
                             }
                           }}
                           className="p-1 rounded hover:bg-red-100 hover:text-red-700 transition-colors"
-                          title="تعطيل"
+                          title={text.deactivate}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -132,7 +135,7 @@ export default function UnitsManager() {
                         <button
                           onClick={() => reactivateMut.mutate(unit.id)}
                           className="p-1 rounded hover:bg-green-100 hover:text-green-700 transition-colors"
-                          title="إعادة تفعيل"
+                          title={text.reactivate}
                         >
                           <RotateCcw className="w-3.5 h-3.5" />
                         </button>
@@ -148,33 +151,33 @@ export default function UnitsManager() {
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             <Ruler className="w-10 h-10 mx-auto mb-3 opacity-20" />
-            <p>لا توجد وحدات — أضف وحدات القياس التي ستستخدمها في الأصناف</p>
+            <p>{text.unitsEmpty}</p>
             <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}>
-              إضافة أول وحدة
+              {text.addFirstUnit}
             </Button>
           </CardContent>
         </Card>
       )}
 
       <Dialog open={!!dialogMode} onOpenChange={() => close()}>
-        <DialogContent className="max-w-sm">
+        <DialogContent dir={language === "en" ? "ltr" : "rtl"} className="max-w-sm">
           <DialogHeader>
             <DialogTitle>
-              {dialogMode === "edit" ? "تعديل الوحدة" : "إضافة وحدة جديدة"}
+              {dialogMode === "edit" ? text.editUnit : text.newUnit}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <div className="space-y-1">
-              <label className="text-sm font-medium">الاسم بالعربية *</label>
+              <label className="text-sm font-medium">{text.nameArRequired}</label>
               <Input
                 value={nameAr}
                 onChange={e => setNameAr(e.target.value)}
-                placeholder="مثال: قطعة"
+                placeholder={text.arabicUnitExample}
                 dir="rtl"
               />
             </div>
             <div className="space-y-1">
-              <label className="text-sm font-medium">الاسم بالإنجليزية *</label>
+              <label className="text-sm font-medium">{text.nameEnRequired}</label>
               <Input
                 value={nameEn}
                 onChange={e => setNameEn(e.target.value)}

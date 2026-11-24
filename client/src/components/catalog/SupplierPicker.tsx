@@ -1,3 +1,6 @@
+import { useTranslation } from "@/contexts/LanguageContext";
+import { formatCatalogText, getCatalogError } from "@/i18n/catalogUi";
+import { getCatalogItemsText } from "@/i18n/catalogItems";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -53,6 +56,8 @@ interface SupplierPickerProps {
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPickerProps) {
+  const { language } = useTranslation();
+  const text = getCatalogItemsText(language);
   const [showSearch, setShowSearch] = useState(false);
   const [showAssignDialog, setShowAssignDialog] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
@@ -78,25 +83,25 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
       setShowAssignDialog(false);
       setSelectedSupplier(null);
       setAssignForm({ price: "", currency: "SAR", supplierItemCode: "", notes: "", isPreferred: false });
-      toast.success("تم ربط المورد بالصنف");
+      toast.success(text.supplierLinked);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getCatalogError(e, language, text.supplierSaveFailed)),
   });
 
   const removeMut = trpc.catalog.itemSuppliers.remove.useMutation({
     onSuccess: () => {
       refetchLinked();
-      toast.success("تم إزالة المورد");
+      toast.success(text.supplierRemoved);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getCatalogError(e, language, text.supplierRemoveFailed)),
   });
 
   const setPreferredMut = trpc.catalog.itemSuppliers.setPreferred.useMutation({
     onSuccess: () => {
       refetchLinked();
-      toast.success("تم تعيين المورد الأساسي");
+      toast.success(text.preferredSupplierSet);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getCatalogError(e, language, text.supplierPreferredFailed)),
   });
 
   const handleSelectSupplier = (s: Supplier) => {
@@ -108,7 +113,7 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
   const handleAssign = async () => {
     if (!selectedSupplier) return;
     if (!assignForm.price || isNaN(Number(assignForm.price))) {
-      toast.error("يجب إدخال السعر");
+      toast.error(text.priceRequired);
       return;
     }
 
@@ -124,7 +129,7 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
   };
 
   const handleRemove = (link: ItemSupplierLink) => {
-    if (confirm(`إزالة المورد "${link.supplierNameAr}" من هذا الصنف؟`)) {
+    if (confirm(formatCatalogText(text.removeSupplierConfirm, { name: link.supplierNameAr }))) {
       removeMut.mutate({ itemId, supplierId: link.supplierId });
     }
   };
@@ -135,7 +140,7 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
       <div className="flex items-center justify-between">
         <label className="text-sm font-medium flex items-center gap-1.5">
           <Truck className="w-3.5 h-3.5 text-muted-foreground" />
-          الموردون المرتبطون
+          {text.linkedSuppliers}
         </label>
         {!readOnly && <Button
           type="button"
@@ -145,7 +150,7 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
           onClick={() => setShowSearch(true)}
         >
           <Plus className="w-3 h-3" />
-          إضافة مورد
+          {text.addSupplier}
         </Button>}
       </div>
 
@@ -171,7 +176,7 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
       ) : (
         <div className="flex items-center gap-2 px-3 py-2.5 rounded-md border border-dashed text-xs text-muted-foreground">
           <Truck className="w-3.5 h-3.5 shrink-0 opacity-50" />
-          لم يُربط بعد أي مورد بهذا الصنف
+          {text.noLinkedSuppliers}
         </div>
       )}
 
@@ -185,10 +190,10 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
 
       {/* Assign Dialog */}
       <Dialog open={showAssignDialog} onOpenChange={(open) => { if (!open) { setShowAssignDialog(false); setSelectedSupplier(null); } }}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm" dir={language === "en" ? "ltr" : "rtl"}>
           <DialogHeader>
             <DialogTitle className="text-base">
-              ربط المورد بالصنف
+              {text.linkSupplierToItem}
             </DialogTitle>
           </DialogHeader>
 
@@ -209,7 +214,7 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
 
               {/* Price */}
               <div className="space-y-1">
-                <label className="text-sm font-medium">السعر *</label>
+                <label className="text-sm font-medium">{text.priceRequiredLabel}</label>
                 <div className="flex gap-2">
                   <Input
                     type="number"
@@ -217,7 +222,7 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
                     step="0.01"
                     value={assignForm.price}
                     onChange={(e) => setAssignForm({ ...assignForm, price: e.target.value })}
-                    placeholder="0.00"
+                    placeholder={text.pricePlaceholder}
                     dir="ltr"
                     className="flex-1"
                   />
@@ -226,9 +231,9 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
                     onChange={(e) => setAssignForm({ ...assignForm, currency: e.target.value })}
                     className="px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary w-24"
                   >
-                    <option value="SAR">ريال</option>
-                    <option value="USD">دولار</option>
-                    <option value="EUR">يورو</option>
+                    <option value="SAR">{text.currencySar}</option>
+                    <option value="USD">{text.currencyUsd}</option>
+                    <option value="EUR">{text.currencyEur}</option>
                   </select>
                 </div>
               </div>
@@ -236,13 +241,13 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
               {/* Supplier Item Code */}
               <div className="space-y-1">
                 <label className="text-sm font-medium">
-                  كود الصنف عند المورد
-                  <span className="text-muted-foreground text-xs mr-1">(اختياري)</span>
+                  {text.supplierItemCode}
+                  <span className="text-muted-foreground text-xs mr-1">{text.optional}</span>
                 </label>
                 <Input
                   value={assignForm.supplierItemCode}
                   onChange={(e) => setAssignForm({ ...assignForm, supplierItemCode: e.target.value })}
-                  placeholder="مثال: SKF-6205-A"
+                  placeholder={text.supplierItemCodeExample}
                   dir="ltr"
                 />
               </div>
@@ -254,8 +259,8 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
                   assignForm.isPreferred ? "text-amber-500" : "text-muted-foreground"
                 )} />
                 <div className="flex-1">
-                  <p className="text-sm font-medium">المورد الأساسي</p>
-                  <p className="text-xs text-muted-foreground">يُستخدم كمورد مقترح عند الشراء</p>
+                  <p className="text-sm font-medium">{text.preferredSupplier}</p>
+                  <p className="text-xs text-muted-foreground">{text.preferredSupplierHelp}</p>
                 </div>
                 <button
                   type="button"
@@ -275,14 +280,14 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
               {/* Notes */}
               <div className="space-y-1">
                 <label className="text-sm font-medium">
-                  ملاحظات
-                  <span className="text-muted-foreground text-xs mr-1">(اختياري)</span>
+                  {text.notes}
+                  <span className="text-muted-foreground text-xs mr-1">{text.optional}</span>
                 </label>
                 <Input
                   value={assignForm.notes}
                   onChange={(e) => setAssignForm({ ...assignForm, notes: e.target.value })}
-                  placeholder="أي ملاحظات خاصة بهذا المورد للصنف"
-                  dir="rtl"
+                  placeholder={text.supplierNotesPlaceholder}
+                  dir={language === "en" ? "ltr" : "rtl"}
                 />
               </div>
 
@@ -292,7 +297,7 @@ export function SupplierPickerSection({ itemId, readOnly = false }: SupplierPick
                 className="w-full"
               >
                 {assignMut.isPending && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-                {assignMut.isPending ? "جاري الربط..." : "ربط المورد"}
+                {assignMut.isPending ? text.linkingSupplier : text.linkSupplier}
               </Button>
             </div>
           )}
@@ -314,6 +319,8 @@ function LinkedSupplierRow({
   onRemove: (l: ItemSupplierLink) => void;
   onSetPreferred: () => void;
 }) {
+  const { language } = useTranslation();
+  const text = getCatalogItemsText(language);
   return (
     <div className={cn(
       "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors",
@@ -326,7 +333,7 @@ function LinkedSupplierRow({
         type="button"
         disabled={readOnly}
         onClick={onSetPreferred}
-        title={link.isPreferred ? "مورد أساسي" : "تعيين كمورد أساسي"}
+        title={link.isPreferred ? text.preferredSupplierTitle : text.setPreferredSupplier}
         className="shrink-0"
       >
         {link.isPreferred ? (
@@ -361,7 +368,7 @@ function LinkedSupplierRow({
         type="button"
         onClick={() => onRemove(link)}
         className="shrink-0 p-1 rounded hover:bg-red-100 hover:text-red-600 transition-colors text-muted-foreground"
-        title="إزالة المورد"
+        title={text.removeSupplier}
       >
         <X className="w-3.5 h-3.5" />
       </button>}
@@ -381,6 +388,8 @@ function SupplierSearchDialog({
   onSelect: (s: Supplier) => void;
   alreadyLinked: number[];
 }) {
+  const { language } = useTranslation();
+  const text = getCatalogItemsText(language);
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -415,11 +424,11 @@ function SupplierSearchDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" dir={language === "en" ? "ltr" : "rtl"}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Search className="w-4 h-4" />
-            اختر مورداً
+            {text.chooseSupplier}
           </DialogTitle>
         </DialogHeader>
 
@@ -431,9 +440,9 @@ function SupplierSearchDialog({
               ref={inputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="ابحث عن المورد..."
+              placeholder={text.supplierSearch}
               className="pr-9"
-              dir="rtl"
+              dir={language === "en" ? "ltr" : "rtl"}
             />
           </div>
 
@@ -449,7 +458,7 @@ function SupplierSearchDialog({
                   key={s.id}
                   type="button"
                   onClick={() => onSelect(s)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-primary/5 hover:border-primary/30 border border-transparent transition-colors text-right"
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-primary/5 hover:border-primary/30 border border-transparent transition-colors text-start"
                 >
                   <div className={cn(
                     "p-1.5 rounded-md shrink-0",
@@ -461,7 +470,7 @@ function SupplierSearchDialog({
                       ? <Factory className="w-3.5 h-3.5" />
                       : <Building2 className="w-3.5 h-3.5" />}
                   </div>
-                  <div className="flex-1 min-w-0 text-right">
+                  <div className="flex-1 min-w-0 text-start">
                     <p className="text-sm font-medium truncate">{s.nameAr}</p>
                     <p className="text-xs text-muted-foreground truncate">{s.nameEn}</p>
                   </div>
@@ -473,17 +482,17 @@ function SupplierSearchDialog({
             ) : (
               <div className="text-center py-8 text-sm text-muted-foreground">
                 {query
-                  ? `لا توجد نتائج لـ "${query}"`
+                  ? formatCatalogText(text.supplierNoResults, { query })
                   : alreadyLinked.length > 0
-                    ? "جميع الموردين المتاحين مرتبطون بهذا الصنف"
-                    : "لا يوجد موردون — أضفهم من تبويب الموردين أولاً"}
+                    ? text.allSuppliersLinked
+                    : text.noSuppliers}
               </div>
             )}
           </div>
 
           {alreadyLinked.length > 0 && (
             <p className="text-xs text-muted-foreground text-center">
-              {alreadyLinked.length} مورد مرتبط مسبقاً لا يظهر في القائمة
+              {formatCatalogText(text.alreadyLinkedCount, { count: alreadyLinked.length })}
             </p>
           )}
         </div>

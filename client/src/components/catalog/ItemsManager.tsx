@@ -1,3 +1,5 @@
+import { formatCatalogText, getCatalogError } from "@/i18n/catalogUi";
+import { getCatalogItemsText } from "@/i18n/catalogItems";
 import { InventoryBookPages } from "@/components/inventory/InventoryBooks";
 import CatalogExportButton from "@/components/catalog/CatalogExportButton";
 import CatalogImportButton from "@/components/catalog/CatalogImportButton";
@@ -63,6 +65,8 @@ function NodeSelector({
   value: number | null;
   onChange: (id: number, node: CatalogNode) => void;
 }) {
+  const { language } = useTranslation();
+  const text = getCatalogItemsText(language);
   const [isOpen, setIsOpen] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
@@ -142,7 +146,7 @@ function NodeSelector({
               {selectedNode.nameAr}
             </span>
           ) : (
-            <span>اختر التصنيف *</span>
+            <span>{text.selectCategory}</span>
           )}
         </div>
         <ChevronDown className={cn("w-4 h-4 shrink-0 transition-transform text-muted-foreground", isOpen && "rotate-180")} />
@@ -153,7 +157,7 @@ function NodeSelector({
           <div className="p-1">
             {roots.length > 0
               ? roots.map(node => renderNode(node))
-              : <p className="text-sm text-muted-foreground text-center py-4">لا توجد تصنيفات — أضف تصنيفاً أولاً</p>
+              : <p className="text-sm text-muted-foreground text-center py-4">{text.noCategories}</p>
             }
           </div>
         </div>
@@ -172,6 +176,7 @@ export default function ItemsManager() {
   // تعطيل/إعادة تفعيل الأصناف: Owner/Admin + مدير الصيانة + المستودع الآن.
   const canManageLifecycle = canManageCatalogItemLifecycle(user?.role);
   const { t, language } = useTranslation();
+  const text = getCatalogItemsText(language);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [viewItem, setViewItem] = useState<any | null>(null);
@@ -301,7 +306,7 @@ export default function ItemsManager() {
     );
 
     if (!itemNode) {
-      toast.error("تعذر تحميل بيانات تصنيف الصنف. أعد فتح الصفحة وحاول مرة أخرى.");
+      toast.error(text.categoryLoadFailed);
       return;
     }
 
@@ -331,17 +336,17 @@ export default function ItemsManager() {
   const deleteMut = trpc.catalog.items.delete.useMutation({
     onSuccess: () => {
       reloadFromStart();
-      toast.success("تم تعطيل الصنف");
+      toast.success(text.itemDisabled);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getCatalogError(e, language, text.deactivateFailed)),
   });
 
   const reactivateMut = trpc.catalog.items.reactivate.useMutation({
     onSuccess: () => {
       reloadFromStart();
-      toast.success("تمت إعادة تفعيل الصنف");
+      toast.success(text.itemReactivated);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getCatalogError(e, language, text.reactivateFailed)),
   });
 
   const resetForm = () => {
@@ -368,7 +373,7 @@ export default function ItemsManager() {
   const uploadCatalogItemImageFile = (image: File) => {
     setImageSaveStage("uploading");
     setImageUploadProgress(0);
-    setImageSaveMessage("جارٍ رفع الصورة...");
+    setImageSaveMessage(text.uploadingImage);
 
     return new Promise<UploadedCatalogImage>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -382,15 +387,15 @@ export default function ItemsManager() {
         // نحتفظ بآخر 10% لمعالجة الصورة وحفظها في التخزين على السيرفر.
         const pct = Math.min(90, Math.round((event.loaded / event.total) * 90));
         setImageUploadProgress(pct);
-        setImageSaveMessage(`جارٍ رفع الصورة... ${pct}%`);
+        setImageSaveMessage(formatCatalogText(text.uploadingImageProgress, { percent: pct }));
       };
 
       xhr.onload = () => {
         if (xhr.status < 200 || xhr.status >= 300) {
-          let serverMessage = `فشل رفع الصورة (HTTP ${xhr.status})`;
+          let serverMessage = formatCatalogText(text.imageUploadFailed, { status: xhr.status });
           try {
             const body = JSON.parse(xhr.responseText);
-            if (body?.error) serverMessage = body.error;
+            if (body?.error) serverMessage = getCatalogError(body.error, language, serverMessage);
           } catch {
             // Keep the HTTP fallback message.
           }
@@ -404,14 +409,14 @@ export default function ItemsManager() {
         try {
           const data = JSON.parse(xhr.responseText);
           if (!data?.url || !data?.fileKey) {
-            throw new Error("استجابة رفع الصورة غير مكتملة");
+            throw new Error(text.incompleteUploadResponse);
           }
           // وصول الرد يعني أن السيرفر أنهى معالجة الصورة وحفظ الملف في التخزين.
           setImageUploadProgress(95);
-          setImageSaveMessage("تم رفع الملف — جارٍ حفظ وربط الصورة بالصنف...");
+          setImageSaveMessage(text.linkingImage);
           resolve({ url: data.url, fileKey: data.fileKey });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "استجابة رفع الصورة غير صالحة";
+          const message = getCatalogError(error, language, text.invalidUploadResponse);
           setImageSaveStage("error");
           setImageUploadProgress(0);
           setImageSaveMessage(message);
@@ -420,7 +425,7 @@ export default function ItemsManager() {
       };
 
       xhr.onerror = () => {
-        const message = "تعذر الاتصال أثناء رفع الصورة";
+        const message = text.uploadConnectionFailed;
         setImageSaveStage("error");
         setImageUploadProgress(0);
         setImageSaveMessage(message);
@@ -433,7 +438,7 @@ export default function ItemsManager() {
 
   const handleCreate = async () => {
     if (!selectedNode) {
-      toast.error("يجب اختيار التصنيف");
+      toast.error(text.categoryRequired);
       return;
     }
 
@@ -443,11 +448,11 @@ export default function ItemsManager() {
     }
 
     if ((!editingItem || REQUIRE_CATALOG_IMAGE_ON_EDIT) && !selectedImage && !editingItem?.primaryImageUrl) {
-      toast.error("صورة الصنف إلزامية؛ يرجى إضافة صورة قبل الحفظ");
+      toast.error(text.imageRequiredBeforeSave);
       return;
     }
     if (selectedImage && (!selectedImage.type.startsWith("image/") || selectedImage.size <= 0)) {
-      toast.error("يرجى اختيار ملف صورة صالح");
+      toast.error(text.validImageRequired);
       return;
     }
 
@@ -468,7 +473,7 @@ export default function ItemsManager() {
       const prefix = `${nodeCode}-`;
       const suffix = trimmedCode.startsWith(prefix) ? trimmedCode.slice(prefix.length) : "";
       if (!nodeCode || !/^\d+(?:-\d+)*$/.test(nodeCode) || !/^\d+$/.test(suffix)) {
-        toast.error(`كود الصنف يجب أن يكون بصيغة ${nodeCode || "01-01"}-001`);
+        toast.error(formatCatalogText(text.itemCodeFormat, { code: nodeCode || "01-01" }));
         return;
       }
     }
@@ -476,7 +481,7 @@ export default function ItemsManager() {
     setIsSavingItem(true);
     setImageSaveStage("idle");
     setImageUploadProgress(0);
-    setImageSaveMessage(selectedImage ? "سيتم رفع الصورة ثم حفظها مع بيانات الصنف" : "");
+    setImageSaveMessage(selectedImage ? text.imageUploadThenSave : "");
     try {
       const uploaded = selectedImage ? await uploadCatalogItemImageFile(selectedImage) : null;
       const image = selectedImage && uploaded ? {
@@ -497,7 +502,7 @@ export default function ItemsManager() {
           image,
         });
       } else {
-        if (!image) throw new Error("صورة الصنف إلزامية");
+        if (!image) throw new Error(text.imageRequired);
         await createMut.mutateAsync({
           nameAr: formData.nameAr,
           nameEn: formData.nameEn,
@@ -515,9 +520,9 @@ export default function ItemsManager() {
       reloadFromStart();
       resetForm();
       setIsDialogOpen(false);
-      toast.success(editingItem ? "تم تحديث الصنف" : "تم إضافة الصنف");
+      toast.success(editingItem ? text.itemUpdated : text.itemAdded);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "حدث خطأ غير متوقع";
+      const message = getCatalogError(error, language, text.saveFailed);
       setImageSaveStage("error");
       setImageSaveMessage(message);
       toast.error(message);
@@ -533,7 +538,7 @@ export default function ItemsManager() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-lg font-semibold shrink-0">{t.catalog.items.title}</h3>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex max-w-full flex-wrap items-center gap-2">
           {canTransferCatalog && (
             <CatalogExportButton
               search={searchQuery}
@@ -560,9 +565,9 @@ export default function ItemsManager() {
           <Input
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="ابحث بالاسم، الكود، الوحدة، المصنّع..."
+            placeholder={text.itemSearch}
             className="pr-9"
-            dir="rtl"
+            dir={language === "en" ? "ltr" : "rtl"}
           />
         </div>
 
@@ -581,7 +586,7 @@ export default function ItemsManager() {
           onClick={clearItemFilters}
         >
           <X className="w-4 h-4" />
-          مسح الفلاتر
+          {text.clearFilters}
         </Button>
       </div>
 
@@ -589,10 +594,10 @@ export default function ItemsManager() {
         <div className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
           <FolderTree className="mt-0.5 h-4 w-4 shrink-0" />
           <div className="min-w-0">
-            <span className="font-medium text-foreground">التصنيف: </span>
+            <span className="font-medium text-foreground">{text.categoryLabel} </span>
             <span>{catalogFilterPath || `#${catalogFilterNodeId}`}</span>
             {catalogFilterHasChildren && (
-              <span className="me-1"> — يشمل جميع الفروع التابعة</span>
+              <span className="me-1"> {text.includesDescendantsDash}</span>
             )}
           </div>
         </div>
@@ -603,8 +608,8 @@ export default function ItemsManager() {
       {!isLoading && (
         <p className="text-xs text-muted-foreground">
           {hasActiveFilters
-            ? `صفحة ${page + 1} — ${pageItems.length} صنف مطابق للفلاتر الحالية`
-            : `صفحة ${page + 1} — ${pageItems.length} صنف`}
+            ? formatCatalogText(text.pageFiltered, { page: page + 1, count: pageItems.length })
+            : formatCatalogText(text.pageItems, { page: page + 1, count: pageItems.length })}
         </p>
       )}
 
@@ -623,7 +628,7 @@ export default function ItemsManager() {
               onView={(item) => setViewItem(item)}
               onImagePreview={(item) => {
                 if (item.primaryImageUrl) {
-                  setPreviewImage({ url: item.primaryImageUrl, alt: item.nameAr || "صورة الصنف" });
+                  setPreviewImage({ url: item.primaryImageUrl, alt: item.nameAr || text.itemImage });
                 }
               }}
               onEdit={(item) => {
@@ -634,7 +639,7 @@ export default function ItemsManager() {
                   (node) => Number(node.id) === Number(item.nodeId),
                 );
                 if (!itemNode) {
-                  toast.error("تعذر تحميل بيانات تصنيف الصنف. أعد فتح الصفحة وحاول مرة أخرى.");
+                  toast.error(text.categoryLoadFailed);
                   return;
                 }
                 setSelectedNode(itemNode);
@@ -659,7 +664,7 @@ export default function ItemsManager() {
                 }
               }}
               onReactivate={id => {
-                if (confirm("هل تريد إعادة تفعيل هذا الصنف؟")) {
+                if (confirm(text.reactivateConfirm)) {
                   reactivateMut.mutate(id);
                 }
               }}
@@ -670,7 +675,7 @@ export default function ItemsManager() {
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             {hasActiveFilters
-              ? "لا توجد أصناف مطابقة للفلاتر الحالية"
+              ? text.noMatchingItems
               : t.catalog.items.empty}
           </CardContent>
         </Card>
@@ -685,16 +690,16 @@ export default function ItemsManager() {
             disabled={!hasPrevPage || isFetching}
             onClick={() => setPage(p => Math.max(0, p - 1))}
           >
-            السابق
+            {text.previous}
           </Button>
-          <span className="text-sm text-muted-foreground">صفحة {page + 1}</span>
+          <span className="text-sm text-muted-foreground">{text.page} {page + 1}</span>
           <Button
             variant="outline"
             size="sm"
             disabled={!hasNextPage || isFetching}
             onClick={() => setPage(p => p + 1)}
           >
-            التالي
+            {text.next}
           </Button>
         </div>
       )}
@@ -704,9 +709,9 @@ export default function ItemsManager() {
         open={!!viewItem}
         onOpenChange={(open) => { if (!open) setViewItem(null); }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent dir={language === "en" ? "ltr" : "rtl"} className="max-w-md">
           <DialogHeader>
-            <DialogTitle>استعراض الصنف</DialogTitle>
+            <DialogTitle>{text.viewItem}</DialogTitle>
           </DialogHeader>
 
           {viewItem && (
@@ -719,9 +724,9 @@ export default function ItemsManager() {
                     className="flex h-full w-full cursor-zoom-in items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                     onClick={() => setPreviewImage({
                       url: viewItem.primaryImageUrl,
-                      alt: viewItem.nameAr || "صورة الصنف",
+                      alt: viewItem.nameAr || text.itemImage,
                     })}
-                    title="اضغط لعرض الصورة بالحجم الكامل"
+                    title={text.viewFullImage}
                   >
                     <img
                       src={viewItem.primaryImageUrl}
@@ -735,25 +740,25 @@ export default function ItemsManager() {
               </div>
 
               <div>
-                <p className="text-sm text-muted-foreground">الاسم بالعربية</p>
+                <p className="text-sm text-muted-foreground">{text.nameArabic}</p>
                 <p className="font-semibold">{viewItem.nameAr}</p>
               </div>
 
               <div>
-                <p className="text-sm text-muted-foreground">الاسم بالإنجليزية</p>
+                <p className="text-sm text-muted-foreground">{text.nameEnglish}</p>
                 <p>{viewItem.nameEn}</p>
               </div>
 
               {viewItem.code && (
                 <div>
-                  <p className="text-sm text-muted-foreground">الكود</p>
+                  <p className="text-sm text-muted-foreground">{text.code}</p>
                   <p className="font-mono">{viewItem.code}</p>
                 </div>
               )}
 
               {viewItem.nodeId && getCatalogNodePathLabel(catalogTreeNodes, viewItem.nodeId, language) && (
                 <div>
-                  <p className="text-sm text-muted-foreground">التصنيف</p>
+                  <p className="text-sm text-muted-foreground">{text.category}</p>
                   <p className="flex items-start gap-1.5 text-sm">
                     <FolderTree className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                     <span>{getCatalogNodePathLabel(catalogTreeNodes, viewItem.nodeId, language)}</span>
@@ -763,21 +768,21 @@ export default function ItemsManager() {
 
               {viewItem.unit && (
                 <div>
-                  <p className="text-sm text-muted-foreground">الوحدة</p>
+                  <p className="text-sm text-muted-foreground">{text.unit}</p>
                   <p>{viewItem.unit}</p>
                 </div>
               )}
 
               {viewItem.manufacturer && (
                 <div>
-                  <p className="text-sm text-muted-foreground">الشركة المصنعة</p>
+                  <p className="text-sm text-muted-foreground">{text.manufacturer}</p>
                   <p>{viewItem.manufacturer}</p>
                 </div>
               )}
 
               {viewItem?.id && (
                 <div className="border-t pt-3">
-                  <p className="text-sm text-muted-foreground mb-2">الموردون</p>
+                  <p className="text-sm text-muted-foreground mb-2">{text.suppliers}</p>
                   <SupplierPickerSection itemId={viewItem.id} />
                 </div>
               )}
@@ -793,9 +798,9 @@ export default function ItemsManager() {
         open={!!previewImage}
         onOpenChange={(open) => { if (!open) setPreviewImage(null); }}
       >
-        <DialogContent className="max-w-5xl p-4 sm:max-w-5xl">
+        <DialogContent dir={language === "en" ? "ltr" : "rtl"} className="max-w-5xl p-4 sm:max-w-5xl">
           <DialogHeader>
-            <DialogTitle>{previewImage?.alt || "صورة الصنف"}</DialogTitle>
+            <DialogTitle>{previewImage?.alt || text.itemImage}</DialogTitle>
           </DialogHeader>
           {previewImage && (
             <div className="flex max-h-[78vh] min-h-[240px] items-center justify-center overflow-auto rounded-lg">
@@ -808,7 +813,7 @@ export default function ItemsManager() {
           )}
           <div className="flex justify-end">
             <Button variant="outline" onClick={() => setPreviewImage(null)}>
-              إغلاق
+              {text.close}
             </Button>
           </div>
         </DialogContent>
@@ -822,16 +827,16 @@ export default function ItemsManager() {
           setIsDialogOpen(open);
         }}
       >
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent dir={language === "en" ? "ltr" : "rtl"} className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {editingItem ? "تعديل الصنف" : t.catalog.items.addNew}
+              {editingItem ? text.editItem : t.catalog.items.addNew}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
 
             <div className="space-y-1">
-              <label className="text-sm font-medium">التصنيف *</label>
+              <label className="text-sm font-medium">{text.categoryRequiredLabel}</label>
               <NodeSelector value={selectedNode?.id || null} onChange={handleNodeChange} />
             </div>
 
@@ -839,8 +844,8 @@ export default function ItemsManager() {
               <div className="space-y-1">
                 <label className="text-sm font-medium flex items-center gap-2">
                   <Hash className="w-3.5 h-3.5 text-muted-foreground" />
-                  كود الصنف
-                  <span className="text-xs text-muted-foreground font-normal">(قابل للتعديل)</span>
+                  {text.itemCode}
+                  <span className="text-xs text-muted-foreground font-normal">{text.editable}</span>
                 </label>
                 <div className="relative">
                   <Input
@@ -857,15 +862,15 @@ export default function ItemsManager() {
                     <button
                       onClick={() => { setCustomCode(generatedCode); setCodeEdited(false); }}
                       className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-primary hover:underline"
-                      title="إعادة التوليد التلقائي"
+                      title={text.regenerateCode}
                     >
-                      تلقائي
+                      {text.automatic}
                     </button>
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  الكود المتوقع: <span className="font-mono text-primary font-medium">{generatedCode}</span>
-                  {" "}— الصيغة: كود التصنيف-تسلسل رقمي (مثال {String(((catalogNodes as CatalogNode[]).find(node => Number(node.id) === Number(selectedNode.id))?.code || codePreviewQuery.data?.nodeCode || selectedNode.code || "11")).trim()}-001)
+                  {text.expectedCode} <span className="font-mono text-primary font-medium">{generatedCode}</span>
+                  {" "}{text.codeFormatHelp} {String(((catalogNodes as CatalogNode[]).find(node => Number(node.id) === Number(selectedNode.id))?.code || codePreviewQuery.data?.nodeCode || selectedNode.code || "11")).trim()}-001)
                 </p>
               </div>
             )}
@@ -874,33 +879,33 @@ export default function ItemsManager() {
               <label className="text-sm font-medium">{t.catalog.fields.nameAr} *</label>
               <Input value={formData.nameAr}
                 onChange={e => setFormData({ ...formData, nameAr: e.target.value })}
-                placeholder="مثال: مضخة مياه" dir="rtl" />
+                placeholder={text.itemNameExample} dir="rtl" />
             </div>
 
             <div className="space-y-1">
               <label className="text-sm font-medium">{t.catalog.fields.nameEn} *</label>
               <Input value={formData.nameEn}
                 onChange={e => setFormData({ ...formData, nameEn: e.target.value })}
-                placeholder="Example: Water Pump" dir="ltr" />
+                placeholder={text.itemNameEnglishExample} dir="ltr" />
             </div>
 
             <div className="space-y-1">
               <label className="text-sm font-medium">
                 {t.catalog.fields.nameUr}
-                <span className="text-muted-foreground text-xs mr-2">(اختياري)</span>
+                <span className="text-muted-foreground text-xs mr-2">{text.optional}</span>
               </label>
               <Input value={formData.nameUr}
                 onChange={e => setFormData({ ...formData, nameUr: e.target.value })}
-                placeholder="اختياري" />
+                placeholder={text.optionalPlaceholder} />
             </div>
 
             <div className="space-y-1">
               <label className="text-sm font-medium">
-                صورة الصنف
+                {text.itemImage}
                 {!editingItem || REQUIRE_CATALOG_IMAGE_ON_EDIT ? (
-                  <span className="text-destructive text-xs mr-2">(إلزامي)</span>
+                  <span className="text-destructive text-xs mr-2">{text.required}</span>
                 ) : (
-                  <span className="text-muted-foreground text-xs mr-2">(اختياري)</span>
+                  <span className="text-muted-foreground text-xs mr-2">{text.optional}</span>
                 )}
               </label>
               <Input
@@ -911,12 +916,12 @@ export default function ItemsManager() {
                   setSelectedImage(file);
                   setImageUploadProgress(0);
                   setImageSaveStage("idle");
-                  setImageSaveMessage(file ? "الصورة جاهزة للرفع عند الحفظ" : "");
+                  setImageSaveMessage(file ? text.imageReady : "");
                 }}
                 disabled={isSavingItem}
               />
               {editingItem?.primaryImageUrl && !selectedImage && (
-                <p className="text-xs text-muted-foreground">الصورة الحالية محفوظة؛ لا يلزم رفعها مجددًا لتعديل بيانات الصنف.</p>
+                <p className="text-xs text-muted-foreground">{text.existingImageKept}</p>
               )}
               {selectedImage && (
                 <div className="space-y-2 rounded-md border bg-muted/20 p-3">
@@ -946,7 +951,7 @@ export default function ItemsManager() {
                     ) : imageSaveStage === "uploading" || imageSaveStage === "linking" ? (
                       <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
                     ) : null}
-                    <span>{imageSaveMessage || "الصورة جاهزة للرفع عند الحفظ"}</span>
+                    <span>{imageSaveMessage || text.imageReady}</span>
                   </div>
                 </div>
               )}
@@ -960,14 +965,14 @@ export default function ItemsManager() {
                   onChange={e => setFormData({ ...formData, unit: e.target.value })}
                   className="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
                 >
-                  <option value="">— اختر الوحدة —</option>
+                  <option value="">{text.selectUnit}</option>
                   {(units || []).map((u: any) => (
                     <option key={u.id} value={u.nameAr}>{u.nameAr} / {u.nameEn}</option>
                   ))}
                 </select>
                 {editingItem?.unit && !(units || []).some((u: any) => u.nameAr === editingItem.unit || u.nameEn === editingItem.unit) && (
                   <p className="text-xs text-amber-700">
-                    الوحدة الحالية «{editingItem.unit}» غير نشطة/تاريخية. ستبقى محفوظة ما لم تختر وحدة نشطة جديدة.
+                    {formatCatalogText(text.historicalUnit, { unit: editingItem.unit })}
                   </p>
                 )}
               </div>
@@ -975,7 +980,7 @@ export default function ItemsManager() {
                 <label className="text-sm font-medium">{t.catalog.fields.manufacturer}</label>
                 <Input value={formData.manufacturer}
                   onChange={e => setFormData({ ...formData, manufacturer: e.target.value })}
-                  placeholder="مثال: LG" />
+                  placeholder={text.manufacturerExample} />
               </div>
             </div>
 
@@ -995,12 +1000,12 @@ export default function ItemsManager() {
               )}
               {isSavingItem
                 ? imageSaveStage === "uploading"
-                  ? `رفع الصورة ${imageUploadProgress}%`
+                  ? formatCatalogText(text.uploadImageProgress, { percent: imageUploadProgress })
                   : imageSaveStage === "linking"
-                    ? "حفظ الصورة..."
+                    ? text.savingImage
                     : t.common.saving
                 : editingItem
-                  ? "تحديث الصنف"
+                  ? text.updateItem
                   : t.common.save}
             </Button>
 
@@ -1035,7 +1040,8 @@ function ItemCard({
   onEdit: (item: any) => void;
   onDuplicate: (item: any) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const text = getCatalogItemsText(language);
   const { user } = useAuth();
   const [bookOpen,setBookOpen] = useState(false);
   const canReadBook = user && ["owner","admin","warehouse","maintenance_manager","senior_management","observer"].includes(user.role);
@@ -1047,7 +1053,7 @@ function ItemCard({
             type="button"
             className="mb-3 flex h-28 w-full cursor-zoom-in items-center justify-center overflow-hidden rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             onClick={() => onImagePreview(item)}
-            title="اضغط لعرض الصورة بالحجم الكامل"
+            title={text.viewFullImage}
           >
             <img
               src={item.primaryImageUrl}
@@ -1063,16 +1069,16 @@ function ItemCard({
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <p className="font-semibold text-sm">{item.nameAr}</p>
-            {canReadBook && Number(item.inventoryPageCount)>0 && <Button variant="ghost" size="sm" aria-label="تفاصيل دفتر الصنف" aria-expanded={bookOpen} onClick={()=>setBookOpen(!bookOpen)}>{bookOpen ? <ChevronDown className="h-4 w-4"/> : <ChevronRight className="h-4 w-4"/>}</Button>}
+            {canReadBook && Number(item.inventoryPageCount)>0 && <Button variant="ghost" size="sm" aria-label={text.itemBookDetails} aria-expanded={bookOpen} onClick={()=>setBookOpen(!bookOpen)}>{bookOpen ? <ChevronDown className="h-4 w-4"/> : <ChevronRight className="h-4 w-4"/>}</Button>}
             {Number(item.isActive) !== 1 && (
               <span className="text-[11px] font-medium rounded-full border px-2 py-0.5 text-muted-foreground">
-                معطّل
+                {text.inactive}
               </span>
             )}
           </div>
           <p className="text-xs text-muted-foreground">{item.nameEn}</p>
           {canReadBook && (item.inventoryBookTotals || []).map((total:any)=><p key={`${total.unit}:${total.isFrozen}`} className="text-xs">
-            {Number(total.isFrozen)?"تاريخ مجمّد":"الرصيد"}: {Number(total.quantity)} {total.unit || "—"} · وارد {Number(total.incoming)} · منصرف {Number(total.outgoing)}
+            {Number(total.isFrozen)?text.frozenHistory:text.balance}: {Number(total.quantity)} {total.unit || "—"} {text.incoming} {Number(total.incoming)} {text.outgoing} {Number(total.outgoing)}
           </p>)}
           <div className="flex items-center justify-between">
             {item.code && (
@@ -1091,15 +1097,15 @@ function ItemCard({
           )}
         </div>
 
-        {bookOpen && canReadBook && <InventoryBookPages catalogItemId={Number(item.id)} />}
+        {bookOpen && canReadBook && <InventoryBookPages catalogItemId={Number(item.id)} language={language} />}
         <div className="grid grid-cols-2 gap-2 mt-3">
           <Button variant="secondary" size="sm" className="gap-1.5" onClick={() => onView(item)}>
             <Eye className="w-3.5 h-3.5" />
-            استعراض
+            {text.view}
           </Button>
           {canUpdateCatalogItem(user?.role) && <Button variant="default" size="sm" className="gap-1.5" onClick={() => onEdit(item)}>
             <Pencil className="w-3.5 h-3.5" />
-            تعديل
+            {text.edit}
           </Button>}
           {canCreateCatalogItem(user?.role) && <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onDuplicate(item)}>
             <Copy className="w-3.5 h-3.5" />
@@ -1108,7 +1114,7 @@ function ItemCard({
           {canDelete && Number(item.isActive) === 1 && (
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => onDelete(item.id)}>
               <Trash2 className="w-3.5 h-3.5" />
-              تعطيل
+              {text.deactivate}
             </Button>
           )}
           {canReactivate && Number(item.isActive) !== 1 && (
@@ -1119,7 +1125,7 @@ function ItemCard({
               onClick={() => onReactivate(item.id)}
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              إعادة تفعيل
+              {text.reactivate}
             </Button>
           )}
         </div>

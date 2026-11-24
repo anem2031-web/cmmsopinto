@@ -1,3 +1,5 @@
+import { formatCatalogText, getCatalogError } from "@/i18n/catalogUi";
+import { getCatalogFoundationText } from "@/i18n/catalogFoundation";
 import React, { useState, useCallback } from "react";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
@@ -32,7 +34,8 @@ type DialogMode = "addRoot" | "addChild" | "edit" | "move" | null;
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function TaxonomyManager() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const text = getCatalogFoundationText(language);
   const { user } = useAuth();
   const canDelete = isCatalogAdminRole(user?.role);
   const isCatalogAdmin = canDelete;
@@ -40,7 +43,7 @@ export default function TaxonomyManager() {
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [formData, setFormData] = useState({ nameAr: "", nameEn: "", nameUr: "", code: "" });
-  const [codeError, setCodeError] = useState("");
+  const [codeError, setCodeError] = useState<"codeSegmentsRequired" | "codeSegmentMinimum" | "">("");
   const [moveTarget, setMoveTarget] = useState<string>("__root__");
   const [movePreview, setMovePreview] = useState<any | null>(null);
 
@@ -53,37 +56,37 @@ export default function TaxonomyManager() {
 
   // ── Mutations ─────────────────────────────────────────────────────────────
   const createMut = trpc.catalog.nodes.create.useMutation({
-    onSuccess: () => { refetch(); closeDialog(); toast.success("تم إضافة التصنيف"); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: () => { refetch(); closeDialog(); toast.success(text.categoryAdded); },
+    onError: (e) => toast.error(getCatalogError(e, language, text.operationFailed)),
   });
 
   const updateMut = trpc.catalog.nodes.update.useMutation({
-    onSuccess: () => { refetch(); closeDialog(); toast.success("تم تعديل التصنيف"); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: () => { refetch(); closeDialog(); toast.success(text.categoryUpdated); },
+    onError: (e) => toast.error(getCatalogError(e, language, text.operationFailed)),
   });
 
   const deleteMut = trpc.catalog.nodes.delete.useMutation({
-    onSuccess: () => { refetch(); setSelectedNode(null); toast.success("تم تعطيل التصنيف"); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: () => { refetch(); setSelectedNode(null); toast.success(text.categoryDeactivated); },
+    onError: (e) => toast.error(getCatalogError(e, language, text.operationFailed)),
   });
 
   const reactivateMut = trpc.catalog.nodes.reactivate.useMutation({
-    onSuccess: () => { refetch(); setSelectedNode(null); toast.success("تمت إعادة تفعيل التصنيف"); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: () => { refetch(); setSelectedNode(null); toast.success(text.categoryReactivated); },
+    onError: (e) => toast.error(getCatalogError(e, language, text.operationFailed)),
   });
 
   const previewMoveMut = trpc.catalog.nodes.previewMove.useMutation({
     onSuccess: (data) => setMovePreview(data),
-    onError: (e) => { setMovePreview(null); toast.error(e.message); },
+    onError: (e) => { setMovePreview(null); toast.error(getCatalogError(e, language, text.operationFailed)); },
   });
 
   const moveSubtreeMut = trpc.catalog.nodes.moveSubtree.useMutation({
     onSuccess: async (data) => {
       await refetch();
       closeDialog();
-      toast.success(`تم نقل التصنيف وإعادة ترقيم ${data.plan.nodeChanges.length} تصنيف و${data.plan.itemChanges.length} صنف`);
+      toast.success(formatCatalogText(text.categoryMoved, { p0: String(data.plan.nodeChanges.length ?? ""), p1: String(data.plan.itemChanges.length ?? "") }));
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getCatalogError(e, language, text.operationFailed)),
   });
 
   const exportTreeMut = trpc.catalog.importExport.exportTaxonomyTreeExcel.useMutation();
@@ -97,9 +100,9 @@ export default function TaxonomyManager() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      toast.success("تم تصدير شجرة الكتالوج بنجاح");
+      toast.success(text.treeExported);
     } catch (e: any) {
-      toast.error(e.message ?? "حدث خطأ أثناء تصدير شجرة الكتالوج");
+      toast.error(getCatalogError(e, language, text.treeExportFailed));
     }
   };
 
@@ -162,11 +165,11 @@ export default function TaxonomyManager() {
 
   const validateCode = (val: string) => {
     if (val && !/^\d+(?:-\d+)*$/.test(val)) {
-      setCodeError("الكود يجب أن يتكون من مقاطع رقمية تفصلها شرطة");
+      setCodeError("codeSegmentsRequired");
       return false;
     }
     if (val && val.split("-").some(segment => segment.length < 2 || Number(segment) < 1)) {
-      setCodeError("كل مقطع يبدأ من 01 ويتكون من خانتين على الأقل");
+      setCodeError("codeSegmentMinimum");
       return false;
     }
     setCodeError("");
@@ -184,7 +187,7 @@ export default function TaxonomyManager() {
   // ── Submit ─────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!formData.nameAr || !formData.nameEn) {
-      toast.error("الاسم بالعربية والإنجليزية مطلوبان");
+      toast.error(text.namesRequired);
       return;
     }
     if (!validateCode(formData.code)) return;
@@ -199,7 +202,7 @@ export default function TaxonomyManager() {
     } else {
       const parentLevel = selectedNode?.level || 0;
       if (parentLevel >= 6) {
-        toast.error("الحد الأقصى للمستويات هو 6");
+        toast.error(text.maximumLevels);
         return;
       }
       await createMut.mutateAsync({
@@ -223,7 +226,7 @@ export default function TaxonomyManager() {
 
   const handleExecuteMove = async () => {
     if (!selectedNode || !movePreview || movePreview.blockers?.length) return;
-    const ok = confirm(`سيتم نقل «${selectedNode.nameAr}» وإعادة ترقيم ${movePreview.plan.nodeChanges.length} تصنيف و${movePreview.plan.itemChanges.length} صنف.\nلن تتغير IDs أو الأرصدة أو اللوتات أو الحركات السابقة.\nهل تريد المتابعة؟`);
+    const ok = confirm(formatCatalogText(text.confirmMove, { p0: String(selectedNode.nameAr ?? ""), p1: String(movePreview.plan.nodeChanges.length ?? ""), p2: String(movePreview.plan.itemChanges.length ?? "") }));
     if (!ok) return;
     await moveSubtreeMut.mutateAsync({
       nodeId: selectedNode.id,
@@ -232,21 +235,21 @@ export default function TaxonomyManager() {
   };
 
   const handleDelete = async (node: TreeNode) => {
-    if (!confirm(`هل أنت متأكد من تعطيل "${node.nameAr}"؟\nلا يمكن التعطيل إذا كان فيه فروع أو أصناف نشطة مرتبطة.`)) return;
+    if (!confirm(formatCatalogText(text.confirmDeactivateCategory, { p0: String(node.nameAr ?? "") }))) return;
     await deleteMut.mutateAsync(node.id);
   };
 
   const handleReactivate = async (node: TreeNode) => {
-    if (!confirm(`هل تريد إعادة تفعيل "${node.nameAr}"؟`)) return;
+    if (!confirm(formatCatalogText(text.confirmReactivateCategory, { p0: String(node.nameAr ?? "") }))) return;
     await reactivateMut.mutateAsync(node.id);
   };
 
   // ── Dialog Title ───────────────────────────────────────────────────────────
   const dialogTitle =
-    dialogMode === "addRoot" ? "إضافة تصنيف رئيسي" :
-    dialogMode === "addChild" ? `إضافة فرع تحت: ${selectedNode?.nameAr}` :
-    dialogMode === "edit" ? `تعديل: ${selectedNode?.nameAr}` :
-    dialogMode === "move" ? `نقل / إعادة هيكلة: ${selectedNode?.nameAr}` : "";
+    dialogMode === "addRoot" ? text.addRootCategory :
+    dialogMode === "addChild" ? formatCatalogText(text.addChildTitle, { p0: String(selectedNode?.nameAr ?? "") }) :
+    dialogMode === "edit" ? formatCatalogText(text.editCategoryTitle, { p0: String(selectedNode?.nameAr ?? "") }) :
+    dialogMode === "move" ? formatCatalogText(text.moveCategoryTitle, { p0: String(selectedNode?.nameAr ?? "") }) : "";
 
   const isPending = createMut.isPending || updateMut.isPending || moveSubtreeMut.isPending;
 
@@ -278,7 +281,7 @@ export default function TaxonomyManager() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-lg font-semibold">{t.catalog.taxonomy.title}</h3>
-        <div className="flex items-center gap-2">
+        <div className="flex max-w-full flex-wrap items-center gap-2">
           {isCatalogAdmin && (
             <Button
               type="button"
@@ -291,7 +294,7 @@ export default function TaxonomyManager() {
               {exportTreeMut.isPending
                 ? <Loader2 className="w-4 h-4 animate-spin" />
                 : <Download className="w-4 h-4" />}
-              تصدير الشجرة إلى Excel
+              {text.exportTree}
             </Button>
           )}
           <Button size="sm" className="gap-2" onClick={openAddRoot}>
@@ -333,7 +336,7 @@ export default function TaxonomyManager() {
               <FolderPlus className="w-10 h-10 mx-auto mb-3 opacity-30" />
               <p>{t.catalog.taxonomy.empty}</p>
               <Button variant="outline" size="sm" className="mt-3" onClick={openAddRoot}>
-                إضافة أول تصنيف
+                {text.addFirstCategory}
               </Button>
             </div>
           )}
@@ -342,7 +345,7 @@ export default function TaxonomyManager() {
 
       {/* Dialog */}
       <Dialog open={!!dialogMode} onOpenChange={() => closeDialog()}>
-        <DialogContent className={dialogMode === "move" ? "sm:max-w-3xl max-h-[90vh] overflow-y-auto" : undefined}>
+        <DialogContent dir={language === "en" ? "ltr" : "rtl"} className={dialogMode === "move" ? "sm:max-w-3xl max-h-[90vh] overflow-y-auto" : undefined}>
           <DialogHeader>
             <DialogTitle>{dialogTitle}</DialogTitle>
           </DialogHeader>
@@ -350,32 +353,32 @@ export default function TaxonomyManager() {
             <div className="space-y-4 pt-2">
               <div className="rounded-lg border bg-muted/30 p-3 text-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <span>التصنيف الحالي</span>
+                  <span>{text.currentCategory}</span>
                   <span className="font-mono font-semibold" dir="ltr">{selectedNode?.code || "—"}</span>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  سيتم نقل نفس التصنيف ونفس التفرعات والأصناف بالـ IDs الحالية. لا يتم إنشاء أصناف جديدة ولا تعديل الأرصدة أو اللوتات أو الحركات السابقة.
+                  {text.moveExplanation}
                 </p>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">الموقع الجديد *</label>
+                <label className="text-sm font-medium">{text.newLocation}</label>
                 <select
                   value={moveTarget}
                   onChange={e => { setMoveTarget(e.target.value); setMovePreview(null); }}
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 >
                   <option value="__root__" disabled={selectedNode?.parentId == null}>
-                    تحويل إلى تصنيف رئيسي
+                    {text.makeRoot}
                   </option>
                   {moveTargets.map(target => (
                     <option key={target.id} value={String(target.id)}>
-                      {target.code || "—"} — {target.nameAr} (م{target.level})
+                      {target.code || "—"} — {target.nameAr} {text.levelOptionPrefix}{target.level})
                     </option>
                   ))}
                 </select>
                 <p className="text-xs text-muted-foreground">
-                  لا تظهر العقد الموجودة داخل الفرع نفسه، ولا الأب الحالي، ولا المستويات التي لا تسمح بإضافة مستوى جديد.
+                  {text.moveTargetsHelp}
                 </p>
               </div>
 
@@ -387,35 +390,35 @@ export default function TaxonomyManager() {
                 disabled={previewMoveMut.isPending || !selectedNode || (moveTarget === "__root__" && selectedNode?.parentId == null)}
               >
                 {previewMoveMut.isPending ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : null}
-                معاينة الترقيم قبل التنفيذ
+                {text.previewRenumbering}
               </Button>
 
               {movePreview && (
                 <div className="space-y-3 rounded-lg border p-3">
                   <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
                     <div className="rounded bg-muted/50 p-2">
-                      <div className="text-xs text-muted-foreground">الكود القديم</div>
+                      <div className="text-xs text-muted-foreground">{text.oldCode}</div>
                       <div className="font-mono font-semibold" dir="ltr">{movePreview.plan.oldRootCode}</div>
                     </div>
                     <div className="rounded bg-muted/50 p-2">
-                      <div className="text-xs text-muted-foreground">الكود الجديد</div>
+                      <div className="text-xs text-muted-foreground">{text.newCode}</div>
                       <div className="font-mono font-semibold" dir="ltr">{movePreview.plan.newRootCode}</div>
                     </div>
                     <div className="rounded bg-muted/50 p-2">
-                      <div className="text-xs text-muted-foreground">التصنيفات</div>
+                      <div className="text-xs text-muted-foreground">{text.categories}</div>
                       <div className="font-semibold">{movePreview.plan.nodeChanges.length}</div>
                     </div>
                     <div className="rounded bg-muted/50 p-2">
-                      <div className="text-xs text-muted-foreground">الأصناف</div>
+                      <div className="text-xs text-muted-foreground">{text.items}</div>
                       <div className="font-semibold">{movePreview.plan.itemChanges.length}</div>
                     </div>
                   </div>
 
                   {movePreview.blockers?.length > 0 && (
                     <div className="space-y-1 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
-                      <div className="flex items-center gap-2 font-semibold"><AlertTriangle className="h-4 w-4" /> لا يمكن التنفيذ حالياً</div>
+                      <div className="flex items-center gap-2 font-semibold"><AlertTriangle className="h-4 w-4" /> {text.moveBlocked}</div>
                       {movePreview.blockers.map((message: string, index: number) => (
-                        <div key={index}>• {message}</div>
+                        <div key={index}>• {getCatalogError({ message }, language, text.moveBlocked)}</div>
                       ))}
                     </div>
                   )}
@@ -430,25 +433,25 @@ export default function TaxonomyManager() {
 
                   <div className="max-h-56 overflow-auto rounded border">
                     <div className="sticky top-0 grid grid-cols-[1fr_120px_120px] gap-2 border-b bg-muted px-2 py-1.5 text-xs font-medium">
-                      <span>العنصر</span><span>قبل</span><span>بعد</span>
+                      <span>{text.element}</span><span>{text.before}</span><span>{text.after}</span>
                     </div>
                     {movePreview.plan.nodeChanges.slice(0, 20).map((change: any) => (
                       <div key={`n-${change.id}`} className="grid grid-cols-[1fr_120px_120px] gap-2 border-b px-2 py-1.5 text-xs last:border-b-0">
-                        <span className="truncate">تصنيف: {change.nameAr}</span>
+                        <span className="truncate">{text.categoryPrefix} {change.nameAr}</span>
                         <span className="font-mono" dir="ltr">{change.oldCode}</span>
                         <span className="font-mono" dir="ltr">{change.newCode}</span>
                       </div>
                     ))}
                     {movePreview.plan.itemChanges.slice(0, 20).map((change: any) => (
                       <div key={`i-${change.id}`} className="grid grid-cols-[1fr_120px_120px] gap-2 border-b px-2 py-1.5 text-xs last:border-b-0">
-                        <span className="truncate">صنف: {change.nameAr}</span>
+                        <span className="truncate">{text.itemPrefix} {change.nameAr}</span>
                         <span className="font-mono" dir="ltr">{change.oldCode}</span>
                         <span className="font-mono" dir="ltr">{change.newCode}</span>
                       </div>
                     ))}
                   </div>
                   {(movePreview.plan.nodeChanges.length + movePreview.plan.itemChanges.length) > 40 && (
-                    <p className="text-xs text-muted-foreground">تم عرض أول 40 تغييراً فقط في المعاينة؛ التنفيذ يشمل جميع السجلات الموضحة في العدد أعلاه.</p>
+                    <p className="text-xs text-muted-foreground">{text.previewLimit}</p>
                   )}
 
                   <Button
@@ -457,7 +460,7 @@ export default function TaxonomyManager() {
                     disabled={moveSubtreeMut.isPending || movePreview.blockers?.length > 0}
                   >
                     {moveSubtreeMut.isPending ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : <MoveRight className="w-4 h-4 ml-2" />}
-                    اعتماد النقل وإعادة الترقيم
+                    {text.applyMove}
                   </Button>
                 </div>
               )}
@@ -466,9 +469,9 @@ export default function TaxonomyManager() {
             <div className="space-y-4 pt-2">
               <div className="space-y-1">
                 <label className="text-sm font-medium">
-                  الكود
+                  {text.code}
                   <span className="text-muted-foreground text-xs mr-2">
-                    {dialogMode === "edit" ? "(يتغير فقط من إعادة الهيكلة)" : "(يُولَّد تلقائياً إذا تُرك فارغاً)"}
+                    {dialogMode === "edit" ? text.codeEditHelp : text.codeAutoHelp}
                   </span>
                 </label>
                 <Input
@@ -479,21 +482,21 @@ export default function TaxonomyManager() {
                   }}
                   readOnly={dialogMode === "edit"}
                   placeholder={
-                    dialogMode === "addRoot" ? "مثال: 01 أو 100" :
-                    dialogMode === "addChild" ? `مثال: ${selectedNode?.code || "01"}-01` :
+                    dialogMode === "addRoot" ? text.rootCodeExample :
+                    dialogMode === "addChild" ? formatCatalogText(text.childCodeExample, { p0: String((selectedNode?.code || "01") ?? "") }) :
                     selectedNode?.code || ""
                   }
                   dir="ltr"
                   className={cn(codeError && "border-red-500", dialogMode === "edit" && "bg-muted")}
                 />
-                {codeError && <p className="text-xs text-red-500">{codeError}</p>}
+                {codeError && <p className="text-xs text-red-500">{text[codeError]}</p>}
                 {dialogMode !== "edit" ? (
                   <p className="text-xs text-muted-foreground">
-                    مقاطع رقمية مثل 01-01؛ وبعد 99 يأتي 100. النظام يولده تلقائياً إذا تركته فارغاً
+                    {text.codeFormatHelp}
                   </p>
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    لحماية التفرعات والأصناف، لا يُعدّل الكود منفرداً. استخدم زر «نقل / إعادة هيكلة».
+                    {text.codeProtectedHelp}
                   </p>
                 )}
               </div>
@@ -503,7 +506,7 @@ export default function TaxonomyManager() {
                 <Input
                   value={formData.nameAr}
                   onChange={e => setFormData({ ...formData, nameAr: e.target.value })}
-                  placeholder="مثال: قطع ميكانيكية"
+                  placeholder={text.arabicCategoryExample}
                   dir="rtl"
                 />
               </div>
@@ -521,12 +524,12 @@ export default function TaxonomyManager() {
               <div className="space-y-1">
                 <label className="text-sm font-medium">
                   {t.catalog.fields.nameUr}
-                  <span className="text-muted-foreground text-xs mr-2">(اختياري)</span>
+                  <span className="text-muted-foreground text-xs mr-2">{text.optionalParen}</span>
                 </label>
                 <Input
                   value={formData.nameUr}
                   onChange={e => setFormData({ ...formData, nameUr: e.target.value })}
-                  placeholder="اختياري"
+                  placeholder={text.optional}
                 />
               </div>
 
@@ -562,6 +565,8 @@ interface TreeNodeItemProps {
 function TreeNodeItem({
   node, allNodes, isExpanded, expandedNodes, onToggle, onAddChild, onEdit, onMove, onDelete, onReactivate, canDelete, canMove, depth = 0
 }: TreeNodeItemProps) {
+  const { language } = useTranslation();
+  const text = getCatalogFoundationText(language);
   const children = (allNodes || []).filter(n => Number(n.parentId) === Number(node.id));
   const hasChildren = children.length > 0;
   const isInactive = Number((node as any).isActive) !== 1;
@@ -599,14 +604,14 @@ function TreeNodeItem({
           </div>
           {isInactive && (
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border shrink-0">
-              معطّل
+              {text.inactive}
             </span>
           )}
         </div>
 
         {/* مستوى */}
         <span className="text-xs text-muted-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-          م{node.level}
+          {text.levelShort}{node.level}
         </span>
 
         {/* أزرار الإجراءات */}
@@ -615,7 +620,7 @@ function TreeNodeItem({
             <button
               onClick={e => { e.stopPropagation(); onAddChild(node); }}
               className="p-1 rounded hover:bg-green-100 hover:text-green-700 transition-colors"
-              title="إضافة فرع"
+              title={text.addChild}
             >
               <FolderPlus className="w-3.5 h-3.5" />
             </button>
@@ -623,7 +628,7 @@ function TreeNodeItem({
           <button
             onClick={e => { e.stopPropagation(); onEdit(node); }}
             className="p-1 rounded hover:bg-blue-100 hover:text-blue-700 transition-colors"
-            title="تعديل"
+            title={text.edit}
           >
             <Edit2 className="w-3.5 h-3.5" />
           </button>
@@ -631,7 +636,7 @@ function TreeNodeItem({
             <button
               onClick={e => { e.stopPropagation(); onMove(node); }}
               className="p-1 rounded hover:bg-amber-100 hover:text-amber-700 transition-colors"
-              title="نقل / إعادة هيكلة"
+              title={text.move}
             >
               <MoveRight className="w-3.5 h-3.5" />
             </button>
@@ -640,7 +645,7 @@ function TreeNodeItem({
             <button
               onClick={e => { e.stopPropagation(); onDelete(node); }}
               className="p-1 rounded hover:bg-red-100 hover:text-red-700 transition-colors"
-              title="تعطيل"
+              title={text.deactivate}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -649,7 +654,7 @@ function TreeNodeItem({
             <button
               onClick={e => { e.stopPropagation(); onReactivate(node); }}
               className="p-1 rounded hover:bg-green-100 hover:text-green-700 transition-colors"
-              title="إعادة تفعيل"
+              title={text.reactivate}
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>

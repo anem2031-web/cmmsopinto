@@ -1,3 +1,6 @@
+import { useTranslation } from "@/contexts/LanguageContext";
+import { formatCatalogText, getCatalogError } from "@/i18n/catalogUi";
+import { getCatalogItemsText } from "@/i18n/catalogItems";
 import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +23,8 @@ interface PreviewResult {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function CatalogImportButton() {
+  const { language } = useTranslation();
+  const text = getCatalogItemsText(language);
 
   const fileInputRef              = useRef<HTMLInputElement>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -56,7 +61,7 @@ export default function CatalogImportButton() {
         setPreview(result as PreviewResult);
         setStep("ready");
       } catch (err: any) {
-        toast.error(err.message ?? "فشل تحليل الملف");
+        toast.error(getCatalogError(err, language, text.fileAnalysisFailed));
         setDialogOpen(false);
         setStep("idle");
       }
@@ -72,13 +77,13 @@ export default function CatalogImportButton() {
     try {
       const result = await commitMutation.mutateAsync({ parsed: preview.parsed });
       toast.success(
-        `تم الاستيراد بنجاح — ${result.taxonomyCount} تصنيف، ${result.itemsCount} صنف`
+        formatCatalogText(text.importSuccess, { categories: result.taxonomyCount, items: result.itemsCount })
       );
       setDialogOpen(false);
       setStep("idle");
       setPreview(null);
     } catch (err: any) {
-      toast.error(err.message ?? "فشل الاستيراد");
+      toast.error(getCatalogError(err, language, text.importFailed));
       setStep("ready");
     }
   };
@@ -96,7 +101,7 @@ export default function CatalogImportButton() {
       {/* زر الاستيراد */}
       <Button variant="outline" onClick={handleClickButton}>
         <Upload className="w-4 h-4 ml-2" />
-        استيراد Excel
+        {text.importExcel}
       </Button>
 
       {/* input مخفي */}
@@ -110,16 +115,16 @@ export default function CatalogImportButton() {
 
       {/* Dialog المعاينة والتأكيد */}
       <Dialog open={dialogOpen} onOpenChange={handleClose}>
-        <DialogContent className="max-w-lg" dir="rtl">
+        <DialogContent className="max-w-lg" dir={language === "en" ? "ltr" : "rtl"}>
           <DialogHeader>
-            <DialogTitle>استيراد الكتالوج</DialogTitle>
+            <DialogTitle>{text.importCatalog}</DialogTitle>
           </DialogHeader>
 
           {/* حالة التحميل */}
           {step === "previewing" && (
             <div className="flex flex-col items-center gap-3 py-8">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">جارٍ تحليل الملف…</p>
+              <p className="text-sm text-muted-foreground">{text.analyzingFile}</p>
             </div>
           )}
 
@@ -133,13 +138,13 @@ export default function CatalogImportButton() {
                   <p className="text-2xl font-bold text-primary">
                     {preview.parsed.taxonomyNodes.length}
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1">تصنيف</p>
+                  <p className="text-xs text-muted-foreground mt-1">{text.importCategoryCount}</p>
                 </div>
                 <div className="rounded-lg border p-3 text-center">
                   <p className="text-2xl font-bold text-primary">
                     {preview.parsed.items.length}
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1">صنف</p>
+                  <p className="text-xs text-muted-foreground mt-1">{text.item}</p>
                 </div>
               </div>
 
@@ -148,14 +153,14 @@ export default function CatalogImportButton() {
                 <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 space-y-1">
                   <div className="flex items-center gap-2 text-destructive text-sm font-medium mb-2">
                     <XCircle className="w-4 h-4" />
-                    <span>أخطاء ({preview.validation.errors.length})</span>
+                    <span>{formatCatalogText(text.errorsCount, { count: preview.validation.errors.length })}</span>
                   </div>
                   {preview.validation.errors.slice(0, 5).map((e, i) => (
-                    <p key={i} className="text-xs text-destructive">• {e.message}</p>
+                    <p key={i} className="text-xs text-destructive">• {getCatalogError(e, language, text.validationError)}</p>
                   ))}
                   {preview.validation.errors.length > 5 && (
                     <p className="text-xs text-muted-foreground">
-                      … و {preview.validation.errors.length - 5} خطأ إضافي
+                      {formatCatalogText(text.additionalErrors, { count: preview.validation.errors.length - 5 })}
                     </p>
                   )}
                 </div>
@@ -166,14 +171,14 @@ export default function CatalogImportButton() {
                 <div className="rounded-lg border border-yellow-300 bg-yellow-50 p-3 space-y-1">
                   <div className="flex items-center gap-2 text-yellow-700 text-sm font-medium mb-2">
                     <AlertTriangle className="w-4 h-4" />
-                    <span>تحذيرات ({preview.validation.warnings.length})</span>
+                    <span>{formatCatalogText(text.warningsCount, { count: preview.validation.warnings.length })}</span>
                   </div>
                   {preview.validation.warnings.slice(0, 3).map((w, i) => (
-                    <p key={i} className="text-xs text-yellow-700">• {w.message}</p>
+                    <p key={i} className="text-xs text-yellow-700">• {getCatalogError(w, language, text.validationWarning)}</p>
                   ))}
                   {preview.validation.warnings.length > 3 && (
                     <p className="text-xs text-muted-foreground">
-                      … و {preview.validation.warnings.length - 3} تحذير إضافي
+                      {formatCatalogText(text.additionalWarnings, { count: preview.validation.warnings.length - 3 })}
                     </p>
                   )}
                 </div>
@@ -183,14 +188,14 @@ export default function CatalogImportButton() {
               {preview.validation.valid && preview.validation.warnings.length === 0 && (
                 <div className="flex items-center gap-2 text-green-600 text-sm">
                   <CheckCircle className="w-4 h-4" />
-                  <span>الملف صحيح، جاهز للاستيراد</span>
+                  <span>{text.fileReady}</span>
                 </div>
               )}
 
               {preview.validation.valid && preview.validation.warnings.length > 0 && (
                 <div className="flex items-center gap-2 text-yellow-600 text-sm">
                   <AlertTriangle className="w-4 h-4" />
-                  <span>يمكن الاستيراد مع التحذيرات أعلاه</span>
+                  <span>{text.importWithWarnings}</span>
                 </div>
               )}
             </div>
@@ -200,7 +205,7 @@ export default function CatalogImportButton() {
           {step === "committing" && (
             <div className="flex flex-col items-center gap-3 py-8">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">جارٍ حفظ البيانات…</p>
+              <p className="text-sm text-muted-foreground">{text.savingData}</p>
             </div>
           )}
 
@@ -210,18 +215,18 @@ export default function CatalogImportButton() {
               onClick={handleClose}
               disabled={step === "committing"}
             >
-              إلغاء
+              {text.cancel}
             </Button>
 
             {step === "ready" && preview?.validation.valid && (
               <Button onClick={handleCommit}>
-                تأكيد الاستيراد
+                {text.confirmImport}
               </Button>
             )}
 
             {step === "ready" && !preview?.validation.valid && (
               <Button disabled variant="destructive">
-                لا يمكن الاستيراد (يوجد أخطاء)
+                {text.importBlocked}
               </Button>
             )}
           </DialogFooter>

@@ -1,5 +1,7 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc";
+import { getCatalogInventoryText } from "@/i18n/catalogInventory";
+import { getCatalogError } from "@/i18n/catalogUi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
@@ -14,6 +16,7 @@ export function InventoryBookPages({
   onPrintLot,
   renderIssueUnitActions,
   supplierReturn = false,
+  language = "ar",
 }: {
   catalogItemId: number;
   warehouseId?: number;
@@ -21,7 +24,9 @@ export function InventoryBookPages({
   onPrintLot?: (selection: BookLotSelection) => void;
   renderIssueUnitActions?: (item: InventoryIssueUnitItem) => ReactNode;
   supplierReturn?: boolean;
+  language?: string;
 }) {
+  const c = getCatalogInventoryText(language);
   const [afterId, setAfterId] = useState(0);
   const [historyId, setHistoryId] = useState<number | null>(null);
   const result = trpc.inventory.bookPages.useQuery({
@@ -30,7 +35,7 @@ export function InventoryBookPages({
     afterId,
   });
   if (result.isLoading) return <Loader2 className="h-4 w-4 animate-spin" />;
-  if (result.error) return <p role="alert">{result.error.message}</p>;
+  if (result.error) return <p role="alert">{getCatalogError(result.error, language, c.bookLoadFailed)}</p>;
   return (
     <div className="space-y-3 p-3 border rounded-md bg-muted/20">
       {(result.data?.pages || []).map((page: any) => (
@@ -43,19 +48,19 @@ export function InventoryBookPages({
               {page.itemName} — #{page.id}
             </strong>
             <span>
-              المستودع #{page.warehouseId} ·{" "}
-              {Number(page.isFrozen) ? "سجل مجمّد — تاريخي" : "سجل تشغيلي"}
+              {c.warehouse} #{page.warehouseId} ·{" "}
+              {Number(page.isFrozen) ? c.frozen : c.operational}
             </span>
           </div>
           <p className="text-sm">
-            الرصيد: {Number(page.quantity)} {page.unit}
+            {c.balance}: {Number(page.quantity)} {page.unit}
           </p>
           {(page.movementUnits?.length
             ? page.movementUnits
             : [{ ...page.movements, unit: page.unit }]
           ).map((total: any) => (
             <p key={total.unit} className="text-sm">
-              الوارد: {Number(total.incoming)} · المنصرف:{" "}
+              {c.incoming}: {Number(total.incoming)} · {c.outgoing}:{" "}
               {Number(total.outgoing)} {total.unit}
             </p>
           ))}
@@ -64,9 +69,7 @@ export function InventoryBookPages({
               variant="outline"
               size="sm"
               onClick={() => setHistoryId(page.id)}
-            >
-              الحركات والمستندات التفصيلية
-            </Button>
+            >{c.movements}</Button>
             {renderIssueUnitActions && renderIssueUnitActions({
               ...page,
               linkedItemId: result.data?.master.id,
@@ -82,15 +85,15 @@ export function InventoryBookPages({
                 <strong>{lot.lotCode}</strong> ·{" "}
                 {lot.supplierItemName || page.itemName}
                 <p>
-                  المورد: {lot.supplierName || "غير مسجل"} · تاريخ الشراء:{" "}
+                  {c.supplier}: {lot.supplierName || c.notRecorded} · {c.purchaseDate}:{" "}
                   {lot.invoiceDate
-                    ? new Date(lot.invoiceDate).toLocaleDateString("ar-SA")
-                    : "غير مسجل"}
+                    ? new Date(lot.invoiceDate).toLocaleDateString(language === "en" ? "en-GB" : "ar-SA")
+                    : c.notRecorded}
                 </p>
                 <p>
-                  الوارد الأصلي: {Number(lot.originalQuantity)} · المتبقي هنا:{" "}
+                  {c.originalQuantity}: {Number(lot.originalQuantity)} · {c.remaining}:{" "}
                   {Number(lot.balanceQuantity)} {lot.issueUnit || page.unit} ·
-                  الاستلام: {lot.receiptNumber || "—"}
+                  {c.receipt}: {lot.receiptNumber || "—"}
                 </p>
               </div>
               {onPrintLot && (
@@ -99,9 +102,7 @@ export function InventoryBookPages({
                   size="sm"
                   disabled={!lot.trackingToken}
                   onClick={() => onPrintLot({ lot, page, master: result.data?.master })}
-                >
-                  عرض / طباعة QR
-                </Button>
+                >{c.printQr}</Button>
               )}
               {onPick && (
                 <Button
@@ -116,21 +117,17 @@ export function InventoryBookPages({
                   onClick={() =>
                     onPick({ lot, page, master: result.data?.master })
                   }
-                >
-                  اختيار اللوت
-                </Button>
+                >{c.pickLot}</Button>
               )}
             </div>
           ))}
           {!page.lots.length && (
-            <p className="text-muted-foreground text-sm">
-              لا توجد لوتات مرتبطة بهذا السجل.
-            </p>
+            <p className="text-muted-foreground text-sm">{c.noLots}</p>
           )}
         </div>
       ))}
       {!result.data?.pages.length && (
-        <p>لا توجد سجلات مخزون مرتبطة ضمن النطاق المختار.</p>
+        <p>{c.noRecords}</p>
       )}
       <div className="flex gap-2">
         <Button
@@ -138,20 +135,17 @@ export function InventoryBookPages({
           variant="outline"
           disabled={!afterId}
           onClick={() => setAfterId(0)}
-        >
-          البداية
-        </Button>
+        >{c.first}</Button>
         <Button
           size="sm"
           variant="outline"
           disabled={!result.data?.nextId}
           onClick={() => setAfterId(result.data!.nextId!)}
-        >
-          السجلات التالية
-        </Button>
+        >{c.next}</Button>
       </div>
       {historyId != null && (
         <InventoryItemCard
+          language={language}
           itemId={historyId}
           open
           onOpenChange={open => {

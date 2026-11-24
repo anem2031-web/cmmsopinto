@@ -29,6 +29,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/contexts/LanguageContext";
+import { getCatalogSuppliersText } from "@/i18n/catalogSuppliers";
+import { formatCatalogText, getCatalogError } from "@/i18n/catalogUi";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Supplier {
@@ -93,14 +96,24 @@ const EMPTY_FORM: FormState = {
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function SuppliersManager() {
-  const [dialogMode, setDialogMode] = useState<"add" | "edit" | "candidate" | null>(null);
+  const { language } = useTranslation();
+  const c = getCatalogSuppliersText(language);
+  const dir = language === "en" ? "ltr" : "rtl";
+  const [dialogMode, setDialogMode] = useState<
+    "add" | "edit" | "candidate" | null
+  >(null);
   const [selected, setSelected] = useState<Supplier | null>(null);
-  const [selectedCandidate, setSelectedCandidate] = useState<SupplierCandidate | null>(null);
-  const [linkCandidate, setLinkCandidate] = useState<SupplierCandidate | null>(null);
+  const [selectedCandidate, setSelectedCandidate] =
+    useState<SupplierCandidate | null>(null);
+  const [linkCandidate, setLinkCandidate] = useState<SupplierCandidate | null>(
+    null
+  );
   const [linkSearch, setLinkSearch] = useState("");
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterManufacturer, setFilterManufacturer] = useState<boolean | null>(null);
+  const [filterManufacturer, setFilterManufacturer] = useState<boolean | null>(
+    null
+  );
 
   const {
     data: suppliers,
@@ -108,64 +121,66 @@ export default function SuppliersManager() {
     refetch,
   } = trpc.catalog.suppliers.list.useQuery({ activeOnly: false });
 
-  const {
-    data: supplierCandidates = [],
-    refetch: refetchCandidates,
-  } = trpc.catalog.suppliers.candidates.listPending.useQuery();
+  const { data: supplierCandidates = [], refetch: refetchCandidates } =
+    trpc.catalog.suppliers.candidates.listPending.useQuery();
 
   const createMut = trpc.catalog.suppliers.create.useMutation({
     onSuccess: () => {
       refetch();
       closeDialog();
-      toast.success("تم إضافة المورد بنجاح");
+      toast.success(c.created);
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(getCatalogError(e, language, c.operationFailed)),
   });
 
   const updateMut = trpc.catalog.suppliers.update.useMutation({
     onSuccess: () => {
       refetch();
       closeDialog();
-      toast.success("تم تعديل المورد");
+      toast.success(c.updated);
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(getCatalogError(e, language, c.operationFailed)),
   });
 
-  const linkCandidateMut = trpc.catalog.suppliers.candidates.linkExisting.useMutation({
-    onSuccess: () => {
-      refetchCandidates();
-      refetch();
-      setLinkCandidate(null);
-      setLinkSearch("");
-      toast.success("تم ربط المورد المقترح بمورد موجود");
-    },
-    onError: (e) => toast.error(e.message),
-  });
+  const linkCandidateMut =
+    trpc.catalog.suppliers.candidates.linkExisting.useMutation({
+      onSuccess: () => {
+        refetchCandidates();
+        refetch();
+        setLinkCandidate(null);
+        setLinkSearch("");
+        toast.success(c.linked);
+      },
+      onError: e =>
+        toast.error(getCatalogError(e, language, c.operationFailed)),
+    });
 
-  const approveCandidateMut = trpc.catalog.suppliers.candidates.approveNew.useMutation({
-    onSuccess: () => {
-      refetchCandidates();
-      refetch();
-      closeDialog();
-      toast.success("تم اعتماد المورد الجديد وربطه بالفاتورة");
-    },
-    onError: (e) => toast.error(e.message),
-  });
+  const approveCandidateMut =
+    trpc.catalog.suppliers.candidates.approveNew.useMutation({
+      onSuccess: () => {
+        refetchCandidates();
+        refetch();
+        closeDialog();
+        toast.success(c.approved);
+      },
+      onError: e =>
+        toast.error(getCatalogError(e, language, c.operationFailed)),
+    });
 
   const deleteMut = trpc.catalog.suppliers.delete.useMutation({
     onSuccess: () => {
       refetch();
-      toast.success("تم حذف المورد");
+      toast.success(c.deleted);
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(getCatalogError(e, language, c.operationFailed)),
   });
 
   const toggleActiveMut = trpc.catalog.suppliers.update.useMutation({
     onSuccess: () => {
       refetch();
-      toast.success("تم تحديث حالة المورد");
+      toast.success(c.statusUpdated);
     },
-    onError: (e) => toast.error(e.message),
+    onError: e => toast.error(getCatalogError(e, language, c.operationFailed)),
   });
 
   // ── Filtering ────────────────────────────────────────────
@@ -181,7 +196,7 @@ export default function SuppliersManager() {
         s.commercialRegistration?.toLowerCase().includes(q) ||
         s.phone?.toLowerCase().includes(q) ||
         s.contactName?.toLowerCase().includes(q) ||
-      s.country?.toLowerCase().includes(q) ||
+        s.country?.toLowerCase().includes(q) ||
         s.address?.toLowerCase().includes(q) ||
         s.email?.toLowerCase().includes(q);
 
@@ -209,16 +224,16 @@ export default function SuppliersManager() {
   const openEdit = (s: Supplier) => {
     setSelected(s);
     setForm({
-      nameAr:         s.nameAr,
-      nameEn:         s.nameEn,
-      contactName:    s.contactName    ?? "",
-      phone:          s.phone          ?? "",
-      email:          s.email          ?? "",
-      address:        s.address        ?? "",
-      taxNumber:      s.taxNumber      ?? "",
+      nameAr: s.nameAr,
+      nameEn: s.nameEn,
+      contactName: s.contactName ?? "",
+      phone: s.phone ?? "",
+      email: s.email ?? "",
+      address: s.address ?? "",
+      taxNumber: s.taxNumber ?? "",
       commercialRegistration: s.commercialRegistration ?? "",
-      country:        s.country        ?? "",
-      notes:          s.notes          ?? "",
+      country: s.country ?? "",
+      notes: s.notes ?? "",
       isManufacturer: Boolean(s.isManufacturer),
     });
     setDialogMode("edit");
@@ -235,42 +250,47 @@ export default function SuppliersManager() {
       phone: candidate.phone || "",
       email: candidate.email || "",
       address: candidate.address || "",
-      notes: candidate.invoiceNumber ? `مرشح من فاتورة ${candidate.invoiceNumber}` : "مرشح من استلام مشتريات",
+      notes: candidate.invoiceNumber
+        ? `مرشح من فاتورة ${candidate.invoiceNumber}`
+        : "مرشح من استلام مشتريات",
     });
     setDialogMode("candidate");
   };
 
   const handleSubmit = async () => {
     if (!form.nameAr.trim() || !form.nameEn.trim()) {
-      toast.error("الاسم بالعربية والإنجليزية مطلوبان");
+      toast.error(c.namesRequired);
       return;
     }
 
     const payload = {
-      nameAr:         form.nameAr.trim(),
-      nameEn:         form.nameEn.trim(),
-      contactName:    form.contactName.trim()  || undefined,
-      phone:          form.phone.trim()        || undefined,
-      email:          form.email.trim()        || undefined,
-      address:        form.address.trim()      || undefined,
-      taxNumber:      form.taxNumber.trim()    || undefined,
+      nameAr: form.nameAr.trim(),
+      nameEn: form.nameEn.trim(),
+      contactName: form.contactName.trim() || undefined,
+      phone: form.phone.trim() || undefined,
+      email: form.email.trim() || undefined,
+      address: form.address.trim() || undefined,
+      taxNumber: form.taxNumber.trim() || undefined,
       commercialRegistration: form.commercialRegistration.trim() || undefined,
-      country:        form.country.trim()      || undefined,
-      notes:          form.notes.trim()        || undefined,
+      country: form.country.trim() || undefined,
+      notes: form.notes.trim() || undefined,
       isManufacturer: form.isManufacturer,
     };
 
     if (dialogMode === "edit" && selected) {
       await updateMut.mutateAsync({ id: selected.id, ...payload });
     } else if (dialogMode === "candidate" && selectedCandidate) {
-      await approveCandidateMut.mutateAsync({ candidateId: selectedCandidate.id, ...payload });
+      await approveCandidateMut.mutateAsync({
+        candidateId: selectedCandidate.id,
+        ...payload,
+      });
     } else {
       await createMut.mutateAsync(payload);
     }
   };
 
   const handleDelete = (s: Supplier) => {
-    if (confirm(`هل تريد حذف المورد "${s.nameAr}"؟\nسيتم إخفاؤه ولن يُحذف إذا كان مرتبطاً بأصناف.`)) {
+    if (confirm(formatCatalogText(c.deleteConfirm, { name: s.nameAr }))) {
       deleteMut.mutate(s.id);
     }
   };
@@ -279,29 +299,37 @@ export default function SuppliersManager() {
     toggleActiveMut.mutate({ id: s.id, isActive: !s.isActive });
   };
 
-  const isPending = createMut.isPending || updateMut.isPending || approveCandidateMut.isPending;
+  const isPending =
+    createMut.isPending || updateMut.isPending || approveCandidateMut.isPending;
 
   // ── Stats ─────────────────────────────────────────────────
-  const total        = suppliers?.length ?? 0;
-  const activeCount  = suppliers?.filter((s: Supplier) => s.isActive).length ?? 0;
-  const mfrCount     = suppliers?.filter((s: Supplier) => s.isManufacturer && s.isActive).length ?? 0;
+  const total = suppliers?.length ?? 0;
+  const activeCount =
+    suppliers?.filter((s: Supplier) => s.isActive).length ?? 0;
+  const mfrCount =
+    suppliers?.filter((s: Supplier) => s.isManufacturer && s.isActive).length ??
+    0;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" dir={dir}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
             <Truck className="w-5 h-5 text-primary" />
-            إدارة الموردين
+            {c.heading}
           </h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {activeCount} نشط · {mfrCount} شركة مصنّعة · {total} إجمالي
+            {formatCatalogText(c.stats, {
+              active: activeCount,
+              manufacturers: mfrCount,
+              total,
+            })}
           </p>
         </div>
         <Button size="sm" className="gap-2" onClick={openAdd}>
           <Plus className="w-4 h-4" />
-          إضافة مورد
+          {c.add}
         </Button>
       </div>
 
@@ -313,30 +341,58 @@ export default function SuppliersManager() {
               <div>
                 <h4 className="font-semibold flex items-center gap-2">
                   <Inbox className="w-4 h-4 text-amber-700" />
-                  إدخال الموردين الجدد
+                  {c.newSuppliers}
                 </h4>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  موردون تم تعليمهم «مورد جديد» أثناء إدخال الفواتير.
+                  {c.newSuppliersHint}
                 </p>
               </div>
-              <Badge variant="outline">{supplierCandidates.length} بانتظار المراجعة</Badge>
+              <Badge variant="outline">
+                {supplierCandidates.length} {c.pending}
+              </Badge>
             </div>
 
             <div className="space-y-2">
               {(supplierCandidates as SupplierCandidate[]).map(candidate => (
-                <div key={candidate.id} className="rounded-md border bg-background p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                <div
+                  key={candidate.id}
+                  className="rounded-md border bg-background p-3 flex flex-col sm:flex-row sm:items-center gap-3"
+                >
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{candidate.extractedName}</p>
+                    <p className="font-medium truncate">
+                      {candidate.extractedName}
+                    </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {candidate.invoiceNumber ? `فاتورة ${candidate.invoiceNumber}` : "فاتورة بدون رقم"}
-                      {candidate.taxNumber ? ` · ضريبي ${candidate.taxNumber}` : ""}
+                      {candidate.invoiceNumber
+                        ? formatCatalogText(c.invoice, {
+                            number: candidate.invoiceNumber,
+                          })
+                        : c.invoiceWithoutNumber}
+                      {candidate.taxNumber
+                        ? formatCatalogText(c.taxInline, {
+                            number: candidate.taxNumber,
+                          })
+                        : ""}
                     </p>
                   </div>
                   <div className="flex gap-2 shrink-0">
-                    <Button size="sm" variant="outline" className="gap-1" onClick={() => { setLinkCandidate(candidate); setLinkSearch(candidate.extractedName); }}>
-                      <Link2 className="w-3.5 h-3.5" /> ربط بموجود
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1"
+                      onClick={() => {
+                        setLinkCandidate(candidate);
+                        setLinkSearch(candidate.extractedName);
+                      }}
+                    >
+                      <Link2 className="w-3.5 h-3.5" /> {c.linkExisting}
                     </Button>
-                    <Button size="sm" onClick={() => openCandidateApproval(candidate)}>اعتماد جديد</Button>
+                    <Button
+                      size="sm"
+                      onClick={() => openCandidateApproval(candidate)}
+                    >
+                      {c.approveNew}
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -348,23 +404,23 @@ export default function SuppliersManager() {
       {/* Search + Filter Bar */}
       <div className="flex flex-col sm:flex-row gap-2">
         <div className="relative flex-1">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Search className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="ابحث بالاسم، الرقم الضريبي، السجل، الجوال..."
+            placeholder={c.search}
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pr-9"
-            dir="rtl"
+            onChange={e => setSearchQuery(e.target.value)}
+            className="ps-9"
+            dir={dir}
           />
         </div>
 
         {/* Filter pills */}
         <div className="flex gap-2 shrink-0">
           {[
-            { label: "الكل",       value: null },
-            { label: "موردون",     value: false },
-            { label: "مصنّعون",    value: true  },
-          ].map((f) => (
+            { label: c.all, value: null },
+            { label: c.suppliers, value: false },
+            { label: c.manufacturers, value: true },
+          ].map(f => (
             <button
               key={String(f.value)}
               onClick={() => setFilterManufacturer(f.value)}
@@ -403,13 +459,18 @@ export default function SuppliersManager() {
           <CardContent className="py-14 text-center text-muted-foreground">
             <Truck className="w-10 h-10 mx-auto mb-3 opacity-20" />
             {searchQuery ? (
-              <p>لا توجد نتائج للبحث عن "{searchQuery}"</p>
+              <p>{formatCatalogText(c.noResults, { search: searchQuery })}</p>
             ) : (
               <>
-                <p className="mb-1">لا يوجد موردون بعد</p>
-                <p className="text-xs">أضف أول مورد لتبدأ بربطه بأصناف الكاتلوج</p>
-                <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}>
-                  إضافة أول مورد
+                <p className="mb-1">{c.empty}</p>
+                <p className="text-xs">{c.emptyHint}</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={openAdd}
+                >
+                  {c.addFirst}
                 </Button>
               </>
             )}
@@ -418,16 +479,30 @@ export default function SuppliersManager() {
       )}
 
       {/* Add / Edit Dialog */}
-      <Dialog open={!!dialogMode} onOpenChange={(open) => { if (!open) closeDialog(); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <Dialog
+        open={!!dialogMode}
+        onOpenChange={open => {
+          if (!open) closeDialog();
+        }}
+      >
+        <DialogContent
+          className="max-w-lg max-h-[90vh] overflow-y-auto"
+          dir={dir}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {dialogMode === "edit" ? (
-                <><Edit2 className="w-4 h-4" /> تعديل المورد</>
+                <>
+                  <Edit2 className="w-4 h-4" /> {c.editSupplier}
+                </>
               ) : dialogMode === "candidate" ? (
-                <><CheckCircle2 className="w-4 h-4" /> اعتماد المورد المقترح</>
+                <>
+                  <CheckCircle2 className="w-4 h-4" /> {c.approveSuggested}
+                </>
               ) : (
-                <><Plus className="w-4 h-4" /> إضافة مورد جديد</>
+                <>
+                  <Plus className="w-4 h-4" /> {c.addNew}
+                </>
               )}
             </DialogTitle>
           </DialogHeader>
@@ -436,19 +511,19 @@ export default function SuppliersManager() {
             {/* الأسماء */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-sm font-medium">الاسم بالعربية *</label>
+                <label className="text-sm font-medium">{c.arabicName}</label>
                 <Input
                   value={form.nameAr}
-                  onChange={(e) => setForm({ ...form, nameAr: e.target.value })}
-                  placeholder="مثال: شركة الخليج"
+                  onChange={e => setForm({ ...form, nameAr: e.target.value })}
+                  placeholder={c.arabicNameExample}
                   dir="rtl"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-sm font-medium">الاسم بالإنجليزية *</label>
+                <label className="text-sm font-medium">{c.englishName}</label>
                 <Input
                   value={form.nameEn}
-                  onChange={(e) => setForm({ ...form, nameEn: e.target.value })}
+                  onChange={e => setForm({ ...form, nameEn: e.target.value })}
                   placeholder="e.g. Gulf Co."
                   dir="ltr"
                 />
@@ -459,12 +534,17 @@ export default function SuppliersManager() {
             <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
               <Factory className="w-4 h-4 text-muted-foreground shrink-0" />
               <div className="flex-1">
-                <p className="text-sm font-medium">شركة مصنّعة</p>
-                <p className="text-xs text-muted-foreground">هل هذا المورد شركة تصنيع مباشر؟</p>
+                <p className="text-sm font-medium">{c.manufacturerCompany}</p>
+                <p className="text-xs text-muted-foreground">
+                  {c.manufacturerHint}
+                </p>
               </div>
               <button
                 type="button"
-                onClick={() => setForm({ ...form, isManufacturer: !form.isManufacturer })}
+                onClick={() =>
+                  setForm({ ...form, isManufacturer: !form.isManufacturer })
+                }
+                aria-label={c.manufacturerHint}
                 className={cn(
                   "relative w-10 h-5 rounded-full transition-colors",
                   form.isManufacturer ? "bg-primary" : "bg-muted-foreground/30"
@@ -481,20 +561,24 @@ export default function SuppliersManager() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-sm font-medium">الرقم الضريبي</label>
+                <label className="text-sm font-medium">{c.taxNumber}</label>
                 <Input
                   value={form.taxNumber}
-                  onChange={(e) => setForm({ ...form, taxNumber: e.target.value })}
+                  onChange={e =>
+                    setForm({ ...form, taxNumber: e.target.value })
+                  }
                   placeholder="3xxxxxxxxxxxxxx"
                   dir="ltr"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-sm font-medium">السجل التجاري</label>
+                <label className="text-sm font-medium">{c.registration}</label>
                 <Input
                   value={form.commercialRegistration}
-                  onChange={(e) => setForm({ ...form, commercialRegistration: e.target.value })}
-                  placeholder="رقم السجل التجاري"
+                  onChange={e =>
+                    setForm({ ...form, commercialRegistration: e.target.value })
+                  }
+                  placeholder={c.registrationPlaceholder}
                   dir="ltr"
                 />
               </div>
@@ -502,34 +586,36 @@ export default function SuppliersManager() {
 
             {/* معلومات التواصل */}
             <div className="space-y-1">
-              <label className="text-sm font-medium">مسؤول التواصل</label>
+              <label className="text-sm font-medium">{c.contact}</label>
               <Input
                 value={form.contactName}
-                onChange={(e) => setForm({ ...form, contactName: e.target.value })}
-                placeholder="اسم الشخص المسؤول"
-                dir="rtl"
+                onChange={e =>
+                  setForm({ ...form, contactName: e.target.value })
+                }
+                placeholder={c.contactPlaceholder}
+                dir={dir}
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-sm font-medium flex items-center gap-1.5">
-                  <Phone className="w-3.5 h-3.5" /> الجوال
+                  <Phone className="w-3.5 h-3.5" /> {c.mobile}
                 </label>
                 <Input
                   value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  onChange={e => setForm({ ...form, phone: e.target.value })}
                   placeholder="05xxxxxxxx"
                   dir="ltr"
                 />
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-medium flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5" /> البريد الإلكتروني
+                  <Mail className="w-3.5 h-3.5" /> {c.email}
                 </label>
                 <Input
                   value={form.email}
-                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  onChange={e => setForm({ ...form, email: e.target.value })}
                   placeholder="info@company.com"
                   dir="ltr"
                 />
@@ -539,33 +625,33 @@ export default function SuppliersManager() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-sm font-medium flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5" /> الدولة
+                  <MapPin className="w-3.5 h-3.5" /> {c.country}
                 </label>
                 <Input
                   value={form.country}
-                  onChange={(e) => setForm({ ...form, country: e.target.value })}
-                  placeholder="مثال: السعودية"
-                  dir="rtl"
+                  onChange={e => setForm({ ...form, country: e.target.value })}
+                  placeholder={c.countryPlaceholder}
+                  dir={dir}
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-sm font-medium">العنوان</label>
+                <label className="text-sm font-medium">{c.address}</label>
                 <Input
                   value={form.address}
-                  onChange={(e) => setForm({ ...form, address: e.target.value })}
-                  placeholder="المدينة والشارع"
-                  dir="rtl"
+                  onChange={e => setForm({ ...form, address: e.target.value })}
+                  placeholder={c.addressPlaceholder}
+                  dir={dir}
                 />
               </div>
             </div>
 
             <div className="space-y-1">
-              <label className="text-sm font-medium">ملاحظات</label>
+              <label className="text-sm font-medium">{c.notes}</label>
               <Input
                 value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                placeholder="أي ملاحظات إضافية"
-                dir="rtl"
+                onChange={e => setForm({ ...form, notes: e.target.value })}
+                placeholder={c.notesPlaceholder}
+                dir={dir}
               />
             </div>
 
@@ -575,46 +661,86 @@ export default function SuppliersManager() {
                 disabled={isPending}
                 className="flex-1"
               >
-                {isPending && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-                {isPending ? "جاري الحفظ..." : dialogMode === "edit" ? "تحديث المورد" : dialogMode === "candidate" ? "اعتماد المورد الجديد" : "إضافة المورد"}
+                {isPending && <Loader2 className="w-4 h-4 animate-spin ms-2" />}
+                {isPending
+                  ? c.saving
+                  : dialogMode === "edit"
+                    ? c.update
+                    : dialogMode === "candidate"
+                      ? c.approveNewSupplier
+                      : c.addSupplier}
               </Button>
-              <Button variant="outline" onClick={closeDialog} disabled={isPending}>
-                إلغاء
+              <Button
+                variant="outline"
+                onClick={closeDialog}
+                disabled={isPending}
+              >
+                {c.cancel}
               </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!linkCandidate} onOpenChange={(open) => { if (!open) { setLinkCandidate(null); setLinkSearch(""); } }}>
-        <DialogContent className="max-w-lg">
+      <Dialog
+        open={!!linkCandidate}
+        onOpenChange={open => {
+          if (!open) {
+            setLinkCandidate(null);
+            setLinkSearch("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg" dir={dir}>
           <DialogHeader>
-            <DialogTitle>ربط المورد المقترح بمورد موجود</DialogTitle>
+            <DialogTitle>{c.linkHeading}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              المورد الوارد في الفاتورة: <strong className="text-foreground">{linkCandidate?.extractedName}</strong>
+              {c.invoiceSupplier}{" "}
+              <strong className="text-foreground">
+                {linkCandidate?.extractedName}
+              </strong>
             </p>
-            <Input value={linkSearch} onChange={e => setLinkSearch(e.target.value)} placeholder="ابحث في الموردين الحاليين..." />
+            <Input
+              value={linkSearch}
+              onChange={e => setLinkSearch(e.target.value)}
+              placeholder={c.linkSearch}
+            />
             <div className="max-h-72 overflow-y-auto space-y-1.5">
               {(suppliers || [])
-                .filter((supplier: Supplier) => supplier.isActive && (
-                  !linkSearch.trim() ||
-                  supplier.nameAr.toLowerCase().includes(linkSearch.trim().toLowerCase()) ||
-                  supplier.nameEn.toLowerCase().includes(linkSearch.trim().toLowerCase()) ||
-                  supplier.taxNumber?.includes(linkSearch.trim())
-                ))
+                .filter(
+                  (supplier: Supplier) =>
+                    supplier.isActive &&
+                    (!linkSearch.trim() ||
+                      supplier.nameAr
+                        .toLowerCase()
+                        .includes(linkSearch.trim().toLowerCase()) ||
+                      supplier.nameEn
+                        .toLowerCase()
+                        .includes(linkSearch.trim().toLowerCase()) ||
+                      supplier.taxNumber?.includes(linkSearch.trim()))
+                )
                 .slice(0, 20)
                 .map((supplier: Supplier) => (
                   <button
                     key={supplier.id}
                     type="button"
                     disabled={linkCandidateMut.isPending}
-                    onClick={() => linkCandidate && linkCandidateMut.mutate({ candidateId: linkCandidate.id, supplierId: supplier.id })}
-                    className="w-full text-right rounded-md border p-2.5 hover:bg-muted transition-colors"
+                    onClick={() =>
+                      linkCandidate &&
+                      linkCandidateMut.mutate({
+                        candidateId: linkCandidate.id,
+                        supplierId: supplier.id,
+                      })
+                    }
+                    className="w-full text-start rounded-md border p-2.5 hover:bg-muted transition-colors"
                   >
                     <p className="text-sm font-medium">{supplier.nameAr}</p>
-                    <p className="text-xs text-muted-foreground">{supplier.nameEn}{supplier.taxNumber ? ` · ${supplier.taxNumber}` : ""}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {supplier.nameEn}
+                      {supplier.taxNumber ? ` · ${supplier.taxNumber}` : ""}
+                    </p>
                   </button>
                 ))}
             </div>
@@ -637,6 +763,8 @@ function SupplierCard({
   onDelete: (s: Supplier) => void;
   onToggleActive: (s: Supplier) => void;
 }) {
+  const { language } = useTranslation();
+  const c = getCatalogSuppliersText(language);
   return (
     <Card
       className={cn(
@@ -648,26 +776,34 @@ function SupplierCard({
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <div className={cn(
-              "p-1.5 rounded-md shrink-0",
-              supplier.isManufacturer
-                ? "bg-amber-100 text-amber-700"
-                : "bg-blue-100 text-blue-700"
-            )}>
-              {supplier.isManufacturer
-                ? <Factory className="w-4 h-4" />
-                : <Building2 className="w-4 h-4" />}
+            <div
+              className={cn(
+                "p-1.5 rounded-md shrink-0",
+                supplier.isManufacturer
+                  ? "bg-amber-100 text-amber-700"
+                  : "bg-blue-100 text-blue-700"
+              )}
+            >
+              {supplier.isManufacturer ? (
+                <Factory className="w-4 h-4" />
+              ) : (
+                <Building2 className="w-4 h-4" />
+              )}
             </div>
             <div className="min-w-0">
-              <p className="font-semibold text-sm truncate">{supplier.nameAr}</p>
-              <p className="text-xs text-muted-foreground truncate">{supplier.nameEn}</p>
+              <p className="font-semibold text-sm truncate">
+                {supplier.nameAr}
+              </p>
+              <p className="text-xs text-muted-foreground truncate">
+                {supplier.nameEn}
+              </p>
             </div>
           </div>
 
           {/* Active Badge */}
           <button
             onClick={() => onToggleActive(supplier)}
-            title={supplier.isActive ? "إيقاف المورد" : "تفعيل المورد"}
+            title={supplier.isActive ? c.deactivate : c.activate}
             className="shrink-0"
           >
             {supplier.isActive ? (
@@ -682,7 +818,7 @@ function SupplierCard({
         <div className="flex flex-wrap gap-1.5">
           {supplier.isManufacturer && (
             <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
-              مصنّع
+              {c.manufacturer}
             </span>
           )}
           {supplier.country && (
@@ -696,7 +832,9 @@ function SupplierCard({
         <div className="space-y-1">
           {supplier.contactName && (
             <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-              <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-[10px]">👤</span>
+              <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-[10px]">
+                👤
+              </span>
               {supplier.contactName}
             </p>
           )}
@@ -709,7 +847,9 @@ function SupplierCard({
           {supplier.email && (
             <p className="text-xs text-muted-foreground flex items-center gap-1.5 truncate">
               <Mail className="w-3 h-3 shrink-0" />
-              <span className="truncate" dir="ltr">{supplier.email}</span>
+              <span className="truncate" dir="ltr">
+                {supplier.email}
+              </span>
             </p>
           )}
         </div>
@@ -723,13 +863,14 @@ function SupplierCard({
             onClick={() => onEdit(supplier)}
           >
             <Edit2 className="w-3.5 h-3.5" />
-            تعديل
+            {c.edit}
           </Button>
           <Button
             variant="outline"
             size="sm"
             className="gap-1.5 h-8 text-destructive hover:bg-destructive/10 hover:border-destructive"
             onClick={() => onDelete(supplier)}
+            aria-label={c.deleteSupplier}
           >
             <Trash2 className="w-3.5 h-3.5" />
           </Button>

@@ -1,3 +1,4 @@
+import { getCatalogItemsText } from "@/i18n/catalogItems";
 import { useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,6 +87,7 @@ export default function CatalogTreeFilter({
   onChange: (nodeId: number | null) => void;
   language: string;
 }) {
+  const text = getCatalogItemsText(language);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
@@ -200,7 +202,7 @@ export default function CatalogTreeFilter({
             className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-muted disabled:opacity-30"
             disabled={!hasChildren}
             onClick={() => hasChildren && toggleExpanded(nodeId)}
-            aria-label={expanded ? "طي التصنيف" : "فتح التصنيف"}
+            aria-label={expanded ? text.collapseCategory : text.expandCategory}
           >
             {hasChildren
               ? (expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />)
@@ -211,14 +213,14 @@ export default function CatalogTreeFilter({
             type="button"
             onClick={() => chooseNode(nodeId)}
             className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded px-1 py-1 text-start"
-            title={hasChildren ? "يشمل هذا التصنيف جميع الفروع التابعة له" : "اختيار هذا التصنيف"}
+            title={hasChildren ? text.categoryIncludesDescendants : text.chooseCategory}
           >
             <span className="min-w-0">
               <span className="block truncate text-sm font-medium">
                 {node.code ? `${node.code} · ` : ""}{nodeLabel(node, language)}
               </span>
               {hasChildren && (
-                <span className="block text-[11px] text-muted-foreground">يشمل جميع الفروع التابعة</span>
+                <span className="block text-[11px] text-muted-foreground">{text.includesDescendants}</span>
               )}
             </span>
             {selected && <Check className="h-4 w-4 shrink-0 text-primary" />}
@@ -239,44 +241,44 @@ export default function CatalogTreeFilter({
           <span className="flex min-w-0 items-center gap-2">
             <FolderTree className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className={cn("truncate", !selectedPathLabel && "text-muted-foreground")}>
-              {selectedPathLabel || "كل شجرة الأصناف"}
+              {selectedPathLabel || text.allItemTree}
             </span>
           </span>
           <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
         </Button>
       </PopoverTrigger>
 
-      <PopoverContent className="w-[min(520px,calc(100vw-2rem))] p-3" align="start">
+      <PopoverContent dir={language === "en" ? "ltr" : "rtl"} className="w-[min(520px,calc(100vw-2rem))] p-3" align="start">
         <div className="space-y-2">
           <div>
-            <p className="text-sm font-semibold">البحث حسب شجرة الأصناف</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">اختر أي مستوى؛ سيشمل الفلتر التصنيف المختار وجميع الفروع التابعة له.</p>
+            <p className="text-sm font-semibold">{text.treeSearchTitle}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{text.treeSearchHelp}</p>
           </div>
 
           <Input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="ابحث باسم التصنيف أو الكود..."
+            placeholder={text.treeSearchPlaceholder}
             className="h-9"
           />
 
           {value !== null && (
             <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-2.5 py-2 text-xs">
               <span className="min-w-0 truncate">
-                <span className="font-semibold">التصنيف المختار:</span> {selectedPathLabel || `#${value}`}
+                <span className="font-semibold">{text.selectedCategory}</span> {selectedPathLabel || `#${value}`}
               </span>
               <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 gap-1" onClick={() => chooseNode(null)}>
                 <X className="h-3.5 w-3.5" />
-                الكل
+                {text.all}
               </Button>
             </div>
           )}
 
           <div className="max-h-80 overflow-y-auto rounded-md border bg-background p-2">
             {roots.length === 0 ? (
-              <p className="py-5 text-center text-sm text-muted-foreground">لا توجد تصنيفات نشطة.</p>
+              <p className="py-5 text-center text-sm text-muted-foreground">{text.noActiveCategories}</p>
             ) : visibleNodeIds && visibleNodeIds.size === 0 ? (
-              <p className="py-5 text-center text-sm text-muted-foreground">لا يوجد تصنيف مطابق للبحث.</p>
+              <p className="py-5 text-center text-sm text-muted-foreground">{text.noMatchingCategory}</p>
             ) : (
               roots.map(node => renderNode(node, 0))
             )}

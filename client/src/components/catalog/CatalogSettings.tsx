@@ -1,3 +1,4 @@
+import { getCatalogFoundationText } from "@/i18n/catalogFoundation";
 import React, { useState } from "react";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
@@ -8,7 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { Settings, Loader2, Check } from "lucide-react";
 
 export default function CatalogSettings() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const text = getCatalogFoundationText(language);
   const [settings, setSettings] = useState({
     requireSupplier: false,
     autoGenerateCode: true,
@@ -60,7 +62,7 @@ export default function CatalogSettings() {
                 {t.catalog.settings.requireSupplier}
               </p>
               <p className="text-sm text-slate-600">
-                {"يجب تحديد مورد واحد على الأقل عند إضافة صنف"}
+                {text.requireSupplierHelp}
               </p>
             </div>
             <Switch
@@ -78,7 +80,7 @@ export default function CatalogSettings() {
                 {t.catalog.settings.autoCode}
               </p>
               <p className="text-sm text-slate-600">
-                {"توليد كود الصنف تلقائياً بناءً على القسم"}
+                {text.autoCodeHelp}
               </p>
             </div>
             <Switch
@@ -96,7 +98,7 @@ export default function CatalogSettings() {
                 {t.catalog.settings.bulkImport}
               </p>
               <p className="text-sm text-slate-600">
-                {"السماح برفع ملفات Excel لإضافة أصناف متعددة"}
+                {text.bulkImportHelp}
               </p>
             </div>
             <Switch
@@ -114,7 +116,7 @@ export default function CatalogSettings() {
                 {t.catalog.settings.requireImage}
               </p>
               <p className="text-sm text-slate-600">
-                {"يجب إضافة صورة رئيسية لكل صنف"}
+                {text.requireImageHelp}
               </p>
             </div>
             <Switch
@@ -154,7 +156,7 @@ export default function CatalogSettings() {
               className="mt-2"
             />
             <p className="text-xs text-slate-500 mt-1">
-              {"الحد الأقصى لحجم الصورة الواحدة عند الرفع"}
+              {text.imageSizeHelp}
             </p>
           </div>
         </CardContent>
@@ -169,7 +171,7 @@ export default function CatalogSettings() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-red-600">
-            {"هذه الإجراءات قد تؤدي إلى فقدان البيانات. يرجى التأكد قبل المتابعة."}
+            {text.dangerHelp}
           </p>
           <Button variant="destructive" className="w-full">
             {t.catalog.settings.resetCatalog}

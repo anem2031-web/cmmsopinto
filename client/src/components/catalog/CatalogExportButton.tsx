@@ -1,3 +1,6 @@
+import { useTranslation } from "@/contexts/LanguageContext";
+import { getCatalogError } from "@/i18n/catalogUi";
+import { getCatalogItemsText } from "@/i18n/catalogItems";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, Loader2 } from "lucide-react";
@@ -22,6 +25,8 @@ export default function CatalogExportButton({
   nodeIds?: number[];
   includeInactive?: boolean;
 }) {
+  const { language } = useTranslation();
+  const text = getCatalogItemsText(language);
   const [loading, setLoading] = useState(false);
   const exportMutation = trpc.catalog.importExport.exportItemsExcel.useMutation();
 
@@ -35,9 +40,9 @@ export default function CatalogExportButton({
       });
 
       downloadBase64Excel(result.buffer, result.fileName);
-      toast.success("تم تصدير جميع الأصناف المطابقة للفلاتر الحالية");
+      toast.success(text.exportSuccess);
     } catch (err: any) {
-      toast.error(err.message ?? "حدث خطأ أثناء تصدير الأصناف");
+      toast.error(getCatalogError(err, language, text.exportFailed));
     } finally {
       setLoading(false);
     }
@@ -48,7 +53,7 @@ export default function CatalogExportButton({
       {loading
         ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
         : <Download className="h-4 w-4 mr-2" />}
-      تصدير Excel
+      {text.exportExcel}
     </Button>
   );
 }
