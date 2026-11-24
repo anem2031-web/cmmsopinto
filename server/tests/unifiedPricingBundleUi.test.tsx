@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   areas: [] as any[],
   calls: [] as any[],
   stage: "pending_accounting",
+  emergencyPurchase: false,
   detailUnavailable: false,
   rejectedIds: [] as number[],
   mutationResults: [] as any[],
@@ -70,6 +71,9 @@ vi.mock("@/lib/trpc", () => ({
                   bundleNumber: "DPB-2026-000024",
                   status: state.stage,
                   orderIds: [101, 102, 103],
+                  emergencyPurchase: state.emergencyPurchase,
+                  receivedItemCount: 3,
+                  requiredItemCount: 8,
                 },
               ],
               nextId: null,
@@ -85,6 +89,10 @@ vi.mock("@/lib/trpc", () => ({
                 id: 24,
                 bundleNumber: "DPB-2026-000024",
                 status: state.stage,
+                emergencyPurchase: state.emergencyPurchase,
+                receivedItemCount: 3,
+                requiredItemCount: 8,
+                approvalReady: state.stage !== "awaiting_receipt",
                 revision: 0,
                 custodyBalance:
                   state.stage === "pending_accounting" ? null : "45538.00",
@@ -221,6 +229,7 @@ beforeEach(() => {
   state.values = [];
   state.calls = [];
   state.stage = "pending_accounting";
+  state.emergencyPurchase = false;
   state.detailUnavailable = false;
   state.rejectedIds = [];
   state.mutationResults = [];
@@ -261,6 +270,27 @@ it("shows one DPB approval card, eight original item references and one free cus
     "tools/unified-dpb-approval/artifacts/accounting-preview.html",
     `<!doctype html><html dir="rtl" lang="ar"><meta charset="utf-8"><style>body{font-family:Tahoma,sans-serif;background:#f7f9fc;margin:24px}section{background:white;border:1px solid #d9e0e8;border-radius:10px;padding:18px;margin:12px 0}table{border-collapse:collapse;width:100%}td,th{border:1px solid #dae2ea;padding:8px}button{background:#00718a;color:white;border:0;border-radius:5px;padding:10px;margin:8px}input,textarea{padding:8px;border:1px solid #b7c7d4;max-width:95%}a{color:#00718a}</style><p>معاينة اختبار معزولة — بيانات وهمية دون اتصال بقاعدة البيانات</p>${html}</html>`
   );
+});
+it("allows inspection of emergency receipt progress and waits for the entire bundle before approving", () => {
+  state.emergencyPurchase = true;
+  state.stage = "awaiting_receipt";
+  const html = render();
+  expect(html).toContain("شراء طارئ");
+  expect(html).toContain("المستلم 3/8");
+  expect(html).toContain("بانتظار اكتمال الاستلام");
+  expect(html).toContain('href="/delegate-pricing-bundles?approval=24"');
+  expect(state.buttons.some(row => row.children === "مراجعة الحزمة" && !row.disabled)).toBe(true);
+  expect(html).toContain("الإجمالي التقديري");
+  expect(state.buttons.some(row => row.children === "اعتماد وإرسال للإدارة العليا")).toBe(false);
+  expect(state.inputs).toHaveLength(0);
+  expect(state.calls).toHaveLength(0);
+
+  state.stage = "pending_accounting";
+  const ready = render();
+  expect(ready).toContain("شراء طارئ");
+  expect(ready).not.toContain("رفض هذا الصنف فقط");
+  expect(state.buttons.some(row => row.children === "اعتماد وإرسال للإدارة العليا")).toBe(true);
+  expect(state.inputs).toHaveLength(1);
 });
 it("submits the manually entered balance once and only the selected item rejection, retaining a bundle operation key", async () => {
   render();

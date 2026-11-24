@@ -4,7 +4,7 @@ import { materialExecutionCostsEnabled } from "../../services/material-costs/fea
 import { getDb } from "../../_core/db/client";
 import { createRecipientWarehouseReturn, issueDelivery } from "../../_core/db/warehouse-returns";
 import { isInventoryLotsEnabled } from "../../_core/inventory-lots";
-import { filterSpecificationLots } from "../../services/purchase-specification-guards";
+import { filterSpecificationLots, loadEmergencyHolds } from "../../services/purchase-specification-guards";
 import type {
   CatalogAdapter,
   DeliveryAdapter,
@@ -823,7 +823,7 @@ export const currentPurchaseAdapter: PurchaseAdapter = {
     const uniqueIds = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))];
     if (!uniqueIds.length) return [];
     const db = await requireDb();
-    const [rows, receiptRows] = await Promise.all([
+    const [rows, receiptRows, emergencyHolds] = await Promise.all([
       db
         .select({
           id: purchaseOrderItems.id,
@@ -848,6 +848,7 @@ export const currentPurchaseAdapter: PurchaseAdapter = {
           inArray(warehouseReceiptItems.purchaseOrderItemId, uniqueIds),
           eq(warehouseReceipts.status, "confirmed"),
         )),
+      loadEmergencyHolds(db, uniqueIds),
     ]);
     const receivedByItemId = new Map<number, number>();
     const heldByItemId = new Map<number, number>();
@@ -855,7 +856,8 @@ export const currentPurchaseAdapter: PurchaseAdapter = {
       if (receipt.purchaseOrderItemId == null) continue;
       const itemId = Number(receipt.purchaseOrderItemId);
       receivedByItemId.set(itemId, Number(((receivedByItemId.get(itemId) || 0) + Number(receipt.receivedQuantity || 0)).toFixed(3)));
-      heldByItemId.set(itemId, Number(((heldByItemId.get(itemId) || 0) + Number(receipt.specificationHeldQuantity || 0)).toFixed(3)));
+      const held = emergencyHolds.has(itemId) ? receipt.receivedQuantity : receipt.specificationHeldQuantity;
+      heldByItemId.set(itemId, Number(((heldByItemId.get(itemId) || 0) + Number(held || 0)).toFixed(3)));
     }
     return rows.map((row) => ({
       id: Number(row.id),
@@ -893,8 +895,8 @@ export const currentPurchaseAdapter: PurchaseAdapter = {
       .from(purchaseOrderItems)
       .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
     const itemIds = itemRows.map((row) => Number(row.id));
-    const receiptRows = itemIds.length
-      ? await db
+    const [receiptRows, emergencyHolds] = await Promise.all([
+      itemIds.length ? db
           .select({
             purchaseOrderItemId: warehouseReceiptItems.purchaseOrderItemId,
             receivedQuantity: warehouseReceiptItems.receivedQuantity,
@@ -905,15 +907,17 @@ export const currentPurchaseAdapter: PurchaseAdapter = {
           .where(and(
             inArray(warehouseReceiptItems.purchaseOrderItemId, itemIds),
             eq(warehouseReceipts.status, "confirmed"),
-          ))
-      : [];
+          )) : [],
+      loadEmergencyHolds(db, itemIds),
+    ]);
     const receivedByItemId = new Map<number, number>();
     const heldByItemId = new Map<number, number>();
     for (const receipt of receiptRows) {
       if (receipt.purchaseOrderItemId == null) continue;
       const itemId = Number(receipt.purchaseOrderItemId);
       receivedByItemId.set(itemId, Number(((receivedByItemId.get(itemId) || 0) + Number(receipt.receivedQuantity || 0)).toFixed(3)));
-      heldByItemId.set(itemId, Number(((heldByItemId.get(itemId) || 0) + Number(receipt.specificationHeldQuantity || 0)).toFixed(3)));
+      const held = emergencyHolds.has(itemId) ? receipt.receivedQuantity : receipt.specificationHeldQuantity;
+      heldByItemId.set(itemId, Number(((heldByItemId.get(itemId) || 0) + Number(held || 0)).toFixed(3)));
     }
     return {
       order: { id: Number(orderRow.id), poNumber: String(orderRow.poNumber), status: String(orderRow.status) },

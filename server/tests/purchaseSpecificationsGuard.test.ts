@@ -98,6 +98,50 @@ describe("Aggregate-only writes cannot bypass held physical lots", () => {
   });
 });
 
+describe("Emergency purchase hold is independent from matching approval", () => {
+  beforeEach(() => {
+    f.memory.exec(`
+      ALTER TABLE purchase_order_items ADD COLUMN delegateId INTEGER;
+      ALTER TABLE purchase_order_items ADD COLUMN batchId INTEGER;
+      ALTER TABLE purchase_order_items ADD COLUMN purchasedAt TEXT;
+      ALTER TABLE purchase_order_items ADD COLUMN delegateChangeRequestedAt TEXT;
+      CREATE TABLE emergency_purchase_items (purchaseOrderItemId INTEGER PRIMARY KEY, bundleId INTEGER, cancelledAt TEXT);
+      CREATE TABLE emergency_pricing_bundles (bundleId INTEGER PRIMARY KEY, submittedAt TEXT, cancelledAt TEXT);
+      CREATE TABLE delegate_pricing_bundles (id INTEGER PRIMARY KEY, delegateId INTEGER);
+      CREATE TABLE delegate_pricing_bundle_approvals (bundleId INTEGER PRIMARY KEY, status TEXT,
+        accountingApprovedById INTEGER, accountingApprovedAt TEXT, managementApprovedById INTEGER, managementApprovedAt TEXT);
+      CREATE TABLE delegate_pricing_bundle_batches (bundleId INTEGER,purchaseOrderId INTEGER,pricingBatchId INTEGER);
+      INSERT INTO purchase_orders(id,status) VALUES (7,'received');
+      INSERT INTO purchase_order_items(id,purchaseOrderId,delegateId,batchId,status) VALUES (701,7,12,103,'delivered_to_warehouse');
+      INSERT INTO emergency_purchase_items VALUES (701,33,NULL);
+      INSERT INTO emergency_pricing_bundles VALUES (33,'2026-11-24',NULL);
+      INSERT INTO delegate_pricing_bundles VALUES (33,12);
+      INSERT INTO delegate_pricing_bundle_approvals VALUES (33,'pending_accounting',NULL,NULL,NULL,NULL);
+      INSERT INTO delegate_pricing_bundle_batches VALUES (33,7,103);
+      UPDATE inventory_lots SET purchaseOrderItemId=701 WHERE id=3;
+    `);
+  });
+
+  it("holds the urgent lot and blocks aggregate and linked completion while permitting an ordinary lot", async () => {
+    for (const kind of ["issue", "transfer"] as const) {
+      await expect(assertSpecificationLotMovement(f.db, { lotId: 3, kind })).rejects.toThrow(/شراء طارئ/);
+    }
+    await expect(filterSpecificationLots(f.db, [{ id: 1 }, { id: 3 }])).resolves.toEqual([{ id: 1 }]);
+    await expect(assertNoSpecificationAggregateBypass(f.db, 13)).rejects.toThrow(/شراء طارئ/);
+    await expect(assertSpecificationPurchaseItemCompletion(f.db, 701)).rejects.toThrow(/شراء طارئ/);
+    await expect(assertSpecificationLotMovement(f.db, { lotId: 1, kind: "issue" })).resolves.toBeUndefined();
+  });
+
+  it("releases only after both approvals and preserves the existing specification hold", async () => {
+    f.memory.exec("UPDATE delegate_pricing_bundle_approvals SET status='pending_management', accountingApprovedById=16, accountingApprovedAt='2026-11-24' WHERE bundleId=33");
+    await expect(assertSpecificationLotMovement(f.db, { lotId: 3, kind: "issue" })).rejects.toThrow(/شراء طارئ/);
+    f.memory.exec("UPDATE delegate_pricing_bundle_approvals SET status='approved', managementApprovedById=17, managementApprovedAt='2026-11-24' WHERE bundleId=33");
+    await expect(assertSpecificationLotMovement(f.db, { lotId: 3, kind: "issue" })).resolves.toBeUndefined();
+    f.memory.exec("UPDATE inventory_lots SET specificationStatus='pending' WHERE id=3");
+    await expect(assertSpecificationLotMovement(f.db, { lotId: 3, kind: "issue" })).rejects.toThrow(/مطابقة المواصفات/);
+  });
+});
+
 describe("Linked purchase item completion has its own fresh boundary", () => {
   beforeEach(() => f.memory.exec("UPDATE inventory_lots SET purchaseOrderItemId=100 WHERE id IN (1,2); UPDATE inventory_lots SET purchaseOrderItemId=200 WHERE id IN (3,4)"));
   it("denies completion while a pending receipt remains, without denying the old physical lot", async () => {

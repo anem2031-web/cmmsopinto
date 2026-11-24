@@ -4,6 +4,7 @@ import { DEFAULT_PURCHASE_DELIVERY_DAYS } from "../../../shared/purchaseItemNeed
 import type { OperationalActor, OperationalLine, OperationalOrder, OperationalPurchaseLink, OperationalStock } from "../../../shared/operational-issues";
 import { executionRows as rows } from "./issue-reference";
 import { dispatchContext } from "../../../shared/operational-dispatch";
+import { loadEmergencyHolds } from "../purchase-specification-guards";
 
 export interface OperationalPurchasePorts {
   nextNumber(): Promise<string>;
@@ -50,9 +51,10 @@ export async function loadOperationalStock(tx: any, lines: OperationalLine[], lo
     FROM inventory i INNER JOIN warehouses w ON (w.id=i.warehouseId OR (i.warehouseId IS NULL AND w.id=(SELECT MIN(m.id) FROM warehouses m WHERE m.type='main' AND m.isActive=1)))
     WHERE i.linkedItemId IN (${catalogIds}) AND i.isFrozen=0 AND w.isActive=1 ${warehouseId ? sql`AND w.id=${warehouseId}` : sql``} ORDER BY i.id ${lock ? sql`FOR UPDATE` : sql``}`);
   const lots = await rows(tx, sql`SELECT b.inventoryId,b.quantity,l.id AS lotId,l.catalogItemId,l.lotCode,l.trackingToken,
-    l.issueUnit,l.issueUnitCost,l.remainingQuantity,l.createdAt AS receivedAt,l.specificationStatus
+    l.issueUnit,l.issueUnitCost,l.remainingQuantity,l.createdAt AS receivedAt,l.specificationStatus,l.purchaseOrderItemId
     FROM inventory_lot_balances b INNER JOIN inventory_lots l ON l.id=b.lotId
     INNER JOIN inventory i ON i.id=b.inventoryId WHERE i.linkedItemId IN (${catalogIds}) AND b.quantity>0 ORDER BY l.createdAt,l.id,b.inventoryId`);
+  const holds = await loadEmergencyHolds(tx, lots.map(lot => Number(lot.purchaseOrderItemId)));
   return lines.map(line => {
     const itemInventories = inventories.filter(i => Number(i.linkedItemId) === Number(line.catalogItemId));
     const stock = itemInventories.filter(i => Number(i.quantity) > 0);
@@ -66,7 +68,7 @@ export async function loadOperationalStock(tx: any, lines: OperationalLine[], lo
       let covered = 0;
       for (const lot of balances) {
         covered += Number(lot.quantity);
-        if (lot.specificationStatus === "pending" || lot.specificationStatus === "rejected") {
+        if (holds.has(Number(lot.purchaseOrderItemId)) || lot.specificationStatus === "pending" || lot.specificationStatus === "rejected") {
           if (String(inventory.unit || "").trim() === line.unit.trim()) specificationHeldQuantity += Number(lot.quantity);
           continue;
         }

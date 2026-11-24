@@ -128,6 +128,16 @@ export const unifiedApprovalPorts: UnifiedApprovalPorts = {
           allowSeniorManagement: true,
           eventKey: `dpb_approval:${c.root.bundleId}`,
         });
+    } else if (stage === "management" && c.root.status === "approved" && c.emergency) {
+      for (const user of await db.getUsersByRole("warehouse")) {
+        await db.createNotification({
+          userId: user.id,
+          title: "تم اعتماد الشراء الطارئ — الأصناف متاحة للصرف",
+          message: `اعتمدت حزمة ${c.root.bundleNumber} ويمكن صرف أصنافها المستلمة وفق مساراتها الأصلية.`,
+          type: "success",
+          relatedPoId: firstAcceptedPoId,
+        });
+      }
     } else if (stage === "management" && c.root.status === "approved")
       await db.createNotification({
         userId: Number(c.root.delegateId),

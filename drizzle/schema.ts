@@ -1994,7 +1994,7 @@ export const poPricingBatches = mysqlTable("po_pricing_batches", {
 	submittedAt: timestamp({ mode: 'string' }).default('CURRENT_TIMESTAMP').notNull(),
 	itemCount: int().default(0).notNull(),
 	totalEstimatedCost: decimal({ precision: 12, scale: 2 }),
-	status: mysqlEnum(['pending_accounting','pending_management','approved','rejected']).default('pending_accounting').notNull(),
+	status: mysqlEnum(['pending_accounting','pending_management','approved','rejected','awaiting_receipt']).default('pending_accounting').notNull(),
 	accountingApprovedById: int(),
 	accountingApprovedAt: timestamp({ mode: 'string' }),
 	accountingNotes: text(),

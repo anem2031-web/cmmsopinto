@@ -8,6 +8,7 @@ import { PricingBundleService } from "../services/delegate-pricing-bundles/servi
 import { createPricingBundlesRouter } from "../routers/delegate-pricing-bundles/router";
 import { router } from "../routers/_shared/procedures";
 import { reservedPricingItemIds } from "../services/delegate-pricing-bundles/reservations";
+import { emergencyItemIds } from "../services/emergency-purchases/service";
 import { canRoleAccessPath, isDelegateRole } from "../../shared/roles";
 import { readAccountingSignature } from "../services/pdf/accountingSignature";
 import { assertRoutedPurchaseItemReady } from "../services/purchase-review-routing";
@@ -24,14 +25,49 @@ const submitCode = extract("server/routers/purchase/purchase-orders.router.ts", 
 const syncStageCode = extract("server/routers/purchase/purchase-orders.router.ts", "syncIndependentPurchasePricingStage");
 const syncStage = (db: any) => vm.runInNewContext(syncStageCode, { db, summarizePurchasePricingStage });
 function fixture() {
-  let state: any = { bundles: [], members: [], links: [], batches: [], submissions: [], items: Array.from({ length: 25 }, (_, index) => ({ id: index + 1, purchaseOrderId: index < 2 ? 101 : index % 2 ? 102 : 103, poNumber: index < 2 ? "PR-101" : index % 2 ? "PR-102" : "PR-103", packageId: index < 2 ? null : index % 2 ? 9 : 10, purchaseOrderStatus: "pending_estimate", delegateId: 11, catalogItemId: 55, itemName: `Material ${index + 1}`, sectionId: index + 1, sectionName: `Section ${index + 1}`, siteId: 1, siteName: "Site", categoryName: "Category", ticketId: index + 30, ticketItemId: index + 40, quantity: index === 0 ? 50 : 2, unit: "piece", estimatedUnitCost: "10.00", estimatedTotalCost: index === 0 ? "500.00" : "20.00", supplierName: `Supplier ${index + 1}`, status: "estimated", batchId: null })) };
+  let state: any = { bundles: [], members: [], links: [], batches: [], submissions: [], emergencyItems: [], emergencyBundles: [], items: Array.from({ length: 25 }, (_, index) => ({ id: index + 1, purchaseOrderId: index < 2 ? 101 : index % 2 ? 102 : 103, poNumber: index < 2 ? "PR-101" : index % 2 ? "PR-102" : "PR-103", packageId: index < 2 ? null : index % 2 ? 9 : 10, purchaseOrderStatus: "pending_estimate", delegateId: 11, catalogItemId: 55, itemName: `Material ${index + 1}`, sectionId: index + 1, sectionName: `Section ${index + 1}`, siteId: 1, siteName: "Site", categoryName: "Category", ticketId: index + 30, ticketItemId: index + 40, quantity: index === 0 ? 50 : 2, unit: "piece", estimatedUnitCost: "10.00", estimatedTotalCost: index === 0 ? "500.00" : "20.00", supplierName: `Supplier ${index + 1}`, status: "estimated", batchId: null })) };
   const flags = { renderFail: false, batchFailPo: 0, syncFail: false, replacementOrderId: 0, unifiedInitFail:false }; let queue = Promise.resolve(); let transactionDepth = 0;
   const queries: string[] = [];
   const tx: any = { execute: async (statement: any) => {
     const parsed = new MySqlDialect().sqlToQuery(statement), q = parsed.sql.replace(/\s+/g, " ").trim(), p: any[] = parsed.params; queries.push(q);
     const rows = (values: any[]) => [structuredClone(values), []];
+    if (q.includes("information_schema.TABLES") && q.includes("emergency_purchase_items")) {
+      return rows(state.emergencyItems.length ? [{ TABLE_NAME: "emergency_purchase_items" }, { TABLE_NAME: "emergency_pricing_bundles" }] : []);
+    }
+    if (q.startsWith("SELECT purchaseOrderItemId FROM emergency_purchase_items WHERE purchaseOrderItemId IN")) {
+      return rows(state.emergencyItems.filter((item: any) => p.includes(item.purchaseOrderItemId)));
+    }
+    if (q.startsWith("SELECT purchaseOrderItemId FROM emergency_purchase_items WHERE bundleId=")) {
+      return rows(state.emergencyItems.filter((item: any) => item.bundleId === p[0] && !item.cancelledAt));
+    }
+    if (q.startsWith("SELECT bundleId AS id FROM emergency_pricing_bundles")) {
+      return rows(state.emergencyBundles.filter((bundle: any) => bundle.openDelegateId === p[0]).map((bundle: any) => ({ id: bundle.bundleId })));
+    }
+    if (q.startsWith("SELECT bundleId,receivedItemCount,requiredItemCount,cancelledAt FROM emergency_pricing_bundles")) {
+      return rows(state.emergencyBundles.filter((bundle: any) => p.includes(bundle.bundleId)));
+    }
+    if (q.startsWith("INSERT INTO emergency_pricing_bundles")) {
+      state.emergencyBundles.push({ bundleId: p[0], openDelegateId: p[1], receivedItemCount: 0, requiredItemCount: 0, cancelledAt: null });
+      return [{ affectedRows: 1 }];
+    }
+    if (q.startsWith("UPDATE emergency_purchase_items SET bundleId=?")) {
+      const item = state.emergencyItems.find((row: any) => row.purchaseOrderItemId === p[1] && row.bundleId == null && !row.cancelledAt);
+      if (item) item.bundleId = p[0];
+      return [{ affectedRows: item ? 1 : 0 }];
+    }
+    if (q.startsWith("UPDATE emergency_purchase_items SET bundleId=NULL")) {
+      const item = state.emergencyItems.find((row: any) => row.purchaseOrderItemId === p[0] && row.bundleId === p[1] && !row.cancelledAt);
+      if (item) item.bundleId = null;
+      return [{ affectedRows: item ? 1 : 0 }];
+    }
+    if (q.startsWith("UPDATE emergency_pricing_bundles SET openDelegateId=NULL")) {
+      Object.assign(state.emergencyBundles.find((bundle: any) => bundle.bundleId === p[1]), {
+        openDelegateId: null, submittedAt: "now", requiredItemCount: p[0],
+      });
+      return [{ affectedRows: 1 }];
+    }
     if (q === "SELECT DATABASE() AS databaseName") return rows([{ databaseName: "copycmms2" }]);
-    if(q.startsWith('INSERT INTO delegate_pricing_bundle_approvals')){if(flags.unifiedInitFail)throw Error('unified approval table unavailable');state.unifiedApprovals??=[];state.unifiedApprovals.push({bundleId:p[0],status:'pending_accounting'});return [{affectedRows:1}];}
+    if(q.startsWith('INSERT INTO delegate_pricing_bundle_approvals')){if(flags.unifiedInitFail)throw Error('unified approval table unavailable');state.unifiedApprovals??=[];state.unifiedApprovals.push({bundleId:p[0],status:q.includes("'awaiting_receipt'") || p.includes('awaiting_receipt') ? 'awaiting_receipt' : 'pending_accounting'});return [{affectedRows:1}];}
     if (q.startsWith("SELECT purchaseOrderId FROM supplier_return_replacement_plans")) return rows(p.includes(flags.replacementOrderId) ? [{ purchaseOrderId: flags.replacementOrderId }] : []);
     if (q.startsWith("SELECT id FROM users")) return rows(p[0] === 11 ? [{ id: 11 }] : []);
     if (q.startsWith("SELECT i.*,p.poNumber")) return rows(state.items.filter((i: any) => i.id === p[0]));
@@ -61,7 +97,11 @@ function fixture() {
       return [{ affectedRows: 0 }];
     }
     if (q.startsWith("SELECT purchaseOrderId,pricingBatchId FROM delegate_pricing_bundle_batches")) return rows(state.links.filter((m: any) => m.bundleId === p[0] && !m.effectsDone));
-    if (q.startsWith("UPDATE delegate_pricing_bundle_batches SET effectsDone=1")) { state.links.find((m: any) => m.bundleId === p[0] && m.pricingBatchId === p[1]).effectsDone = 1; return [{ affectedRows: 1 }]; }
+    if (q.startsWith("UPDATE delegate_pricing_bundle_batches SET effectsDone=1")) {
+      const affected = state.links.filter((link: any) => link.bundleId === p[0] && (p[1] == null || link.pricingBatchId === p[1]));
+      for (const link of affected) link.effectsDone = 1;
+      return [{ affectedRows: affected.length }];
+    }
     if (q.startsWith("UPDATE delegate_pricing_bundles SET effectsDone=1")) { state.bundles.find((b: any) => b.id === p[0]).effectsDone = 1; return [{ affectedRows: 1 }]; }
     if (q.startsWith("UPDATE delegate_pricing_bundles SET status='archived'")) { state.bundles.find((b: any) => b.id === p[0]).status = "archived"; return [{ affectedRows: 1 }]; }
     if (q.startsWith("SELECT snapshotJson FROM delegate_pricing_bundles")) return rows(state.bundles.filter((b: any) => b.id === p[0]));
@@ -84,7 +124,7 @@ function fixture() {
   };
   const submit = vm.runInNewContext(submitCode, {
     isDelegateRole,
-    TRPCError, pricingBundlesEnabled: () => true, reservedPricingItemIds, assertRoutedPurchaseItemReady,
+    TRPCError, pricingBundlesEnabled: () => true, reservedPricingItemIds, assertRoutedPurchaseItemReady, emergencyItemIds,
     reserveReplacementPricing: async () => null,
     isItemAssignedToPODelegate: (user: any, item: any) => user.id === item.delegateId,
     db: purchaseDb, syncIndependentPurchasePricingStage: syncStage(purchaseDb),
@@ -99,6 +139,44 @@ function fixture() {
   };
   return { service: new PricingBundleService(ports), ports, flags, tx, queries, state: () => state, async add(...ids: number[]) { let id = 0; for (const itemId of ids) id = (await this.service.add(actor,itemId)).id; return id; } };
 }
+describe("emergency pricing bundle drafts", () => {
+  it("opens independent drafts and defers accounting when an emergency bundle is sent", async () => {
+    vi.stubEnv("DELEGATE_PRICING_BUNDLE_APPROVALS_ENABLED", "true");
+    const f = fixture();
+    f.state().emergencyItems.push(...[3, 5, 7].map(purchaseOrderItemId => ({ purchaseOrderItemId, bundleId: null })));
+    const ordinaryId = await f.add(1);
+    const emergencyId = await f.add(3);
+    expect(emergencyId).not.toBe(ordinaryId);
+    expect(await f.add(5)).toBe(emergencyId);
+    expect(await f.add(2)).toBe(ordinaryId);
+    expect(f.state().bundles).toHaveLength(2);
+    await f.service.send(actor, emergencyId, 2);
+    const urgent = f.state().bundles.find((bundle: any) => bundle.id === emergencyId);
+    expect(JSON.parse(urgent.snapshotJson)).toMatchObject({ emergencyPurchase: true, rows: [{ id: 3 }, { id: 5 }] });
+    expect(f.state().unifiedApprovals).toEqual([{ bundleId: emergencyId, status: "awaiting_receipt" }]);
+    expect(f.state().emergencyBundles[0]).toMatchObject({ openDelegateId: null, requiredItemCount: 2 });
+    expect(f.state().batches).toEqual([expect.objectContaining({ status: "awaiting_receipt" })]);
+    expect(f.state().submissions).toEqual([]);
+    expect(f.ports.sync).not.toHaveBeenCalled();
+    expect(f.state().items.filter((item: any) => [3, 5].includes(item.id)).every((item: any) => item.status === "estimated" && item.batchId > 0)).toBe(true);
+    expect(await f.add(7)).not.toBe(emergencyId);
+    expect(f.state().bundles.find((bundle: any) => bundle.id === ordinaryId)).toMatchObject({ status: "open", openDelegateId: actor.id });
+  });
+
+  it("retains the review mark when an urgent line leaves a draft and blocks a mixed frozen bundle", async () => {
+    vi.stubEnv("DELEGATE_PRICING_BUNDLE_APPROVALS_ENABLED", "true");
+    const f = fixture();
+    f.state().emergencyItems.push({ purchaseOrderItemId: 3, bundleId: null });
+    const urgentId = await f.add(3);
+    await f.service.remove(actor, urgentId, 3);
+    expect(f.state().emergencyItems).toEqual([{ purchaseOrderItemId: 3, bundleId: null }]);
+    expect(await f.add(3)).toBe(urgentId);
+    f.state().members.push({ bundleId: urgentId, purchaseOrderItemId: 2, reservedItemId: 2, removedAt: null });
+    await expect(f.service.send(actor, urgentId, 3)).rejects.toThrow("خلط الأصناف");
+    expect(f.state().batches).toEqual([]);
+  });
+});
+
 describe("delegate manager keeps the delegate's own pricing bundle workflow",()=>{
   it("sends and downloads its frozen bundle while denying another manager's bundle",async()=>{
     const f=fixture(),manager={...actor,role:"delegate_manager"};
@@ -390,7 +468,7 @@ describe("Compatibility with the existing submission outside the new delegate la
     const items=[{id:1,delegateId:11,status:"estimated",batchId:null,estimatedTotalCost:"30"},{id:2,delegateId:22,status:"estimated",batchId:null},{id:3,delegateId:11,status:"pending",batchId:null}];
     const db={getPurchaseOrderById:vi.fn(async()=>({id:101,poNumber:"PR-101",status:"pending_estimate"})),getPOItems:vi.fn(async()=>items),getPOPricingBatches:vi.fn(async()=>[{id:17,status:"pending_accounting"}]),getNextBatchNumber:vi.fn(async()=>2),createPOPricingBatch:vi.fn(async(..._args:any[])=>17),updatePOItem:vi.fn((id:number,data:any)=>{Object.assign(items.find(item=>item.id===id)!,data);}),updatePurchaseOrder:vi.fn()};
     const finalize=vi.fn(),archive=vi.fn(async()=>true);
-    const submit=vm.runInNewContext(submitCode,{isDelegateRole,db:{...db,getDb:async()=>null},syncIndependentPurchasePricingStage:syncStage(db),TRPCError,pricingBundlesEnabled:()=>false,reservedPricingItemIds,isItemAssignedToPODelegate:(user:any,item:any)=>item.delegateId===user.id,finalizePricedBatchForPO:finalize,archiveDelegatePricingBatchPdf:archive});
+    const submit=vm.runInNewContext(submitCode,{isDelegateRole,db:{...db,getDb:async()=>null},syncIndependentPurchasePricingStage:syncStage(db),TRPCError,pricingBundlesEnabled:()=>false,reservedPricingItemIds,emergencyItemIds,isItemAssignedToPODelegate:(user:any,item:any)=>item.delegateId===user.id,finalizePricedBatchForPO:finalize,archiveDelegatePricingBatchPdf:archive});
     vi.stubEnv("DELEGATE_PRICING_BUNDLES_ENABLED","false");const result=await submit(101,actor);
     expect(result).toMatchObject({batchId:17,itemCount:1,pricingDocumentArchived:true});expect(db.createPOPricingBatch.mock.calls[0][0]).toMatchObject({purchaseOrderId:101,batchNumber:2,itemCount:1,status:"pending_accounting"});
     expect(db.updatePOItem.mock.calls[0][0]).toBe(1); expect(finalize).toHaveBeenCalledOnce();expect(archive).toHaveBeenCalledOnce();

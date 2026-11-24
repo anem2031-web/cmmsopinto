@@ -8,6 +8,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { auditLogs, purchaseOrderItems, purchaseOrders, users } from "../../../drizzle/schema";
 import { isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
 import { reviewRoutedPurchaseItems } from "../../services/purchase-item-review";
+import { emergencyPurchasesEnabled, markEmergencyPurchaseItem } from "../../services/emergency-purchases/service";
 import { getActivePricingBatchItems, rejectPricingBatchIfEmpty } from "./pricing-batch-state";
 import { syncPathBTicketFromPurchaseOrder } from "./ticket-purchase-workflow";
 import { generatePurchaseRequestPDF } from "../../services/export/exportService";
@@ -833,8 +834,15 @@ export const approvalsRouter = router({
       action: z.enum(["approve", "reject"]),
       delegateId: z.number().optional(),
       rejectionReason: z.string().optional(),
+      emergencyPurchase: z.boolean().optional(),
     })),
   })).mutation(async ({ input, ctx }) => {
+    if (input.items.some(item => item.emergencyPurchase && item.action !== "approve")) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "اختيار الشراء الطارئ متاح للصنف الموافق عليه فقط" });
+    }
+    if (input.items.some(item => item.emergencyPurchase) && !emergencyPurchasesEnabled()) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "مسار الشراء الطارئ غير مفعّل حاليًا" });
+    }
     const po = await db.getPurchaseOrderById(input.poId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
 
@@ -880,6 +888,7 @@ export const approvalsRouter = router({
         return true;
       },
       updateOrder: (id, changes) => db.updatePurchaseOrder(id, changes, tx),
+      markEmergencyItem: (item, actor) => markEmergencyPurchaseItem(tx, item.id, actor.id),
       audit: async (actor, currentOrder, decisions) => {
         await tx.insert(auditLogs).values({ userId: actor.id, action: "review_po_items", entityType: "purchase_order", entityId: currentOrder.id,
           newValues: { itemIds: decisions.map(item => item.id), decisions, routedReview: true },
@@ -934,6 +943,9 @@ export const approvalsRouter = router({
             code: "CONFLICT",
             message: `تغيرت حالة الصنف "${currentItem?.itemName || reviewItem.id}" أثناء المراجعة؛ قم بتحديث الصفحة`,
           });
+        }
+        if (reviewItem.action === "approve" && reviewItem.emergencyPurchase) {
+          await markEmergencyPurchaseItem(tx, reviewItem.id, ctx.user.id);
         }
         if (reviewItem.action === "reject") {
           rejectedEvents.push({

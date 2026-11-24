@@ -17,6 +17,7 @@ import type { TeamDatabase, TeamDatabaseTransaction } from "./repository";
 import { limitReplacementSourceCoverage, loadReplacementFulfillments, replacementPhysicalToOriginal } from "../../supplier-return-followup/fulfillment";
 import { decimal4 } from "../../supplier-return-followup/amounts";
 import { materialStockUnitApproval } from "../../../shared/maintenance-team-tickets/material-routing";
+import { loadEmergencyItemStates } from "../../services/emergency-purchases/service";
 
 export const resultRows = (value: unknown): any[] => {
   if (!Array.isArray(value) || !Array.isArray(value[0]))
@@ -211,9 +212,9 @@ export async function loadExecution(
   }
   // Re-read canonical procurement decisions. Never infer physical receipt, and a
   // reopened purchase blocks replacement again instead of retaining a stale cancellation.
-  for (const s of supplies.filter(
-    s => s.sourceKind === "purchase" && s.status !== "received"
-  )) {
+  const pendingPurchaseSupplies = supplies.filter(s => s.sourceKind === "purchase" && s.status !== "received");
+  const emergencyPurchases = await loadEmergencyItemStates(tx, pendingPurchaseSupplies.map(s => num(s.sourceId)));
+  for (const s of pendingPurchaseSupplies) {
     const [p] = await selectRows(
       tx,
       sql`SELECT i.status,i.catalogItemId,i.unit,i.receivedQuantity,i.receivedAt,p.status AS poStatus,p.ticketId,p.ticketItemId FROM purchase_order_items i INNER JOIN purchase_orders p ON p.id=i.purchaseOrderId WHERE i.id=${num(s.sourceId)}${suffix}`
@@ -235,6 +236,7 @@ export async function loadExecution(
     const need = needs.find(n => num(n.id) === num(s.needId));
     const approval = need ? approvedByNeed.get(num(need.id)) : undefined;
     const receiptFactor = approval && approval.fromUnit === p.unit ? approval.factor : 1;
+    const emergency = emergencyPurchases.get(num(s.sourceId));
     if (
       s.status === "pending" &&
       need &&
@@ -242,13 +244,9 @@ export async function loadExecution(
       num(p.receivedQuantity) * receiptFactor >= num(s.linkedQuantity) &&
       num(p.catalogItemId) === num(need.catalogItemId) &&
       (p.unit === need.unitSnapshot || approval?.fromUnit === p.unit) &&
-      [
-        "approved",
-        "partial_purchase",
-        "purchased",
-        "received",
-        "closed",
-      ].includes(p.poStatus)
+      (emergency
+        ? emergency.approved && !["draft", "revision_needed", "rejected"].includes(p.poStatus)
+        : ["approved", "partial_purchase", "purchased", "received", "closed"].includes(p.poStatus))
     ) {
       // A procurement status alone never counts as stock. Use the original PO
       // item's physically received lots in the single active main warehouse.

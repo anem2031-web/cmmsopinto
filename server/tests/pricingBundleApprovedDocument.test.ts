@@ -42,7 +42,7 @@ function fixture() {
   const captured=captureDocumentSignature({id:7,name:"Frozen accountant",signatureUrl:"frozen-accounting-image"});
   memory.prepare("UPDATE purchase_package_submissions SET accountingSignatureSnapshot=?").run(captured);
   const dialect=new MySqlDialect();const queries:string[]=[];
-  const database={execute:async(statement:any)=>{const query=dialect.sqlToQuery(statement);queries.push(query.sql);if(!query.sql.trim().startsWith("SELECT"))throw Error("WRITE FORBIDDEN");return [memory.prepare(query.sql).all(...query.params as any[]),[]];}};
+  const database={execute:async(statement:any)=>{const query=dialect.sqlToQuery(statement);queries.push(query.sql);if(query.sql.includes("information_schema.TABLES") && query.sql.includes("emergency_purchase_items"))return [[],[]];if(!query.sql.trim().startsWith("SELECT"))throw Error("WRITE FORBIDDEN");return [memory.prepare(query.sql).all(...query.params as any[]),[]];}};
   const signature=vi.fn(async(source:string|null)=>source?"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=":"");
   const render=vi.fn(async(value:any)=>Buffer.from("%PDF-"+JSON.stringify(value)));
   const service=new PricingBundleService({database:async()=>database,render,signature} as any);
@@ -78,7 +78,7 @@ describe.each([false,true])("Final DPB financial access (unified=%s), SQL in mem
     const input=documentListPageInput.parse({page:1});
     const page=await f.service.listPage(actor,input);
     expect(page.rows).toEqual([expect.objectContaining({id:24,pdfAllowed:true,pdfBlockedReason:null})]);
-    expect(f.queries).toHaveLength(3);
+    expect(f.queries).toHaveLength(4);
     // Ordinary pricing detail/export retain their exact-approver semantics.
     expect((await f.service.detail(actor,24)).pdfAllowed).toBe(false);
     await expect(f.service.pdf(actor,24)).rejects.toMatchObject({code:"FORBIDDEN"});
@@ -120,7 +120,7 @@ describe("Final DPB list scale and unchanged role boundaries",()=>{
       const result=await f.service.listPage({id:99,role,isActive:1},documentListPageInput.parse({page:1,pageSize}));
       expect(result.total).toBe(600);expect(result.rows).toHaveLength(pageSize);
       expect(result.rows.every(row=>row.pdfAllowed&&row.id!==620)).toBe(true);
-      expect(f.queries).toHaveLength(3);expect(f.queries[2]).toContain("LIMIT ? OFFSET ?");
+      expect(f.queries).toHaveLength(4);expect(f.queries[2]).toContain("LIMIT ? OFFSET ?");
     }
   });
   it("keeps observer, foreign delegate, unrelated and inactive users denied without reusing an earlier financial grant",async()=>{

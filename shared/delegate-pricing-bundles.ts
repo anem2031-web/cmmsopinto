@@ -16,6 +16,7 @@ export type PricingBundleRow = {
   quantity: number; unit: string; estimatedUnitCost: string; estimatedTotalCost: string;
   supplierName: string; delegateId: number; status: string;
   approvalRejectionReason?:string;
+  emergencyCancellationReason?: string;
   reviewRole?: string;
   reviewedById?: number;
   reviewedAt?: string;
@@ -23,6 +24,7 @@ export type PricingBundleRow = {
 export type PricingBundleSnapshot = {
   number: string; submittedAt: string; delegate: { id: number; name: string; signature: string; signatureSource?: string | null };
   rows: PricingBundleRow[];
+  emergencyPurchase?: true;
   /** New review metadata is scoped to the frozen included items; absent for historical snapshots. */
   reviewSignatureVersion?: 2;
   approvedTotal?:string;

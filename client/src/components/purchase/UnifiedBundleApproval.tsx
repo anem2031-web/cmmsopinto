@@ -3,6 +3,8 @@ import { Link, useLocation, useSearch } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { pricingBundleText } from "@/i18n/pricingBundles";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -18,30 +20,41 @@ export function BundleApprovalCards({
   onSelect?: (id: number) => void;
   stage?: "accounting" | "management";
 }) {
+  const { language } = useTranslation();
+  const text = pricingBundleText[language];
+  const sorted = [...items].sort((a, b) => Number(b.emergencyPurchase === true) - Number(a.emergencyPurchase === true));
   return (
     <>
-      {items.map(row => (
-        <Card key={`dpb-approval:${row.id}`}>
-          <CardContent className="p-4 flex justify-between gap-3 flex-wrap">
-            <div>
-              <strong dir="ltr">{row.bundleNumber}</strong>
-              <p className="text-sm">
-                {row.status === "pending_accounting"
-                  ? "بانتظار اعتماد الحسابات"
-                  : "بانتظار اعتماد الإدارة العليا"}
-              </p>
-              <small>{row.orderIds.length} طلب شراء — حزمة تسعير واحدة</small>
-            </div>
-            {onSelect ? (
-              <Button onClick={() => onSelect(row.id)}>مراجعة الحزمة</Button>
-            ) : (
-              <Link href={`/delegate-pricing-bundles?approval=${row.id}${stage ? `&stage=${stage}` : ""}`}>
-                <Button>مراجعة الحزمة</Button>
-              </Link>
-            )}
-          </CardContent>
-        </Card>
-      ))}
+      {sorted.map(row => {
+        const awaitingReceipt = row.status === "awaiting_receipt";
+        return (
+          <Card key={`dpb-approval:${row.id}`}>
+            <CardContent className="p-4 flex justify-between gap-3 flex-wrap">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <strong dir="ltr">{row.bundleNumber}</strong>
+                  {row.emergencyPurchase && <Badge variant="destructive">{text.emergency}</Badge>}
+                </div>
+                <p className="text-sm">
+                  {awaitingReceipt
+                    ? `${text.emergencyAwaitingReceipt} · ${text.emergencyReceived} ${row.receivedItemCount ?? 0}/${row.requiredItemCount ?? 0}`
+                    : row.status === "pending_accounting"
+                      ? "بانتظار اعتماد الحسابات"
+                      : "بانتظار اعتماد الإدارة العليا"}
+                </p>
+                <small>{row.orderIds.length} طلب شراء — حزمة تسعير واحدة</small>
+              </div>
+              {onSelect ? (
+                <Button onClick={() => onSelect(row.id)}>مراجعة الحزمة</Button>
+              ) : (
+                <Link href={`/delegate-pricing-bundles?approval=${row.id}${stage ? `&stage=${stage}` : ""}`}>
+                  <Button>مراجعة الحزمة</Button>
+                </Link>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })}
     </>
   );
 }
@@ -51,7 +64,8 @@ export function UnifiedBundleApproval({
   selectedOnly?: boolean;
 }) {
   const { user } = useAuth();
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const text = pricingBundleText[language];
   const [, setLocation] = useLocation();
   const allowed =
     !!user &&
@@ -95,7 +109,8 @@ export function UnifiedBundleApproval({
     { enabled: allowed && !invalidStage && !selectedOnly, retry: false }
   );
   const returnTo = requestedStage ? `/purchase-orders?reviewStage=${requestedStage}` : "/purchase-orders";
-  const actualStage = data?.status === "pending_accounting" ? "accounting" : data?.status === "pending_management" ? "management" : null;
+  const awaitingReceipt = data?.status === "awaiting_receipt";
+  const actualStage = data?.status === "pending_accounting" || awaitingReceipt ? "accounting" : data?.status === "pending_management" ? "management" : null;
   const stageMatches = !requestedStage || requestedStage === actualStage;
   useEffect(() => {
     setAmount(data?.custodyBalance || "");
@@ -139,7 +154,7 @@ export function UnifiedBundleApproval({
               ? "تم حفظ رفض الحزمة"
               : op.stage === "accounting"
                 ? "تم الاعتماد والإرسال للإدارة العليا"
-                : "تم اعتماد الحزمة وإتاحتها للمندوب"
+                : data?.emergencyPurchase ? text.emergencyApproved : "تم اعتماد الحزمة وإتاحتها للمندوب"
           );
           void refresh().catch(() =>
             toast.warning("تم حفظ القرار؛ حدّث القائمة لإظهار الحالة الجديدة")
@@ -205,10 +220,10 @@ export function UnifiedBundleApproval({
     if (pendingFollowup && operation.current) {
       return runOperation(operation.current);
     }
-    if (!data || !stageMatches) return;
+    if (!data || !stageMatches || data.approvalReady === false || awaitingReceipt) return;
     const stage =
       data.status === "pending_accounting" ? "accounting" : "management";
-    const rejections = Object.entries(reasons).map(([itemId, reason]) => ({
+    const rejections = Object.entries(data.emergencyPurchase ? {} : reasons).map(([itemId, reason]) => ({
       itemId: Number(itemId),
       reason: reason.trim(),
     }));
@@ -237,8 +252,10 @@ export function UnifiedBundleApproval({
   const canApprove =
     data &&
     stageMatches &&
+    data.approvalReady !== false &&
     ((data.status === "pending_accounting" &&
-      ["owner", "admin", "accountant", "senior_management"].includes(user!.role)) ||
+      ["owner", "admin", "accountant", "senior_management"].includes(user!.role) &&
+      (!data.emergencyPurchase || user!.role !== "senior_management")) ||
       (data.status === "pending_management" &&
         ["owner", "admin", "senior_management"].includes(user!.role)));
   const managementView =
@@ -248,11 +265,13 @@ export function UnifiedBundleApproval({
       !managementView || !["rejected", "cancelled"].includes(item.currentStatus)
   );
   const displayedTotal =
-    displayedItems.reduce(
-      (sum: number, item: any) =>
-        sum + Math.round(Number(item.estimatedTotalCost) * 100),
-      0
-    ) / 100;
+    displayedItems
+      .filter((item: any) => !data?.emergencyPurchase || item.currentStatus !== "cancelled")
+      .reduce(
+        (sum: number, item: any) =>
+          sum + Math.round(Number(item.estimatedTotalCost) * 100),
+        0
+      ) / 100;
   const acceptedTotal =
     displayedItems
       .filter(
@@ -283,7 +302,7 @@ export function UnifiedBundleApproval({
             {(["accounting", "management"] as const).map(stage => <Button key={stage} variant={queueStage === stage ? "default" : "outline"} aria-pressed={queueStage === stage} onClick={() => { setQueueStage(stage); setAfterId(0); }}>{stage === "accounting" ? t.purchaseOrders.accountingApprovalTab : t.purchaseOrders.managementApprovalTab}</Button>)}
           </div>}
           {queue.error && <p role="alert">{queue.error.message}</p>}
-          <BundleApprovalCards items={(queue.data?.items || []).filter((row: any) => !effectiveQueueStage || row.status === `pending_${effectiveQueueStage}`)} stage={effectiveQueueStage} />
+          <BundleApprovalCards items={(queue.data?.items || []).filter((row: any) => !effectiveQueueStage || row.status === `pending_${effectiveQueueStage}` || effectiveQueueStage === "accounting" && row.status === "awaiting_receipt")} stage={effectiveQueueStage} />
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -310,13 +329,18 @@ export function UnifiedBundleApproval({
       {data && (
         <Card>
           <CardHeader>
-            <CardTitle dir="ltr">{data.bundleNumber}</CardTitle>
+            <CardTitle className="flex flex-wrap items-center gap-2">
+              <bdi>{data.bundleNumber}</bdi>
+              {data.emergencyPurchase && <Badge variant="destructive">{text.emergency}</Badge>}
+            </CardTitle>
             <p>المندوب: {data.delegateName || "—"}</p>
           </CardHeader>
           <CardContent className="space-y-4">
             <p>
-              {data.status === "pending_accounting"
-                ? "مراجعة الحسابات"
+              {awaitingReceipt
+                ? `${text.emergencyAwaitingReceipt} · ${text.emergencyReceived} ${data.receivedItemCount ?? 0}/${data.requiredItemCount ?? 0}`
+                : data.status === "pending_accounting"
+                  ? "مراجعة الحسابات"
                 : data.status === "pending_management"
                   ? "مراجعة الإدارة العليا"
                   : data.status === "approved"
@@ -333,9 +357,9 @@ export function UnifiedBundleApproval({
                       "حزمة الطلبات",
                       "الكمية",
                       "الوحدة",
-                      "الإجمالي",
+                      data.emergencyPurchase ? text.emergencyEstimatedTotal : "الإجمالي",
                       "الحالة",
-                      "القرار",
+                      data.emergencyPurchase ? text.emergencyCancellation : "القرار",
                     ].map(label => (
                       <th key={label} className="p-2 border">
                         {label}
@@ -378,6 +402,7 @@ export function UnifiedBundleApproval({
                       </td>
                       <td className="p-2 border">
                         {canApprove &&
+                        !data.emergencyPurchase &&
                         !pendingFollowup &&
                         item.currentStatus === "estimated" ? (
                           <div className="space-y-2">
@@ -414,8 +439,9 @@ export function UnifiedBundleApproval({
                             )}
                           </div>
                         ) : (
-                          data.rejections.find((r: any) => r.itemId === item.id)
-                            ?.reason || "—"
+                          (data.emergencyPurchase
+                            ? item.emergencyCancellationReason
+                            : data.rejections.find((r: any) => r.itemId === item.id)?.reason) || "—"
                         )}
                       </td>
                     </tr>
@@ -459,18 +485,18 @@ export function UnifiedBundleApproval({
                   ? "جارٍ حفظ القرار والإرسال…"
                   : pendingFollowup
                     ? "إعادة محاولة الإرسال"
-                    : Object.keys(reasons).length > 0 && acceptedTotal === 0
+                    : !data.emergencyPurchase && Object.keys(reasons).length > 0 && acceptedTotal === 0
                       ? "تأكيد رفض الحزمة"
                       : data.status === "pending_accounting"
                         ? "اعتماد وإرسال للإدارة العليا"
-                        : "اعتماد وإرسال للمندوب"}
+                        : data.emergencyPurchase ? "اعتماد وإتاحة للصرف" : "اعتماد وإرسال للمندوب"}
               </Button>
             )}
             <p>
               إجمالي الحزمة للمراجعة:{" "}
               <strong>{displayedTotal.toFixed(2)} ر.س</strong>
             </p>
-            {Object.keys(reasons).length > 0 && (
+            {!data.emergencyPurchase && Object.keys(reasons).length > 0 && (
               <p>
                 إجمالي الأصناف المقبولة بعد قرارات الرفض:{" "}
                 <strong>{acceptedTotal.toFixed(2)} ر.س</strong>

@@ -46,6 +46,7 @@ import { localizeApiError } from "@/i18n/apiError";
 import { getLocalizedCatalogUnitName } from "@/i18n/catalogMasterData";
 import { formatAvailableDuration, formatDateOnly, formatOverdueDuration, formatRemainingPurchaseDuration, getAvailableCalendarDays, getOverdueCalendarDays } from "@/lib/purchaseItemTiming";
 import { comparePurchaseRequiredDates, remainingPurchaseCalendarDays } from "@shared/purchaseItemNeedDate";
+import { pricingBundleText } from "@/i18n/pricingBundles";
 import { availableDelegateItemCategories, delegateItemCategoryId, matchesDelegateItemCategory } from "@shared/delegateItemCategory";
 import { canRoleAccessPurchaseSupplyTracking, canRoleViewAllPurchaseSupplyTracking } from "@shared/roles";
 import { formatPurchaseSubmissionTime } from "@shared/purchaseSubmissionTime";
@@ -203,7 +204,7 @@ export default function PurchaseOrders() {
   useEffect(() => { if (isSeniorReviewRole && (requestedReviewStage === "accounting" || requestedReviewStage === "management")) { setSeniorActionTab(requestedReviewStage); setView("actionable"); } }, [isSeniorReviewRole, requestedReviewStage]);
   const unifiedApprovalQ=trpc.delegatePricingBundles.approvalQueue.useQuery(undefined,{enabled:isPackageSubmissionActionRole,retry:false,...independentReadOptions});
   const seniorAccountingQ = trpc.delegatePricingBundles.approvalQueue.useQuery({ stage: "accounting" }, { enabled: isSeniorReviewRole, retry: false, ...independentReadOptions });
-  const seniorAccountingItems = (seniorAccountingQ.data?.items || []).filter((row: any) => row.status === "pending_accounting");
+  const seniorAccountingItems = (seniorAccountingQ.data?.items || []).filter((row: any) => row.status === "pending_accounting" || row.status === "awaiting_receipt");
   const seniorManagementItems = (unifiedApprovalQ.data?.items || []).filter((row: any) => row.status === "pending_management");
   const currentUnifiedApprovalQ = isSeniorReviewRole && seniorActionTab === "accounting" ? seniorAccountingQ : unifiedApprovalQ;
   const unifiedApprovalItems = isSeniorReviewRole ? seniorActionTab === "accounting" ? seniorAccountingItems : seniorActionTab === "management" ? seniorManagementItems : [] : unifiedApprovalQ.data?.items || [];
@@ -319,7 +320,7 @@ export default function PurchaseOrders() {
       .filter((item: any) => matchesDelegateItemCategory(item, delegateCategoryFilter))
       .filter(matchesDate)
       .filter(matchesSearch)
-      .sort(comparePurchaseRequiredDates);
+      .sort((a, b) => Number(b.emergencyPurchase === true) - Number(a.emergencyPurchase === true) || comparePurchaseRequiredDates(a, b));
   }, [
     delegateActionableItems,
     delegateItemsSearch,
@@ -1128,12 +1129,15 @@ export default function PurchaseOrders() {
               return (
               <Card
                 key={`delegate-action-item:${item.id}`}
-                className="hover:shadow-sm hover:border-primary/30 transition-all cursor-pointer"
+                className={`hover:shadow-sm transition-all cursor-pointer ${item.emergencyPurchase ? "border-2 border-red-600 hover:border-red-700" : "hover:border-primary/30"}`}
                 onClick={() => setLocation(`/purchase-orders/${item.purchaseOrderId}?action=${item.actionMode}&itemId=${item.id}`)}
               >
                 <CardContent className="py-3 flex flex-col items-stretch justify-between gap-4 lg:flex-row lg:items-center lg:flex-wrap">
                   <div className="min-w-0 w-full lg:w-auto lg:flex-1">
-                    <div className="font-medium text-sm break-words">{getLocalizedItemField(item, "itemName", language) || item.itemName || t.workflow.purchase.unnamedItem}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-sm break-words">{getLocalizedItemField(item, "itemName", language) || item.itemName || t.workflow.purchase.unnamedItem}</span>
+                      {item.emergencyPurchase && <Badge variant="destructive">{pricingBundleText[language].emergency}</Badge>}
+                    </div>
                     <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3 flex-wrap">
                       <span className="font-mono">{item.purchaseOrderNumber}</span>
                       <span>{t.workflow.purchase.quantityColon} {item.quantity} {displayUnit(item.unit)}</span>
@@ -1148,7 +1152,7 @@ export default function PurchaseOrders() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto lg:shrink-0">
                     {canManagerAssignOwnItem(authenticatedUser, item) && <Button size="sm" variant="outline" onClick={event => { event.stopPropagation(); setManagerAssignmentItem(item); }}>{t.purchaseOrders.managerAssignToDelegate}</Button>}
-                    {item.status === "estimated" && !item.batchId && !item.delegateChangeRequestedAt && <PricingBundleAddButton itemId={item.id} />}
+                    {item.status === "estimated" && !item.batchId && !item.delegateChangeRequestedAt && <PricingBundleAddButton itemId={item.id} emergencyPurchase={item.emergencyPurchase === true} />}
                     <Badge variant={item.actionMode === "purchase" ? "default" : "outline"}>
                       {item.actionMode === "purchase"
                         ? t.workflow.purchase.delegateNeedsPurchase

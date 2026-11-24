@@ -69,15 +69,22 @@ export class ApprovedPricingDocumentReader {
       FROM delegate_pricing_bundles b JOIN users u ON u.id=b.delegateId WHERE ${where}
       ORDER BY b.sentAt ${direction},b.id ${direction} LIMIT ${input.pageSize} OFFSET ${(page-1)*input.pageSize}`);
     const scopes = await this.scope(db, bundles.map(row => Number(row.id)));
+    const emergencyIds = bundles.filter(bundle => {
+      try { return parse(bundle.snapshotJson)?.emergencyPurchase === true; } catch { return false; }
+    }).map(bundle => Number(bundle.id));
+    const cancellations = await readScopeChunks(emergencyIds, chunk => rows(db, sql`SELECT bundleId,purchaseOrderItemId
+      FROM emergency_purchase_items WHERE cancelledAt IS NOT NULL AND bundleId IN (${sql.join(chunk.map(id => sql`${id}`), sql`,`)})`));
+    const cancelled = new Map(Array.from(groupReadRows(cancellations, row => Number(row.bundleId)),
+      ([bundleId, lines]) => [bundleId, new Set(lines.map(row => Number(row.purchaseOrderItemId)))]));
     const result = bundles.flatMap(bundle => {
       const members = scopes.get(Number(bundle.id)) || [], snapshot = this.snapshot(bundle, members);
       if (!snapshot) return [];
       const root = members[0];
       const rejected = new Set([...(parse(root.accountingRejections) || []), ...(parse(root.managementRejections) || [])].map(row => Number(row.itemId)));
-      const total = snapshot.rows.filter(row => !rejected.has(row.id)).reduce((sum, row) => sum + Math.round(Number(row.estimatedTotalCost)*100), 0) / 100;
+      const total = snapshot.rows.filter(row => !rejected.has(row.id) && !cancelled.get(Number(bundle.id))?.has(row.id)).reduce((sum, row) => sum + Math.round(Number(row.estimatedTotalCost)*100), 0) / 100;
       const dates = members.map(row => String(row.approvedAt)).sort();
       const approvedAt = root.unifiedApprovedAt || dates[dates.length-1];
-      return [{ id: Number(bundle.id), bundleNumber: bundle.bundleNumber, delegateName: bundle.delegateName, approvedAt, total }];
+      return [{ id: Number(bundle.id), bundleNumber: bundle.bundleNumber, delegateName: bundle.delegateName, approvedAt, total, ...(snapshot.emergencyPurchase ? { emergencyPurchase: true as const } : {}) }];
     });
     return { rows: result, total, page, pageSize: input.pageSize };
   }

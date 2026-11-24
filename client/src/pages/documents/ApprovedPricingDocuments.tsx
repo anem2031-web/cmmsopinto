@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Eye, Printer, FileStack, Download } from "lucide-react";
@@ -44,7 +45,7 @@ export default function ApprovedPricingDocuments({embedded=false}: {embedded?:bo
     {query.error ? <p role="alert">{query.error.message}</p> : query.isLoading ? <p role="status">جارٍ تحميل الوثائق…</p> : <Card><CardContent className="pt-5 overflow-x-auto">
       <Table><TableHeader><TableRow><TableHead className="text-start">رقم الحزمة</TableHead><TableHead className="text-start">المندوب</TableHead><TableHead className="text-start">تاريخ الاعتماد</TableHead><TableHead className="text-start">الإجمالي المعتمد</TableHead><TableHead className="text-start">الإجراءات</TableHead></TableRow></TableHeader>
         <TableBody>{query.data?.rows.map(row => <TableRow key={row.id}>
-          <TableCell className="font-mono">{row.bundleNumber}</TableCell><TableCell>{row.delegateName}</TableCell><TableCell>{row.approvedAt ? new Date(row.approvedAt).toLocaleDateString("ar-SA") : "—"}</TableCell><TableCell>{row.total.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} ر.س</TableCell>
+          <TableCell className="font-mono"><bdi>{row.bundleNumber}</bdi>{row.emergencyPurchase && <Badge className="ms-2" variant="destructive">شراء طارئ</Badge>}</TableCell><TableCell>{row.delegateName}</TableCell><TableCell>{row.approvedAt ? new Date(row.approvedAt).toLocaleDateString("ar-SA") : "—"}</TableCell><TableCell>{row.total.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} ر.س</TableCell>
           <TableCell><div className="flex flex-col items-start gap-2 sm:flex-row"><Button variant="outline" size="sm" disabled={busy !== null} onClick={() => open(row.id)}><Eye className="w-4 h-4 me-1" />استعراض</Button><Button variant="outline" size="sm" disabled={busy !== null} onClick={() => download(row.id)}><Download className="w-4 h-4 me-1" />تنزيل PDF</Button><Button variant="outline" size="sm" disabled={busy !== null} onClick={() => open(row.id)}><Printer className="w-4 h-4 me-1" />طباعة</Button></div></TableCell>
         </TableRow>)}{!query.data?.rows.length && <TableRow><TableCell colSpan={5}>لا توجد حزم تسعير معتمدة.</TableCell></TableRow>}</TableBody>
       </Table>

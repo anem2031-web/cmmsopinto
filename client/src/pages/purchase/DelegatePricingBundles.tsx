@@ -8,6 +8,7 @@ import { useTranslation } from "@/contexts/LanguageContext";
 import { pricingBundleText } from "@/i18n/pricingBundles";
 import { canReadPricingBundles } from "@shared/delegate-pricing-bundles";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { downloadPricingBundlePdf } from "@/lib/downloadPricingBundlePdf";
 import { Loader2 } from "lucide-react";
@@ -41,7 +42,8 @@ export function PricingBundlesContent() {
     setListMode("archive");
     utils.delegatePricingBundles.detail.setData({ id: input.id }, (old: typeof detail.data) => old ? { ...old, status: old.status === "open" ? "archived" : old.status, revision: old.status === "open" ? Number(old.revision) + 1 : old.revision, effectsDone: result.effectsDone ? 1 : 0 } : old);
     utils.delegatePricingBundles.list.setData(undefined, old => old?.map(entry => entry.id === input.id ? { ...entry, status: entry.status === "open" ? "archived" : entry.status, effectsDone: result.effectsDone ? 1 : 0 } : entry));
-    result.effectsDone ? toast.success(text.done) : toast.warning(text.pendingSync);
+    const emergencyPurchase = detail.data?.id === input.id && detail.data.emergencyPurchase;
+    result.effectsDone ? toast.success(emergencyPurchase ? text.emergencySent : text.done) : toast.warning(text.pendingSync);
     // Refetch source queues without keeping the send button pending after the committed response.
     void refresh().catch(() => toast.warning(text.refreshFailed));
   }, onError: error => toast.error(error.message) });
@@ -50,13 +52,14 @@ export function PricingBundlesContent() {
     try { downloadPricingBundlePdf(result); } catch { toast.error(text.downloadFailed); }
   }, onError: error => toast.error(error.message) });
   const bundle = detail.data; const editable = isDelegateRole(user?.role) && bundle?.status === "open";
+  const emergencyPurchase = bundle?.emergencyPurchase === true;
   const items: PricingBundleRow[] = categorySort ? [...(bundle?.items || [])].sort((a,b) => a.categoryName.localeCompare(b.categoryName)) : bundle?.items || [];
   const busy = remove.isPending || send.isPending || pdf.isPending || retry.isPending;
   const fmt = (value: number | string) => Number(value).toLocaleString(language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (list.isLoading) return <p>{text.load}</p>;
   if (list.error) return <p role="alert">{list.error.message}</p>;
   return <div className="space-y-4"><div className="flex gap-2">{(["open", "archive"] as const).map(value => <Button key={value} disabled={busy} variant={mode === value ? "default" : "outline"} onClick={() => { setListMode(value); setSelected(list.data?.find(entry => value === "open" ? entry.status === "open" : entry.status !== "open")?.id ?? null); }}>{value === "open" ? text.openBundles : text.archiveList}</Button>)}</div><PricingBundleRows entries={visibleEntries} selectedId={selectedId} disabled={busy} onSelect={setSelected} />
-    {!selectedId ? <p>{text.empty}</p> : detail.error ? <p role="alert">{detail.error.message}</p> : !bundle ? <p>{text.load}</p> : <Card><CardHeader className="px-4 sm:px-6"><CardTitle>{bundle.bundleNumber} — {text[bundle.status as "open" | "sent" | "archived"]}</CardTitle><p>{text.delegate}: {bundle.delegateName} · {text.created}: {new Date(bundle.createdAt).toLocaleString(language, { timeZone: "Asia/Riyadh" })}</p><p>{text.count}: {items.length}/20 · {text.total}: {fmt(bundle.total)} SAR</p></CardHeader><CardContent className="space-y-4 px-4 sm:px-6">
+    {!selectedId ? <p>{text.empty}</p> : detail.error ? <p role="alert">{detail.error.message}</p> : !bundle ? <p>{text.load}</p> : <Card><CardHeader className="px-4 sm:px-6"><CardTitle className="flex flex-wrap items-center gap-2"><bdi>{bundle.bundleNumber}</bdi>{emergencyPurchase && <Badge variant="destructive">{text.emergency}</Badge>}<span>— {emergencyPurchase && bundle.status === "sent" ? text.emergencyReleased : text[bundle.status as "open" | "sent" | "archived"]}</span></CardTitle><p>{text.delegate}: {bundle.delegateName} · {text.created}: {new Date(bundle.createdAt).toLocaleString(language, { timeZone: "Asia/Riyadh" })}</p><p>{text.count}: {items.length}/20 · {text.total}: {fmt(bundle.total)} SAR</p></CardHeader><CardContent className="space-y-4 px-4 sm:px-6">
       <Button size="sm" variant="outline" onClick={() => setCategorySort(value => !value)}>{text.sort}{categorySort ? " ✓" : ""}</Button>
       {items.length === 0 ? <p>{text.emptyItems}</p> : (
         <PricingBundleItems
@@ -69,7 +72,7 @@ export function PricingBundlesContent() {
           onRemove={editable ? itemId => remove.mutate({ id: bundle.id, itemId }) : undefined}
         />
       )}
-      <div className="flex flex-wrap gap-3">{canOpenApprovalPdf(user?.role, bundle) && bundle.status !== "open" && items.length > 0 && <Button variant="outline" disabled={busy} onClick={() => pdf.mutate({ id: bundle.id })}>{pdf.isPending && <Loader2 className="h-4 w-4 animate-spin" />}{pdf.isPending ? text.preparingPdf : text.pdf}</Button>}{(user?.role === "accountant" || user?.role === "senior_management") && !canOpenApprovalPdf(user.role, bundle) && <p className="text-sm text-muted-foreground">{approvalPdfNotice(language)}</p>}{editable && <Button disabled={busy || items.length === 0} onClick={() => send.mutate({ id: bundle.id, revision: bundle.revision })}>{send.isPending && <Loader2 className="h-4 w-4 animate-spin" />}{send.isPending ? text.sending : text.send}</Button>}{isDelegateRole(user?.role) && bundle.status !== "open" && !bundle.effectsDone && <Button disabled={busy} variant="outline" onClick={() => retry.mutate({ id: bundle.id })}>{text.retry}</Button>}</div>
+      <div className="flex flex-wrap gap-3">{canOpenApprovalPdf(user?.role, bundle) && bundle.status !== "open" && items.length > 0 && <Button variant="outline" disabled={busy} onClick={() => pdf.mutate({ id: bundle.id })}>{pdf.isPending && <Loader2 className="h-4 w-4 animate-spin" />}{pdf.isPending ? text.preparingPdf : text.pdf}</Button>}{(user?.role === "accountant" || user?.role === "senior_management") && !canOpenApprovalPdf(user.role, bundle) && <p className="text-sm text-muted-foreground">{approvalPdfNotice(language)}</p>}{editable && <Button disabled={busy || items.length === 0} onClick={() => send.mutate({ id: bundle.id, revision: bundle.revision })}>{send.isPending && <Loader2 className="h-4 w-4 animate-spin" />}{send.isPending ? (emergencyPurchase ? text.emergencySending : text.sending) : (emergencyPurchase ? text.sendEmergency : text.send)}</Button>}{isDelegateRole(user?.role) && bundle.status !== "open" && !bundle.effectsDone && <Button disabled={busy} variant="outline" onClick={() => retry.mutate({ id: bundle.id })}>{text.retry}</Button>}</div>
     </CardContent></Card>}
   </div>;
 }
@@ -88,6 +91,9 @@ function PricingBundleItems({ items, text, detailsLabel, currency, fmt, busy, on
       <bdi>{item.poNumber}</bdi>
     </Link>
   );
+  const cancellationReason = (item: PricingBundleRow) => item.emergencyCancellationReason && (
+    <p className="text-xs text-red-700 dark:text-red-400">{text.emergencyCancellation} · {item.emergencyCancellationReason}</p>
+  );
   const returnToPricing = (item: PricingBundleRow) => onRemove && (
     <Button size="sm" variant="outline" disabled={busy} onClick={() => onRemove(item.id)}>
       {text.back}
@@ -100,6 +106,7 @@ function PricingBundleItems({ items, text, detailsLabel, currency, fmt, busy, on
         <li key={item.id} className="space-y-3 rounded-lg border bg-card p-3 text-sm wrap-anywhere">
           <div className="space-y-1">
             <h3 className="font-semibold">{item.itemName}</h3>
+            {cancellationReason(item)}
             {orderLink(item)}
           </div>
           <dl className="grid grid-cols-2 gap-x-3 gap-y-2">
@@ -143,7 +150,7 @@ function PricingBundleItems({ items, text, detailsLabel, currency, fmt, busy, on
         <tbody>
           {items.map(item => (
             <tr key={item.id}>
-              <td className="p-2 border-b">{item.itemName}</td>
+              <td className="p-2 border-b">{item.itemName}{cancellationReason(item)}</td>
               <td className="p-2 border-b">{item.categoryName}</td>
               <td className="p-2 border-b">{orderLink(item)}</td>
               <td className="p-2 border-b">{item.sectionName}</td>

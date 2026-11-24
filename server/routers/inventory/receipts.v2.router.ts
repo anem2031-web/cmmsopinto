@@ -32,6 +32,7 @@ import { createPurchaseReceiptContextProcedure } from "./purchaseReceiptContext.
 import { readRows, trialEnabled } from "../../supplier-return-followup/runtime";
 import { linkReplacementReceipt } from "../../supplier-return-followup/receipt-bridge";
 import { assertSpecificationReceiptTracking } from "../../services/purchase-specifications";
+import { emergencyItemIds, lockEmergencyBundleRootsForItems, syncEmergencyBundleReceipts } from "../../services/emergency-purchases/service";
 
 // ─── مخطط الصنف المستلم ─────────────────────────────────────
 const receivedItemSchema = z.object({
@@ -566,8 +567,14 @@ export const receiptsV2Router = router({
       //   بالكامل (rollback) — لا حالة وسطى ممزقة عند أي فشل جزئي.
       const lotsEnabled = isInventoryLotsEnabled();
       const { receiptId, receiptNumber, processedItems } = await db.withTransaction(async (tx) => {
+        const linkedItemIds = input.items.flatMap(item => item.purchaseOrderItemId == null ? [] : [item.purchaseOrderItemId]);
+        // Finance and receiving serialize at the same bundle root before touching PO items.
+        await lockEmergencyBundleRootsForItems(tx, linkedItemIds);
         await lockAndValidatePurchaseReceiptItems(tx, input.purchaseOrderId, input.items, input.purchaseOrderIds, input.sourceInvoiceNumber);
-        await assertSpecificationReceiptTracking(tx, input.items.map(item => item.purchaseOrderItemId).filter((id): id is number => id != null), lotsEnabled);
+        await assertSpecificationReceiptTracking(tx, linkedItemIds, lotsEnabled);
+        if (!lotsEnabled && (await emergencyItemIds(tx, linkedItemIds)).size) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "يجب تفعيل تتبع دفعات المخزون لاستلام مشتريات الطوارئ" });
+        }
         const replacementItemIds = await trialEnabled(tx)
           ? new Set((await readRows(tx, sql`SELECT purchaseOrderItemId FROM supplier_return_replacement_plans
               WHERE purchaseOrderId IN (${sql.join(receiptOrderIds.map(id => sql`${id}`), sql`,`)}) AND purchaseOrderItemId IS NOT NULL`))
@@ -833,6 +840,7 @@ export const receiptsV2Router = router({
           }
         }
 
+        await syncEmergencyBundleReceipts(tx, linkedItemIds);
         for (const receiptOrderId of receiptOrderIds) {
           const allItems = await db.getPOItems(receiptOrderId, tx);
           const activeItems = allItems.filter((i: any) => !["rejected", "cancelled"].includes(i.status));

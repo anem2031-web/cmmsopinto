@@ -72,6 +72,7 @@ interface ItemInput {
   delegateId?: number | null;
   batchId?: number | null;
   delegateChangeRequestedAt?: string | Date | null;
+  emergencyPurchaseReady?: boolean;
   reviewRole?: string | null;
   reviewedById?: number | null;
   reviewedAt?: string | Date | null;
@@ -86,11 +87,12 @@ export type DelegateItemActionMode = "estimate" | "purchase";
  */
 export function getDelegateItemActionMode(
   poStatus: string,
-  item: Pick<ItemInput, "status" | "batchId" | "delegateChangeRequestedAt" | "reviewRole" | "reviewedById" | "reviewedAt">
+  item: Pick<ItemInput, "status" | "batchId" | "delegateChangeRequestedAt" | "reviewRole" | "reviewedById" | "reviewedAt" | "emergencyPurchaseReady">
 ): DelegateItemActionMode | null {
   if (item.delegateChangeRequestedAt) return null;
   if (isRoutedPurchaseItem(item)) {
     if (!hasCommittedPurchaseItemReview(item) || [PO_STATUS.DRAFT, PO_STATUS.REVISION_NEEDED, PO_STATUS.CLOSED, PO_STATUS.REJECTED].includes(poStatus as any)) return null;
+    if (item.emergencyPurchaseReady && item.status === "estimated") return "purchase";
     if (!item.batchId && ["pending", "estimated"].includes(item.status)) return "estimate";
     if (["approved", "funded"].includes(item.status)) return "purchase";
     return null;
@@ -104,6 +106,7 @@ export function getDelegateItemActionMode(
     PO_STATUS.REJECTED,
   ].includes(poStatus as any);
   if (blocked) return null;
+  if (item.emergencyPurchaseReady && item.status === "estimated") return "purchase";
 
   if (!item.batchId && ["pending", "estimated"].includes(item.status)) {
     return "estimate";

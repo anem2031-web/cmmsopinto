@@ -63,6 +63,7 @@ beforeEach(() => {
   const db = {
     execute: async (statement: SQL | SQLWrapper) => {
       const compiled = dialect.sqlToQuery(statement.getSQL());
+      if (compiled.sql.includes("FROM information_schema.TABLES")) return [[]];
       return [sqlite.prepare(compiled.sql).all(...compiled.params as number[])];
     },
     transaction: async (work: (tx: typeof db) => unknown) => work(db),

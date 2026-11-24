@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { isRoutedPurchaseItem } from "../../shared/purchase-item-review";
 import { getDelegateItemActionMode } from "../routers/purchase/actionable";
 import { readScopeChunks } from "../_core/authz/read-batch";
+import { loadEmergencyItemStates } from "./emergency-purchases/service";
 import { SUPPLY_WAIT_EDIT_MS, supplyWaitAdmin, supplyWaitDelegate, supplyWaitReader, supplyWaitListInput, supplyWaitSaveInput,
   type SupplyWaitActor, type SupplyWaitEntry, type SupplyWaitReference } from "../../shared/purchase-supply-wait";
 
@@ -57,10 +58,16 @@ export class PurchaseSupplyWaitService {
     const orders = await readScopeChunks<any>(orderIds, chunk => rows(db, sql`SELECT id,status,requestedById,reviewedById FROM purchase_orders WHERE id IN (${ids(chunk)})`));
     const parents = new Map(orders.map(order => [Number(order.id), order]));
     const scope = await this.ports.readScope(actor, orders);
-    return items.flatMap(item => {
+    const visible = items.flatMap(item => {
       const order = parents.get(Number(item.purchaseOrderId));
       return order && scope.filterItems(order, [item]).length ? [{ item, order }] : [];
     });
+    const candidates = visible.filter(({ item }) => item.status === "estimated" && item.batchId);
+    const emergency = await loadEmergencyItemStates(db, candidates.map(({ item }) => Number(item.id)));
+    return visible.map(({ item, order }) => ({
+      item: { ...item, emergencyPurchaseReady: !!emergency.get(Number(item.id))?.purchaseAllowed },
+      order,
+    }));
   }
   private async notes(db: any, itemIds: number[], lock = false) {
     if (!itemIds.length) return [];

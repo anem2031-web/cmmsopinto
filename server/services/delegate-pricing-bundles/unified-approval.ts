@@ -10,6 +10,8 @@ import { readScopeChunks } from "../../_core/authz/read-batch";
 import { canApprovePricingBundleStage } from "../../../shared/business-role-policy";
 import { isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
 import { deriveRoutedPurchaseOrderStage } from "../../../shared/purchaseItemReviewWorkflow";
+import { emergencyPurchaseTablesAvailable, loadEmergencyBundleStates, readEmergencyBundleReceiptProgress } from "../emergency-purchases/service";
+import { withEmergencyCancellations } from "./approved-document";
 
 type Stage = "accounting" | "management";
 type Actor = PricingBundleActor & { signatureUrl?: string | null };
@@ -90,7 +92,7 @@ export class UnifiedBundleApprovalService {
         "حزمة الاعتماد غير موجودة؛ الحزم السابقة تبقى بمسارها القديم",
         "NOT_FOUND"
       );
-    const snapshot = parse(root.snapshotJson) as PricingBundleSnapshot;
+    let snapshot = parse(root.snapshotJson) as PricingBundleSnapshot;
     if (
       snapshot?.number !== root.bundleNumber ||
       Number(snapshot.delegate?.id) !== Number(root.delegateId) ||
@@ -99,6 +101,22 @@ export class UnifiedBundleApprovalService {
       snapshot.rows.length > 20
     )
       no("لقطة حزمة التسعير غير مكتملة");
+    const emergency = snapshot.emergencyPurchase ? (await loadEmergencyBundleStates(tx, [id])).get(id) : undefined;
+    if (snapshot.emergencyPurchase && (!emergency || emergency.emergencyCancelled)) no("الحزمة الطارئة غير متاحة للاعتماد");
+    if (emergency) {
+      if (actor.role === "senior_management" && (requestedStage === "accounting" || root.status === "pending_accounting" || root.status === "awaiting_receipt")) {
+        no("حزمة الشراء الطارئ تحتاج اعتماد الحسابات أولًا", "FORBIDDEN");
+      }
+      if (root.status === "awaiting_receipt" && (emergency.receivedItemCount === 0 || requestedStage === "management")) {
+        no("الحزمة الطارئة لم تدخل مرحلة الاعتماد", "NOT_FOUND");
+      }
+      const sidecar = await rows(tx, sql`SELECT purchaseOrderItemId,cancelledAt FROM emergency_purchase_items WHERE bundleId=${id}`);
+      const frozenIds = new Set(snapshot.rows.map(row => Number(row.id)));
+      if (sidecar.length !== frozenIds.size || sidecar.some(row => !frozenIds.has(Number(row.purchaseOrderItemId)))) {
+        no("تغيرت عضوية الحزمة الطارئة");
+      }
+      snapshot = await withEmergencyCancellations(tx, { id }, snapshot);
+    }
     const links = await rows(
       tx,
       sql`SELECT * FROM delegate_pricing_bundle_batches WHERE bundleId=${id} ORDER BY purchaseOrderId`
@@ -141,7 +159,9 @@ export class UnifiedBundleApprovalService {
           !!root.managementOperationKey &&
           !!root.managementRequestHash));
     const earlySeniorAccounting = actor.role === "senior_management" && requestedStage !== "management" && root.status === "pending_accounting";
-    const scopedPhase = ownCommittedAccounting
+    const emergencyAccounting = emergency && actor.role === "accountant" && requestedStage !== "management" &&
+      ["awaiting_receipt", "pending_accounting"].includes(root.status);
+    const scopedPhase = emergencyAccounting ? "pending_accounting" : ownCommittedAccounting
       ? actor.role === "senior_management" ? "pending_management" : "pending_accounting"
       : managementScope
         ? "pending_management"
@@ -250,6 +270,9 @@ export class UnifiedBundleApprovalService {
         row => Number(row.id) === Number(item.purchaseOrderId)
       );
       if (!order) no("طلب شراء الصنف غير موجود");
+      if (emergency && (!!frozen.emergencyCancellationReason !== (item.status === "cancelled"))) {
+        no("لا يطابق إلغاء الصنف سجل الحزمة الطارئة");
+      }
       for (const field of [
         "packageId",
         "ticketId",
@@ -323,6 +346,7 @@ export class UnifiedBundleApprovalService {
     return {
       root,
       snapshot,
+      emergency,
       links,
       orders,
       batches,
@@ -334,10 +358,11 @@ export class UnifiedBundleApprovalService {
   async detail(actor: Actor, id: number, stage?: Stage) {
     this.role(actor, stage);
     const c = await this.context(await this.ports.database(), id, actor, false, stage);
-    return { ...this.dto(c), approvalStage: stage ?? (c.root.status === "pending_accounting" ? "accounting" : "management") };
+    return { ...this.dto(c), approvalStage: stage ?? (["awaiting_receipt", "pending_accounting"].includes(c.root.status) ? "accounting" : "management") };
   }
   private dto(c: any) {
     return {
+      ...(c.emergency ? { ...c.emergency, approvalReady: c.root.status !== "awaiting_receipt" } : {}),
       id: Number(c.root.bundleId),
       bundleNumber: c.root.bundleNumber,
       delegateId: Number(c.root.delegateId),
@@ -384,11 +409,18 @@ export class UnifiedBundleApprovalService {
       const [currentActor] = await rows(database, sql`SELECT id,role,isActive FROM users WHERE id=${actor.id}`);
       if (!currentActor || currentActor.role !== actor.role || Number(currentActor.isActive) !== 1) no("الحساب غير نشط أو تغير دوره", "FORBIDDEN");
     }
+    const emergencyTables = await emergencyPurchaseTablesAvailable(database);
+    const exposeProgress = emergencyTables && !earlySeniorAccounting && (stage === null || stage === "pending_accounting");
+    const wantedStage = stage ? sql`a.status=${stage}` : sql`a.status IN ('pending_accounting','pending_management')`;
+    const progress = exposeProgress ? sql`OR (a.status='awaiting_receipt' AND d.receivedItemCount>0)` : sql``;
     const parents = await rows(
       database,
       sql`SELECT a.bundleId AS id,a.status,a.revision,a.custodyBalance,b.bundleNumber,b.delegateId
+      ${emergencyTables ? sql`,d.bundleId AS emergencyBundleId,d.receivedItemCount,d.requiredItemCount` : sql``}
       FROM delegate_pricing_bundle_approvals a JOIN delegate_pricing_bundles b ON b.id=a.bundleId
-      WHERE a.bundleId>${afterId} AND ${stage ? sql`a.status=${stage}` : sql`a.status IN ('pending_accounting','pending_management')`}
+      ${emergencyTables ? sql`LEFT JOIN emergency_pricing_bundles d ON d.bundleId=a.bundleId` : sql``}
+      WHERE a.bundleId>${afterId} AND (${wantedStage} ${progress})
+      ${emergencyTables ? sql`AND d.cancelledAt IS NULL ${earlySeniorAccounting ? sql`AND d.bundleId IS NULL` : sql``}` : sql``}
       AND ${earlySeniorAccounting ? sql`a.accountingApprovedById IS NULL AND a.accountingApprovedAt IS NULL AND a.managementApprovedById IS NULL AND a.managementApprovedAt IS NULL` : sql`1=1`}
       AND ${actor.role === "senior_management" && !earlySeniorAccounting ? sql`a.accountingApprovedById IS NOT NULL AND a.accountingApprovedAt IS NOT NULL` : sql`1=1`}
       AND EXISTS (SELECT 1 FROM delegate_pricing_bundle_batches l WHERE l.bundleId=a.bundleId)
@@ -431,7 +463,9 @@ export class UnifiedBundleApprovalService {
           const order = byId.get(Number(member.purchaseOrderId));
           if (!order) return false;
           if (earlySeniorAccounting && ["draft", "closed", "rejected", "revision_needed"].includes(order.status)) return false;
-          guard(actor.role === "senior_management" ? { ...order, status: "pending_management" } : order);
+          const scoped = actor.role === "senior_management" ? "pending_management"
+            : parent.emergencyBundleId && actor.role === "accountant" ? "pending_accounting" : null;
+          guard(scoped ? { ...order, status: scoped } : order);
         }
         return true;
       } catch (error) {
@@ -460,6 +494,12 @@ export class UnifiedBundleApprovalService {
         const batchIds = members.map(row => Number(row.pricingBatchId));
         return {
           ...parent,
+          ...(parent.emergencyBundleId ? {
+            emergencyPurchase: true as const,
+            receivedItemCount: Number(parent.receivedItemCount),
+            requiredItemCount: Number(parent.requiredItemCount),
+            approvalReady: parent.status !== "awaiting_receipt",
+          } : {}),
           id: Number(parent.id),
           orderIds: members.map(row => Number(row.purchaseOrderId)),
           batchIds,
@@ -529,6 +569,13 @@ export class UnifiedBundleApprovalService {
       )
         no("تغيرت مرحلة الحزمة؛ حدّث البيانات");
       this.ports.authorizeStage(actor, stage, c.orders);
+      if (c.emergency) {
+        if (input.rejections.length) no("اعتماد الشراء الطارئ لا يتيح رفض الأصناف", "BAD_REQUEST");
+        const { required, received } = await readEmergencyBundleReceiptProgress(tx, input.id);
+        if (required === 0 || received !== required || required !== c.emergency.requiredItemCount) {
+          no("لا يمكن اعتماد الحزمة قبل اكتمال الاستلام الفعلي لجميع الأصناف");
+        }
+      }
       const active = c.items.filter(
         item =>
           !c.priorRejected.has(Number(item.id)) &&
@@ -544,7 +591,7 @@ export class UnifiedBundleApprovalService {
         )
       )
         no("طلب شراء مرتبط مغلق أو مرفوض؛ يلزم مراجعة ارتباطه");
-      if (active.some(item => item.status !== "estimated"))
+      if (active.some(item => item.status !== (c.emergency ? "delivered_to_warehouse" : "estimated")))
         no("تغيرت الأصناف؛ الحزمة لا تحتوي أصنافًا جاهزة للاعتماد");
       const decisions = new Map<number, string>();
       for (const row of input.rejections) {
@@ -613,7 +660,7 @@ export class UnifiedBundleApprovalService {
         const rejectedItem = members.find(item =>
           decisions.has(Number(item.id))
         );
-        const replacement = await this.ports.replacement(
+        const replacement = c.emergency ? false : await this.ports.replacement(
           tx,
           actor,
           stage,
@@ -638,7 +685,7 @@ export class UnifiedBundleApprovalService {
                 actor,
                 r.bundleNumber
               );
-          } else if (stage === "management" && !replacement)
+          } else if (stage === "management" && !replacement && !c.emergency)
             await this.ports.updateItem(
               tx,
               item,
@@ -694,7 +741,7 @@ export class UnifiedBundleApprovalService {
             sql`UPDATE purchase_package_submissions SET status=${status},totalEstimatedCost=${String(summary.total)},managementApprovedById=${actor.id},managementApprovedAt=CURRENT_TIMESTAMP WHERE id=${Number(sub.id)}`
           );
       }
-      for (const order of c.orders) {
+      for (const order of c.emergency ? [] : c.orders) {
         const allItems = await rows(
           tx,
           sql`SELECT * FROM purchase_order_items WHERE purchaseOrderId=${Number(order.id)}`

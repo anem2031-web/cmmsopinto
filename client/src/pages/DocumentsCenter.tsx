@@ -12,6 +12,7 @@ import { useState, useMemo, useEffect } from "react";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,6 +49,7 @@ type DocRow = ApprovalPdfPermission & {
   totalEstimatedCost?: string | number | null; // الإجمالي الكلي لدفعة التسعير — ليس مبلغ العهدة على المندوب
   status?: string;
   purchaseOrders?: { id: number; poNumber: string }[];
+  emergencyPurchase?: boolean;
   reviewUrl?: string | null;
 };
 
@@ -237,6 +239,7 @@ function ExistingDocumentsCenter({typeFilter}: {typeFilter:DocType}) {
         type: "delegate_pricing_bundle", id: bundle.id, documentNumber: bundle.bundleNumber,
         date: bundle.sentAt || bundle.createdAt, referenceLabel: bundle.delegateName || "بلا مندوب", printCount: null,
         delegateId: bundle.delegateId, totalEstimatedCost: bundle.total, status: bundle.status,
+        emergencyPurchase: bundle.emergencyPurchase === true,
         purchaseOrders: bundle.purchaseOrders || [], pdfAllowed: bundle.pdfAllowed, pdfBlockedReason: bundle.pdfBlockedReason,
       }));
     }
@@ -513,7 +516,7 @@ function ExistingDocumentsCenter({typeFilter}: {typeFilter:DocType}) {
                 const pdfAllowed = rowPdfAllowed(row);
                 return (
                   <TableRow key={key}>
-                    <TableCell className="font-mono text-sm">{row.documentNumber}</TableCell>
+                    <TableCell className="font-mono text-sm"><bdi>{row.documentNumber}</bdi>{row.emergencyPurchase && <Badge className="ms-2" variant="destructive">شراء طارئ</Badge>}</TableCell>
                     {["po_financial_batch", "delegate_pricing_documents", "delegate_pricing_bundle"].includes(typeFilter) && (
                       <TableCell className="font-mono text-sm font-semibold whitespace-nowrap">
                         {formatFinancialGrandTotal(row.totalEstimatedCost)}
@@ -564,7 +567,7 @@ function ExistingDocumentsCenter({typeFilter}: {typeFilter:DocType}) {
 
       <Dialog open={selectedBundleId != null} onOpenChange={open => { if (!open) setSelectedBundleId(null); }}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto" dir="rtl">
-          <DialogHeader><DialogTitle>تفاصيل حزمة التسعير {bundleDetailQ.data?.bundleNumber}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="flex flex-wrap items-center gap-2">تفاصيل حزمة التسعير <bdi>{bundleDetailQ.data?.bundleNumber}</bdi>{bundleDetailQ.data?.emergencyPurchase && <Badge variant="destructive">شراء طارئ</Badge>}</DialogTitle></DialogHeader>
           {bundleDetailQ.isLoading ? <p>جارٍ التحميل…</p> : bundleDetailQ.error ? <p role="alert">تعذر تحميل تفاصيل الحزمة. أعد المحاولة.</p> : bundleDetailQ.data ? <div className="space-y-4">
             <p>المندوب: {bundleDetailQ.data.delegateName} — التاريخ: {relativeOrDate(bundleDetailQ.data.createdAt)}</p>
             <div className="overflow-x-auto"><Table><TableHeader><TableRow>{["الصنف", "طلب الشراء", "القسم", "الكمية", "الوحدة", "السعر", "المورد", "الإجمالي"].map(label => <TableHead key={label}>{label}</TableHead>)}</TableRow></TableHeader><TableBody>{bundleDetailQ.data.items.map((item: PricingBundleRow) => <TableRow key={item.id}><TableCell>{item.itemName}</TableCell><TableCell><Link href={`/purchase-orders/${item.purchaseOrderId}?itemId=${item.id}`} className="text-primary underline">{item.poNumber}</Link></TableCell><TableCell>{item.sectionName}</TableCell><TableCell>{item.quantity}</TableCell><TableCell>{item.unit}</TableCell><TableCell>{formatFinancialGrandTotal(item.estimatedUnitCost)}</TableCell><TableCell>{item.supplierName}</TableCell><TableCell>{formatFinancialGrandTotal(item.estimatedTotalCost)}</TableCell></TableRow>)}</TableBody></Table></div>

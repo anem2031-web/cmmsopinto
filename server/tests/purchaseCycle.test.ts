@@ -46,6 +46,7 @@ vi.mock("../_core/db", () => {
   ];
 
   return {
+    getDb: vi.fn(async () => null),
     getPurchaseManagerUsers: vi.fn(async () => users.filter(u => u.role === "maintenance_manager")),
     getManagerUsers: vi.fn(async () => users.filter(u => u.role === "maintenance_manager")),
     getPOItemsByDelegate: vi.fn(async (delegateId: number) => items.filter(i => i.delegateId === delegateId)),

@@ -265,6 +265,7 @@ function bundleFixture(role = "accountant") {
   const queries: string[] = [];
   const database = { execute: vi.fn(async (statement: any) => {
     const { sql: q } = new MySqlDialect().sqlToQuery(statement); queries.push(q);
+    if (q.includes("information_schema.TABLES")) return [[], []];
     if (q.includes("FROM delegate_pricing_bundle_batches l")) return [scopes, []];
     if (q.startsWith("SELECT id,bundleNumber")) return [[bundle], []];
     if (q.startsWith("SELECT snapshotJson")) return [[{ snapshotJson: JSON.stringify(snapshot) }], []];

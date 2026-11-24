@@ -105,6 +105,7 @@ describe("Pricing bundle paged read", () => {
     const queries: any[] = [];
     const database = { execute: async (statement: any) => {
       const q = dialect.sqlToQuery(statement); queries.push(q);
+      if (q.sql.includes("information_schema.TABLES")) return [[], []];
       if (q.sql.startsWith("SELECT COUNT")) return [[{ total: 80 }], []];
       if (q.sql.startsWith("SELECT b.delegateId")) return [[{ delegateId: 7, delegateName: "Own", count: 80 }], []];
       if (q.sql.startsWith("SELECT l.bundleId")) return [[], []];
@@ -114,7 +115,7 @@ describe("Pricing bundle paged read", () => {
     const result = await service.listPage(actor(), documentListPageInput.parse({ page: 3 }));
     expect(result).toMatchObject({ page: 3, total: 80, rows: [{ id: 41, pdfAllowed: true, total: 10 }] });
     expect(queries[2].params.slice(-2)).toEqual([20, 40]);
-    expect(queries).toHaveLength(3);
+    expect(queries).toHaveLength(4); // One bounded capability read, never per document.
   });
   it("runs the new read alias through the central business guard without adding write permissions", () => {
     for (const role of ["accountant", "senior_management"]) {

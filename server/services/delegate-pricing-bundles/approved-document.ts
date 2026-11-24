@@ -53,8 +53,20 @@ export function approvedBundleCondition() {
 }
 
 /** Fresh exact-batch checks for the approved PDF; source rows/prices stay frozen. */
+export async function withEmergencyCancellations(database: any, bundle: { id: number }, snapshot: PricingBundleSnapshot) {
+  if (!snapshot.emergencyPurchase) return snapshot;
+  const [rows] = await database.execute(sql`SELECT purchaseOrderItemId,cancellationReason FROM emergency_purchase_items
+    WHERE bundleId=${Number(bundle.id)} AND cancelledAt IS NOT NULL`);
+  const reasons = new Map<number, string>(rows.map((row: any) => [Number(row.purchaseOrderItemId), String(row.cancellationReason || "أُلغي قبل الشراء")]));
+  return { ...snapshot, rows: snapshot.rows.map(row => {
+    const reason = reasons.get(row.id);
+    return reason ? { ...row, emergencyCancellationReason: reason } : row;
+  }) };
+}
+
 export async function approvedBundleSnapshot(database: any, bundle: any, snapshot: PricingBundleSnapshot,
   signature: (source: string | null) => Promise<string>): Promise<PricingBundleSnapshot> {
+  snapshot = await withEmergencyCancellations(database, bundle, snapshot);
   if(unifiedBundleApprovalsEnabled()){
     const [roots]=await database.execute(sql`SELECT a.* FROM delegate_pricing_bundle_approvals a JOIN delegate_pricing_bundles b ON b.id=a.bundleId
       WHERE a.bundleId=${Number(bundle.id)} AND ${approvedBundleCondition()}`);
@@ -67,7 +79,7 @@ export async function approvedBundleSnapshot(database: any, bundle: any, snapsho
       const parse=(value:any)=>typeof value==='string'?JSON.parse(value):value;
       const rejected=[...(parse(root.accountingRejections)||[]),...(parse(root.managementRejections)||[])];
       const rejectedIds=new Set(rejected.map((row:any)=>Number(row.itemId)));
-      const approvedTotal=(snapshot.rows.filter(row=>!rejectedIds.has(Number(row.id))).reduce((sum,row)=>sum+Math.round(Number(row.estimatedTotalCost)*100),0)/100).toFixed(2);
+      const approvedTotal=(snapshot.rows.filter(row=>!rejectedIds.has(Number(row.id)) && !row.emergencyCancellationReason).reduce((sum,row)=>sum+Math.round(Number(row.estimatedTotalCost)*100),0)/100).toFixed(2);
       return {...snapshot,rows:snapshot.rows.map(row=>({...row,approvalRejectionReason:rejected.find((item:any)=>Number(item.itemId)===row.id)?.reason})),
         approvedTotal,compensations:snapshot.compensations?.filter(row=>!rejectedIds.has(Number(row.purchaseOrderItemId))),
         financialApprovals:[{reference:snapshot.number,poNumbers:Array.from(new Set(snapshot.rows.map(row=>row.poNumber))),

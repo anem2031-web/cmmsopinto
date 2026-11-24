@@ -7,6 +7,7 @@ import { createPurchaseOrderReadScope } from "../../_core/authz/guard";
 import { groupReadRows, readScopeChunks } from "../../_core/authz/read-batch";
 import { isInventoryLotsEnabled } from "../../_core/inventory-lots";
 import { pscmAvailableIssueQuantity, pscmLotUnitsPerOrderUnit } from "./fulfillment-issue";
+import { loadEmergencyHolds } from "../purchase-specification-guards";
 
 type Actor = Parameters<typeof createPurchaseOrderReadScope>[0];
 type Database = Pick<NonNullable<Awaited<ReturnType<typeof getDb>>>, "execute">;
@@ -84,7 +85,7 @@ async function canonicalUnits(db: Database, units: (string | null)[]) {
 
 async function loadFulfillment(db: Database, lines: Line[], lotsEnabled: boolean) {
   const ids = lines.map(line => line.purchaseOrderItemId);
-  const [receipts, issues] = await Promise.all([
+  const [receipts, issues, emergencyHolds] = await Promise.all([
     readScopeChunks(ids, chunk => fetchRows<Receipt>(db, sql`
       SELECT ri.purchaseOrderItemId, ri.receivedQuantity, ri.purchaseUnit AS receivedUnit,
         l.id AS lotId, l.lotCode, l.issueUnit, l.conversionFactor AS factor, l.specificationStatus,
@@ -106,6 +107,7 @@ async function loadFulfillment(db: Database, lines: Line[], lotsEnabled: boolean
       LEFT JOIN delivery_documents d ON d.id = f.deliveryDocumentId AND d.poItemId = f.purchaseOrderItemId
       WHERE f.purchaseOrderItemId IN (${parameters(chunk)})
       ORDER BY f.deliveryDocumentId, f.deliveryNumber`)),
+    loadEmergencyHolds(db, ids),
   ]);
   const receiptsByLine = groupReadRows(receipts, row => row.purchaseOrderItemId);
   const issuesByLine = groupReadRows(issues, row => row.purchaseOrderItemId);
@@ -141,7 +143,7 @@ async function loadFulfillment(db: Database, lines: Line[], lotsEnabled: boolean
       });
       if (received) receivedQuantity += received.quantity;
       else completeReceiptData = false;
-      if (!lotsEnabled || line.itemStatus !== "delivered_to_warehouse" ||
+      if (emergencyHolds.has(line.purchaseOrderItemId) || !lotsEnabled || line.itemStatus !== "delivered_to_warehouse" ||
         ["closed", "rejected", "draft", "revision_needed"].includes(line.orderStatus) ||
         !receipt.lotId || !receipt.lotCode ||
         (receipt.specificationStatus !== "approved" &&

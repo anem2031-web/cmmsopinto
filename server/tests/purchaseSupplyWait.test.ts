@@ -33,6 +33,9 @@ function fixture() {
   const db: any = { execute: async (statement: any) => {
     const q = new MySqlDialect().sqlToQuery(statement);
     queries.push({ sql: q.sql, params: q.params });
+    if (q.sql.includes("FROM information_schema.TABLES")) return [
+      memory.prepare("SELECT name AS TABLE_NAME FROM sqlite_master WHERE type='table' AND name IN ('emergency_purchase_items','emergency_pricing_bundles')").all(), [],
+    ];
     if (options.readError && q.sql.includes("FROM purchase_item_supply_wait")) throw options.readError;
     if (options.auditFails && q.sql.startsWith("INSERT INTO audit_logs")) throw Error("audit unavailable");
     if (options.advanceAtUpdate && q.sql.startsWith("UPDATE purchase_item_supply_wait")) now = new Date(Date.parse(T0) + 7200000).toISOString();
@@ -123,6 +126,31 @@ describe("optional supply-wait annotations", () => {
     const f = fixture(); f.memory.prepare("UPDATE purchase_order_items SET status=?").run(status);
     expect((await f.list()).items[0].canCreate).toBe(false); await expect(f.service.save(actor(), input())).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
+  it("allows the assigned delegate to save a note only once an emergency bundle is submitted for purchase", async () => {
+    const f = fixture();
+    f.memory.exec(`
+      ALTER TABLE purchase_order_items ADD COLUMN purchasedAt TEXT;
+      UPDATE purchase_order_items SET status='estimated';
+      CREATE TABLE emergency_purchase_items(purchaseOrderItemId INTEGER PRIMARY KEY,bundleId INTEGER,cancelledAt TEXT);
+      CREATE TABLE emergency_pricing_bundles(bundleId INTEGER PRIMARY KEY,submittedAt TEXT,cancelledAt TEXT);
+      CREATE TABLE delegate_pricing_bundles(id INTEGER PRIMARY KEY,delegateId INTEGER);
+      CREATE TABLE delegate_pricing_bundle_approvals(bundleId INTEGER PRIMARY KEY,status TEXT,accountingApprovedById INTEGER,accountingApprovedAt TEXT,managementApprovedById INTEGER,managementApprovedAt TEXT);
+      CREATE TABLE delegate_pricing_bundle_batches(bundleId INTEGER,purchaseOrderId INTEGER,pricingBatchId INTEGER);
+      INSERT INTO emergency_purchase_items VALUES (1,6,NULL);
+      INSERT INTO emergency_pricing_bundles VALUES (6,NULL,NULL);
+      INSERT INTO delegate_pricing_bundles VALUES (6,10);
+      INSERT INTO delegate_pricing_bundle_approvals VALUES (6,'awaiting_receipt',NULL,NULL,NULL,NULL);
+      INSERT INTO delegate_pricing_bundle_batches VALUES (6,100,5);
+    `);
+    expect((await f.list()).items[0].canCreate).toBe(false);
+    f.memory.exec("UPDATE emergency_pricing_bundles SET submittedAt='2026-11-08'");
+    const before = f.source();
+    expect((await f.list()).items[0].canCreate).toBe(true);
+    await f.service.save(actor(), input());
+    expect(f.note().createdById).toBe(10);
+    expect(f.source()).toBe(before);
+  });
+
   it("allows an existing explanation to remain visible and editable during the original window after purchase", async () => {
     const f = fixture(); await f.service.save(actor(), input()); f.memory.exec("UPDATE purchase_order_items SET status='purchased'");
     await f.service.save(actor(), input({ revision: 0, reason: "بانتظار استلام الشراء" })); f.setTime(7200000);

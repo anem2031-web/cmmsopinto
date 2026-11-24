@@ -5,13 +5,14 @@ import { canReviewPurchaseItem, isRoutedPurchaseItem, type PurchaseReviewActor, 
 type Actor = PurchaseReviewActor & { name?: string | null; signatureUrl?: string | null };
 type Item = PurchaseReviewItem & { id: number; purchaseOrderId: number; itemName: string; delegateId?: number | null; reviewerSignatureSnapshot?: string | null; [key: string]: any };
 type Order = { id: number; status: string; reviewedById?: number | null; reviewedAt?: Date | string | null; reviewerSignatureSnapshot?: string | null; [key: string]: any };
-export type PurchaseItemReviewDecision = { id: number; action: "approve" | "reject"; delegateId?: number; rejectionReason?: string };
+export type PurchaseItemReviewDecision = { id: number; action: "approve" | "reject"; delegateId?: number; rejectionReason?: string; emergencyPurchase?: boolean };
 export type PurchaseItemReviewPort = {
   lockOrder(id: number): Promise<Order | null>;
   readItems(id: number): Promise<Item[]>;
   readUsers(ids: number[]): Promise<Actor[]>;
   authorize(actor: Actor, order: Order, items: Item[]): Promise<void> | void;
   updateItem(item: Item, changes: Record<string, any>, actor: Actor): Promise<boolean>;
+  markEmergencyItem?(item: Item, actor: Actor): Promise<void>;
   updateOrder(id: number, changes: Record<string, any>): Promise<void>;
   audit(actor: Actor, order: Order, decisions: PurchaseItemReviewDecision[]): Promise<void>;
   now?(): Date;
@@ -48,6 +49,12 @@ export async function reviewRoutedPurchaseItems(
   await port.authorize(liveActor, order, selected);
   const decisions = input.items.map(decision => ({ ...decision, rejectionReason: decision.rejectionReason?.trim() }));
   for (const decision of decisions) {
+    if (decision.emergencyPurchase && decision.action !== "approve") {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "يمكن تحديد الشراء الطارئ للأصناف الموافق عليها فقط" });
+    }
+    if (decision.emergencyPurchase && !port.markEmergencyItem) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "مسار الشراء الطارئ غير متاح حاليًا" });
+    }
     if (decision.action === "approve") {
       const delegate = users.find(user => user.id === decision.delegateId);
       if (!delegate || !isDelegateRole(delegate.role) || !(delegate.isActive === 1 || delegate.isActive === true)) {
@@ -71,6 +78,7 @@ export async function reviewRoutedPurchaseItems(
     if (!await port.updateItem(item, changes, liveActor)) {
       throw new TRPCError({ code: "CONFLICT", message: `تغيّرت حالة الصنف "${item.itemName}" أثناء المراجعة؛ حدّث الصفحة` });
     }
+    if (decision.emergencyPurchase) await port.markEmergencyItem!(item, liveActor);
     const updated = { ...item, ...changes };
     byId.set(item.id, updated);
     if (decision.action === "approve") approvedItems.push(updated);

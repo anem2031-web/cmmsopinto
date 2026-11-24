@@ -88,6 +88,29 @@ describe("Transaction-bound subset review without changing unrelated workflow", 
     expect(f.port.authorize).toHaveBeenCalledWith(expect.objectContaining({ id: 11, signatureUrl: actor.signatureUrl }), expect.objectContaining({ id: 1 }), [expect.objectContaining({ id: 1 })]);
     expect(f.state.events[0].decisions).toEqual([approve(1)]);
   });
+  it("saves emergency priority only for marked approved lines in the same review transaction", async () => {
+    const f = fixture([item(1), item(2), item(3)]);
+    f.port.markEmergencyItem = vi.fn(async (row, reviewer) => {
+      expect(f.state.items.find((candidate: any) => candidate.id === row.id)).toMatchObject({ status: "pending", reviewedById: reviewer.id });
+      f.state.emergencyItems = [...(f.state.emergencyItems ?? []), row.id];
+    });
+    await f.run([{ ...approve(1), emergencyPurchase: true }, approve(2), { id: 3, action: "reject", rejectionReason: "غير مطلوب" }]);
+    expect(f.state.emergencyItems).toEqual([1]);
+    expect(f.port.markEmergencyItem).toHaveBeenCalledOnce();
+    expect(f.state.events[0].decisions[0]).toMatchObject({ id: 1, emergencyPurchase: true });
+    expect(f.state.events[0].decisions[1]).not.toHaveProperty("emergencyPurchase");
+  });
+  it("rejects unavailable emergency priority and rolls a later marker failure back", async () => {
+    const f = fixture([item(1), item(2)]);
+    await expect(f.run([{ ...approve(1), emergencyPurchase: true }])).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    expect(f.port.updateItem).not.toHaveBeenCalled();
+    f.port.markEmergencyItem = vi.fn(async () => { throw new Error("Urgent marker write failed"); });
+    await expect(f.run([approve(2), { ...approve(1), emergencyPurchase: true }])).rejects.toThrow("Urgent marker write failed");
+    expect(f.state.items.every((row: any) => row.status === "pending_review" && row.reviewedById == null)).toBe(true);
+    expect(f.state.events).toEqual([]);
+    await expect(f.run([{ id: 1, action: "reject", rejectionReason: "غير مطلوب", emergencyPurchase: true }])).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(f.port.markEmergencyItem).toHaveBeenCalledOnce();
+  });
   it("supports selected multiple items and loads actor/delegates once, not per item", async () => {
     const f = fixture(Array.from({ length: 20 }, (_, i) => item(i + 1)));
     await f.run(Array.from({ length: 20 }, (_, i) => approve(i + 1)));

@@ -7,6 +7,8 @@ import ar from "../../client/src/i18n/ar";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as review from "../../shared/purchase-item-review";
 import { isDelegateRole } from "../../shared/roles";
+import { comparePurchaseRequiredDates } from "../../shared/purchaseItemNeedDate";
+import { pricingBundleText } from "../../client/src/i18n/pricingBundles";
 import { defaultDelegateManagerId, reviewDelegateId, reviewBulkDelegateValue } from "../../client/src/lib/delegateReviewDefaults";
 
 function read(file: string) {
@@ -46,7 +48,7 @@ const frame = ({ children }: any) => <div>{children}</div>;
 function panel(h: any) {
   h.refresh();
   return evaluate(detail.panel, { ...h, isManager: ["admin", "owner", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager"].includes(h.user.role),
-    users: [{ id: 20, role: "delegate", name: "المندوب" }], t: ar, displayUnit: (v: string) => v, getField: (i: any, key: string) => i[key],
+    users: [{ id: 20, role: "delegate", name: "المندوب" }], t: ar, language: "ar", pricingBundleText, displayUnit: (v: string) => v, getField: (i: any, key: string) => i[key],
     Card: frame, CardHeader: frame, CardTitle: frame, CardContent: frame, Button: frame, Select: frame, SelectTrigger: frame, SelectValue: frame, SelectContent: frame, SelectItem: frame, Label: frame, Input: frame, Loader2: frame, CheckCircle2: frame });
 }
 function elements(tree: any, match: (node: any) => boolean): any[] {
@@ -113,6 +115,38 @@ describe("Routed purchase review UI, actual view expressions without API or envi
     const send = elements(panel(h), node => node.props?.className === "w-full gap-1.5")[0];
     expect(send.props.disabled).toBe(false); send.props.onClick();
     expect(mutate).toHaveBeenCalledWith({ poId: 10, items: [{ id: 2, action: "approve", delegateId: 20, rejectionReason: undefined }] });
+  });
+  it("marks one line but submits all approved decisions with one order-level action", () => {
+    const mutate = vi.fn(), items = [item(1), item(2)];
+    const h = scope(items, {
+      po: { id: 10, status: "pending_review", items, emergencyPurchaseEnabled: true },
+      selectedReviewItemIds: [1, 2],
+      reviewDecisions: { 1: { action: "approve", delegateId: 20 }, 2: { action: "approve", delegateId: 20 } },
+      reviewItemsMut: { isPending: false, mutate },
+    });
+    const [mark] = elements(panel(h), n => n.type === "input" && n.props?.type === "checkbox" && n.props?.checked === false);
+    mark.props.onChange({ currentTarget: { checked: true } });
+    expect(mutate).not.toHaveBeenCalled();
+    const [send] = elements(panel(h), n => n.props?.className === "w-full gap-1.5");
+    send.props.onClick();
+    expect(mutate).toHaveBeenCalledOnce();
+    expect(mutate).toHaveBeenCalledWith({ poId: 10, items: [
+      { id: 1, action: "approve", delegateId: 20, rejectionReason: undefined, emergencyPurchase: true },
+      { id: 2, action: "approve", delegateId: 20, rejectionReason: undefined },
+    ] });
+  });
+  it("prioritizes urgent delegate cards and keeps need-date ordering within each group", () => {
+    const rows = [
+      { id: 1, requiredDate: "2026-11-25" }, { id: 2, requiredDate: "2026-11-27", emergencyPurchase: true },
+      { id: 3, requiredDate: "2026-11-24" }, { id: 4, requiredDate: "2026-11-26", emergencyPurchase: true },
+    ];
+    const result = evaluate(listing.values.get("filteredDelegateActionableItems")!, {
+      useMemo: (fn: () => unknown) => fn(), delegateActionableItems: rows,
+      delegateItemsSearch: "", delegateActionFilter: "all", delegateCategoryFilter: "all",
+      delegateDateFilter: "all", matchesDelegateItemCategory: () => true, comparePurchaseRequiredDates,
+      delegateDateFrom: "", delegateDateTo: "", language: "ar",
+    });
+    expect(result.map((row: any) => row.id)).toEqual([4, 2, 3, 1]);
   });
   it("blocks empty selection and a selected rejection without a reason", () => {
     for (const extra of [{ selectedReviewItemIds: [] }, { selectedReviewItemIds: [1], reviewDecisions: { 1: { action: "reject", rejectionReason: " " } } }]) {
@@ -232,7 +266,7 @@ describe("Routed purchase review UI, actual view expressions without API or envi
     function find(node: ts.Node) {
       if (ts.isJsxExpression(node) && node.expression) {
         const expression = node.expression.getText(ast);
-        if (expression.startsWith('(role === "senior_management" || isAdminOrOwner) && batch.status')) batchAction = expression;
+        if (expression.includes("approveManagementBatchMut.mutate") && expression.includes('batch.status === "pending_management"')) batchAction = expression;
         if (expression.startsWith('(role === "senior_management" || isAdminOrOwner) &&') && expression.includes('po.status === "pending_management"')) parentAction = expression;
       }
       ts.forEachChild(node, find);
@@ -245,6 +279,7 @@ describe("Routed purchase review UI, actual view expressions without API or envi
     tree.props.onClick();
     expect(mutate).toHaveBeenCalledWith({ batchId: 3 });
     expect(evaluate(batchAction, { ...base, batch: { id: 4, status: "pending_accounting" } })).toBe(false);
+    expect(evaluate(batchAction, { ...base, batch: { ...base.batch, emergencyPurchase: true } })).toBe(false);
     expect(evaluate(parentAction, { ...base, pricingBatches: [base.batch], hasRoutedReview: false })).toBe(false);
     expect(evaluate(parentAction, { ...base, po: { status: "pending_management" }, pricingBatches: [base.batch], hasRoutedReview: false })).toBe(false);
     expect(evaluate(detail.values.get("canCancelItem")!, base)).toBe(false);

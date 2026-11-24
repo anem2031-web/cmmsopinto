@@ -4,6 +4,7 @@ import { ExternalWorkshopPricingFields, externalWorkshopForm, externalWorkshopIs
 import { externalMaintenanceLabels } from "@/i18n/externalMaintenanceFollowup";
 import { defaultDelegateManagerId, reviewDelegateId, reviewBulkDelegateValue } from "@/lib/delegateReviewDefaults";
 import { PricingBundleLink, PricingBundleAddButton } from "@/components/purchase/PricingBundleActions";
+import { pricingBundleText } from "@/i18n/pricingBundles";
 import { ReplacementRepriceButton } from "@/components/purchase/ReplacementRepriceButton";
 import { PurchaseOrderSourceReference } from "@/components/purchase/PurchaseOrderSourceReference";
 import { isDelegateOwnPurchaseDraft } from "@shared/purchaseDraftVisibility";
@@ -390,7 +391,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   const [delegateSelections, setDelegateSelections] = useState<Record<number, string>>({});
   const [editForm, setEditForm] = useState<{ itemName: string; description: string; quantity: number; estimatedUnitCost: string; unit: string; photoUrl: string; notes: string }>({ itemName: "", description: "", quantity: 1, estimatedUnitCost: "", unit: "", photoUrl: "", notes: "" });
   const showExternalEditWorkshop = !!editingItem && needsExternalWorkshop(editingItem) && !['approved', 'partial_purchase', 'purchased', 'received'].includes(po?.status || "");
-  const [reviewDecisions, setReviewDecisions] = useState<Record<number, { action: "approve" | "reject"; delegateId?: number; rejectionReason?: string }>>({});
+  const [reviewDecisions, setReviewDecisions] = useState<Record<number, { action: "approve" | "reject"; delegateId?: number; rejectionReason?: string; emergencyPurchase?: boolean }>>({});
   const [selectedReviewItemIds, setSelectedReviewItemIds] = useState<number[]>([]);
   const hasRoutedReview = (po?.items || []).some(isRoutedPurchaseItem);
   const routedReviewParentOpen = !!po && !["draft", "revision_needed", "closed", "rejected"].includes(po.status);
@@ -409,7 +410,7 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const handleBulkApprove = () => {
-    const newReviewDecisions: Record<number, { action: "approve" | "reject"; delegateId?: number; rejectionReason?: string }> = { ...reviewDecisions };
+    const newReviewDecisions = { ...reviewDecisions };
     if (selectedReviewItems.length > 0) {
       selectedReviewItems.forEach((item: any) => {
         newReviewDecisions[item.id] = { ...newReviewDecisions[item.id], action: "approve", delegateId: reviewDelegateId(item, newReviewDecisions[item.id], reviewFallbackDelegateId) };
@@ -607,8 +608,9 @@ const visibleItems = useMemo(() => {
       const needsEstimate =
         !item.batchId &&
         !item.delegateChangeRequestedAt &&
+        !item.emergencyPurchaseReady &&
         ["pending", "estimated"].includes(item.status);
-      const needsPurchase = ["approved", "funded"].includes(item.status);
+      const needsPurchase = item.emergencyPurchaseReady === true || ["approved", "funded"].includes(item.status);
 
       if (delegateActionView === "estimate") return needsEstimate;
       if (delegateActionView === "purchase") return needsPurchase;
@@ -1019,7 +1021,7 @@ const visibleItems = useMemo(() => {
             //     الصيانة لطلب تغيير مندوبه)، لمجرد أن الطلب العام تحوّل
             //     لـpending_accounting بسبب أصناف أخرى جاهزة.
             const itemBatch = item.batchId ? (pricingBatches as any[]).find((b: any) => b.id === item.batchId) : null;
-            const canRejectThisItem = isAccountant &&
+            const canRejectThisItem = isAccountant && !item.emergencyPurchase &&
               item.status !== "rejected" && item.status !== "cancelled" &&
               (
                 itemBatch?.status === "pending_accounting" ||
@@ -1043,13 +1045,16 @@ const visibleItems = useMemo(() => {
                     ? `border-primary ring-2 ring-primary/30 bg-primary/5 ${focusedItemAnimating ? "animate-pulse shadow-lg" : ""}`
                     : isCancelled
                       ? "opacity-60 bg-gray-50 border-gray-200"
-                      : "hover:border-primary/20"
+                      : item.emergencyPurchase
+                        ? "border-2 border-red-600 hover:border-red-700"
+                        : "hover:border-primary/20"
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <h4 className={`font-medium text-sm break-words ${isCancelled ? "line-through text-gray-400" : ""}`}>{getField(item, "itemName")}</h4>
+                      {item.emergencyPurchase && <Badge variant="destructive">{pricingBundleText[language].emergency}</Badge>}
                       <Badge className={`text-[10px] ${ITEM_STATUS_COLORS[item.status] || "bg-gray-100 text-gray-700"}`}>
                         {getPOItemStatusLabel(item.status)}
                       </Badge>
@@ -1110,7 +1115,7 @@ const visibleItems = useMemo(() => {
                   )}
                   {/* cancelled سجل نهائي مرجعي لا يظهر له تعديل حتى لـ owner/admin.
                       بقية الأصناف تبقى مقيدة بسياسة المرحلة/الملكية الحالية. */}
-                  {po && !isCancelledRaw && !routedInitialReviewBlocked && (
+                  {po && !isCancelledRaw && !routedInitialReviewBlocked && !(item.emergencyPurchase && item.batchId) && (
                     isAdminOrOwner ||
                     (
                       (
@@ -1127,7 +1132,7 @@ const visibleItems = useMemo(() => {
                     </Button>
                   )}
                   {/* Cancel button - for authorised roles, non-cancelled items */}
-                  {!routedInitialReviewBlocked && (routedReviewItem ? isAdminOrOwner || canReviewThisItem || role === "senior_management" && po.status === "pending_management" && item.status !== "pending_review" : canCancelItem) && !isCancelled && item.status !== "delivered_to_requester" && (
+                  {!routedInitialReviewBlocked && (routedReviewItem ? isAdminOrOwner || canReviewThisItem || role === "senior_management" && po.status === "pending_management" && item.status !== "pending_review" : canCancelItem) && !(item.emergencyPurchase && item.batchId) && !isCancelled && item.status !== "delivered_to_requester" && (
                     <Button
                       variant="ghost"
                       size="icon"
@@ -1268,12 +1273,12 @@ const visibleItems = useMemo(() => {
   </div>
 )}
 
-{isMyItem && item.status === "estimated" && !item.batchId && !item.delegateChangeRequestedAt && <PricingBundleAddButton itemId={item.id} />}
+{isMyItem && item.status === "estimated" && !item.batchId && !item.delegateChangeRequestedAt && <PricingBundleAddButton itemId={item.id} emergencyPurchase={item.emergencyPurchase === true} />}
 
 {isMyItem && item.status === "estimated" && !item.batchId && (
   <div className="bg-teal-50 border border-teal-200 rounded-lg p-2.5 flex items-center justify-between gap-2">
     <p className="text-xs text-teal-800 flex items-center gap-1.5">
-      <CheckCircle2 className="w-3.5 h-3.5" /> {t.workflow.purchase.pricedWaitingAccounting}
+      <CheckCircle2 className="w-3.5 h-3.5" /> {item.emergencyPurchase ? pricingBundleText[language].emergencyPriced : t.workflow.purchase.pricedWaitingAccounting}
     </p>
     <span className="text-xs font-bold text-teal-700">
       {Number(item.estimatedTotalCost || 0).toLocaleString(locale)} {currency}
@@ -1501,7 +1506,7 @@ const visibleItems = useMemo(() => {
   </div>
 )}
 
-                {isMyItem && item.status === "approved" && (
+                {isMyItem && (item.status === "approved" || (isDelegate && item.emergencyPurchaseReady === true)) && (
                   <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 space-y-3">
                     <p className="text-xs font-medium text-teal-800 flex items-center gap-1.5">
                       <ShoppingCart className="w-3.5 h-3.5" /> {t.purchaseOrders.confirmPurchase}:
@@ -1831,6 +1836,20 @@ const visibleItems = useMemo(() => {
                         {t.tickets.reject}
                       </Button>
                     </div>
+                    {po.emergencyPurchaseEnabled && (
+                      <label className="flex items-center gap-2 py-2 text-sm font-medium text-red-700 dark:text-red-400">
+                        <input
+                          type="checkbox"
+                          checked={decision.action === "approve" && decision.emergencyPurchase === true}
+                          disabled={decision.action !== "approve"}
+                          onChange={event => {
+                            const emergencyPurchase = event.currentTarget.checked;
+                            setReviewDecisions(prev => ({ ...prev, [item.id]: { ...prev[item.id], emergencyPurchase } }));
+                          }}
+                        />
+                        {pricingBundleText[language].emergency}
+                      </label>
+                    )}
                     {decision.action === "approve" && (
                       <div className="space-y-1">
                         <Label className="text-xs">{t.purchaseOrders.delegate} *</Label>
@@ -1870,6 +1889,7 @@ const visibleItems = useMemo(() => {
                       action: d.action as "approve" | "reject",
                       delegateId: d.action === "approve" ? reviewDelegateId(item, d, reviewFallbackDelegateId) : undefined,
                       rejectionReason: d.action === "reject" ? d.rejectionReason : undefined,
+                      ...(d.action === "approve" && d.emergencyPurchase ? { emergencyPurchase: true } : {}),
                     };
                   });
                   reviewItemsMut.mutate({ poId: po.id, items });
@@ -1895,6 +1915,7 @@ const visibleItems = useMemo(() => {
           return {
             ...batch,
             originalStatus: batch.status,
+            emergencyPurchase: batchItems.some((item: any) => item.emergencyPurchase),
             status: isAutoClosed ? "rejected" : batch.status,
             activeItemCount,
             isAutoClosed,
@@ -1923,6 +1944,7 @@ const visibleItems = useMemo(() => {
                       {t.workflow.purchase.batchNumber} {batch.batchNumber} — {batch.itemCount} {t.workflow.purchase.itemCount}
                       {batch.isAutoClosed ? ` — ${t.workflow.purchase.noActiveItems}` : ""}
                     </p>
+                    {batch.emergencyPurchase && <Badge variant="destructive">{pricingBundleText[language].emergency}</Badge>}
                     <p className="text-xs text-muted-foreground">
                       {t.workflow.purchase.total}: {Number(batch.totalEstimatedCost || 0).toLocaleString(locale)} {currency}
                     </p>
@@ -1941,6 +1963,7 @@ const visibleItems = useMemo(() => {
                     }
                   >
                     {batch.isAutoClosed ? t.workflow.purchase.cancelledAllItems :
+                     batch.status === "awaiting_receipt" ? pricingBundleText[language].emergencyAwaitingReceipt :
                      batch.status === "pending_accounting" ? t.workflow.purchase.accountingPending :
                      batch.status === "pending_management" ? t.workflow.purchase.managementPending :
                      batch.status === "approved" ? t.workflow.purchase.approved : t.workflow.purchase.rejected}
@@ -1991,7 +2014,16 @@ const visibleItems = useMemo(() => {
                   );
                 })()}
 
-                {isAccountant && batch.status === "pending_accounting" && batch.purchasePackageSubmissionId == null && (
+                {batch.emergencyPurchase && (
+                  (isAccountant && batch.status === "pending_accounting") ||
+                  ((role === "senior_management" || isAdminOrOwner) && batch.status === "pending_management")
+                ) && (
+                  <Button size="sm" variant="outline" className="self-start" onClick={() => setLocation("/delegate-pricing-bundles")}>
+                    {pricingBundleText[language].reviewEmergencyBundle}
+                  </Button>
+                )}
+
+                {!batch.emergencyPurchase && isAccountant && batch.status === "pending_accounting" && batch.purchasePackageSubmissionId == null && (
                   <div className="flex gap-2 items-end flex-wrap">
                     <div className="space-y-1">
                       <Label className="text-[11px] text-orange-700">{batch.replacementFunding ? "عهدة فرق سعر البديل" : t.workflow.purchase.custodyAmount} ({currency}) *</Label>
@@ -2044,8 +2076,8 @@ const visibleItems = useMemo(() => {
                 )}
 
 
-                <ReplacementRepriceButton batch={batch} onComplete={() => { refetch(); refetchBatches(); }} />
-                {(role === "senior_management" || isAdminOrOwner) && batch.status === "pending_management" && (
+                {!batch.emergencyPurchase && <ReplacementRepriceButton batch={batch} onComplete={() => { refetch(); refetchBatches(); }} />}
+                {!batch.emergencyPurchase && (role === "senior_management" || isAdminOrOwner) && batch.status === "pending_management" && (
                   <Button
                     size="sm"
                     className="bg-blue-600 hover:bg-blue-700 self-start"
@@ -2519,7 +2551,9 @@ const visibleItems = useMemo(() => {
                   rows={4}
                   className="resize-none"
                 />
-                <p className="text-[11px] text-muted-foreground">{t.purchaseOrders.cancelItemWillReturn}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {cancelPurchaseDialog.emergencyPurchase ? pricingBundleText[language].emergencyCancelFinal : t.purchaseOrders.cancelItemWillReturn}
+                </p>
               </div>
             </div>
           )}

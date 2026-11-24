@@ -27,12 +27,12 @@ export async function assertLegacyApprovalOutsideUnifiedBundle(
     await database.execute(sql`SELECT b.bundleNumber FROM delegate_pricing_bundle_approvals a
     JOIN delegate_pricing_bundles b ON b.id=a.bundleId JOIN delegate_pricing_bundle_batches l ON l.bundleId=a.bundleId
     WHERE ${scope.batchId ? sql`l.pricingBatchId=${scope.batchId}` : scope.submissionId ? sql`l.purchasePackageSubmissionId=${scope.submissionId}` : sql`l.purchaseOrderId=${scope.poId || 0}`}
-    AND ${scope.pendingOnly ? sql`a.status IN ('pending_accounting','pending_management')` : sql`1=1`} LIMIT 1`);
+    AND ${scope.pendingOnly ? sql`a.status IN ('awaiting_receipt','pending_accounting','pending_management')` : sql`1=1`} LIMIT 1`);
   if (!Array.isArray(rows)) throw Error("تعذر التحقق من نطاق اعتماد الحزمة");
   if (rows.length)
     throw new TRPCError({
       code: "CONFLICT",
-      message: `هذه الأصناف تُراجع من حزمة التسعير ${rows[0].bundleNumber}؛ افتح الحزمة للاعتماد أو رفض الصنف`,
+      message: `هذه الأصناف تُراجع من حزمة التسعير ${rows[0].bundleNumber}؛ افتح الحزمة لاتخاذ الإجراء`,
     });
 }
 

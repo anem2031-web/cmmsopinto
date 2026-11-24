@@ -23,6 +23,7 @@ import { businessRpcAllowed, canApprovePricingBundleStage } from "../../shared/b
 import { deriveRoutedPurchaseOrderStage, pendingPurchaseReviewCount } from "../../shared/purchaseItemReviewWorkflow";
 import { reviewRoutedPurchaseItems } from "../services/purchase-item-review";
 import { derivePathBTicketPurchaseStatus } from "../../shared/pathBPurchaseWorkflow";
+import { cancelEmergencyBundleItem, lockEmergencyBundleRootsForItems, syncEmergencyBundleReceipts } from "../services/emergency-purchases/service";
 const { DatabaseSync } = createRequire(import.meta.url)(
   "node:sqlite"
 ) as typeof import("node:sqlite");
@@ -53,7 +54,7 @@ const input = (n = 1) => ({
   notes: "ملاحظة الحزمة",
   rejections: [] as Array<{ itemId: number; reason: string }>,
 });
-function fixture() {
+function fixture(emergency = false) {
   vi.stubEnv("DELEGATE_PRICING_BUNDLE_APPROVALS_ENABLED", "true");
   const memory = new DatabaseSync(":memory:");
   closes.push(() => memory.close());
@@ -143,6 +144,24 @@ function fixture() {
   memory.exec(
     "INSERT INTO po_pricing_batches(id,purchaseOrderId,batchNumber,submittedById,status,itemCount,totalEstimatedCost) VALUES(99,103,99,11,'pending_accounting',1,'999'); INSERT INTO purchase_order_items VALUES(99,103,99,11,'Foreign item',1,'قطعة','999','999','estimated',NULL)"
   );
+  if (emergency) {
+    snapshot.emergencyPurchase = true;
+    memory.prepare("UPDATE delegate_pricing_bundles SET snapshotJson=? WHERE id=24").run(JSON.stringify(snapshot));
+    memory.exec(`
+      CREATE TABLE emergency_pricing_bundles(bundleId INTEGER PRIMARY KEY,openDelegateId INTEGER,submittedAt TEXT,cancelledAt TEXT,receivedItemCount INTEGER,requiredItemCount INTEGER);
+      CREATE TABLE emergency_purchase_items(purchaseOrderItemId INTEGER PRIMARY KEY,bundleId INTEGER,cancelledAt TEXT,cancelledById INTEGER,cancellationReason TEXT);
+      CREATE TABLE warehouse_receipt_items(id INTEGER PRIMARY KEY,receiptId INTEGER,purchaseOrderItemId INTEGER,receivedQuantity NUMERIC);
+      CREATE TABLE warehouse_receipts(id INTEGER PRIMARY KEY,status TEXT);
+      CREATE TABLE inventory_lots(id INTEGER PRIMARY KEY,receiptId INTEGER,receiptItemId INTEGER,purchaseOrderItemId INTEGER);
+      ALTER TABLE purchase_order_items ADD COLUMN purchasedAt TEXT;
+      ALTER TABLE purchase_order_items ADD COLUMN delegateChangeRequestedAt TEXT;
+      INSERT INTO emergency_pricing_bundles VALUES(24,NULL,'2026-11-24',NULL,0,8);
+      INSERT INTO emergency_purchase_items (purchaseOrderItemId,bundleId) SELECT id,24 FROM purchase_order_items WHERE id<>99;
+      UPDATE delegate_pricing_bundle_approvals SET status='awaiting_receipt' WHERE bundleId=24;
+      UPDATE delegate_pricing_bundle_batches SET purchasePackageSubmissionId=NULL WHERE bundleId=24;
+      UPDATE po_pricing_batches SET status='awaiting_receipt',purchasePackageSubmissionId=NULL WHERE id IN (11,12,13);
+    `);
+  }
   const dialect = new MySqlDialect();
   const queries: Array<{ sql: string; params: any[] }> = [];
   let chain = Promise.resolve();
@@ -151,8 +170,12 @@ function fixture() {
       const query = dialect.sqlToQuery(statement);
       const text = query.sql.replace(/ FOR UPDATE/g, "");
       queries.push({ sql: text, params: query.params });
-      if (text.includes("information_schema.TABLES"))
+      if (text.includes("information_schema.TABLES")) {
+        if (text.includes("emergency_purchase_items")) {
+          return [emergency ? [{TABLE_NAME:"emergency_purchase_items"}, {TABLE_NAME:"emergency_pricing_bundles"}] : [], []];
+        }
         return [[{ TABLE_NAME: "delegate_pricing_bundle_approvals" }], []];
+      }
       const prepared = memory.prepare(text);
       return /^SELECT\b/i.test(text.trim())
         ? [prepared.all(...(query.params as any[])), []]
@@ -336,11 +359,11 @@ describe("Senior management DPB accounting is an explicit separate stage", () =>
   });
   it("bounds senior accounting queue reads and does not retain actor/scope decisions across requests", async () => {
     const f = fixture(); realVisibility(f);
-    expect((await f.service.queue(management, 0, "accounting")).items).toHaveLength(1); expect(f.queries).toHaveLength(5);
-    expect((await f.service.queue(management, 0, "accounting")).items).toHaveLength(1); expect(f.queries).toHaveLength(10);
+    expect((await f.service.queue(management, 0, "accounting")).items).toHaveLength(1); expect(f.queries).toHaveLength(6);
+    expect((await f.service.queue(management, 0, "accounting")).items).toHaveLength(1); expect(f.queries).toHaveLength(12);
     f.memory.exec("DELETE FROM users WHERE id=8");
     await expect(f.service.queue(management, 0, "accounting")).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(f.queries).toHaveLength(11);
+    expect(f.queries).toHaveLength(13);
     const g = fixture(); realVisibility(g);
     await expect(g.service.queue(accountant, 0, "management")).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(caller(g).approvalQueue({ stage: "invented" } as any)).rejects.toMatchObject({ code: "BAD_REQUEST" });
@@ -787,7 +810,7 @@ describe("Unified DPB approval is atomic while item workflow links remain indepe
     });
     expect(await visible()).toHaveLength(1);
   });
-  it("uses DPB approval ownership for the real PDF service, including rejected child batches, while retaining the delegate bytes and fresh parent denial", async () => {
+  it("enforces original PDF ownership and shares the completed financial PDF with approval roles", async () => {
     const f = fixture();
     await f.service.approve(accountant, "accounting", {
       ...input(),
@@ -807,9 +830,9 @@ describe("Unified DPB approval is atomic while item workflow links remain indepe
       signature: async (source: string | null) =>
         source ? "data:" + source : "",
     } as any);
-    await expect(
-      pdf.pdf({ ...accountant, id: 99 }, 24, true)
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const otherAccountant = { ...accountant, id: 99 };
+    await expect(pdf.pdf(otherAccountant, 24)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(pdf.pdf(otherAccountant, 24, true)).resolves.toMatchObject({ name: f.snapshot.number + ".pdf" });
     const result = await pdf.pdf(management, 24, true);
     expect(result.name).toBe(f.snapshot.number + ".pdf");
     expect(render.mock.calls[0][0].approvedTotal).toBe("2325.00");
@@ -821,10 +844,8 @@ describe("Unified DPB approval is atomic while item workflow links remain indepe
       ).toString()
     ).toBe("%PDF-delegate-original");
     f.memory.exec("DELETE FROM po_pricing_batches WHERE id=13");
-    await expect(pdf.pdf(management, 24, true)).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
-    expect(render).toHaveBeenCalledTimes(1);
+    await expect(pdf.pdf(management, 24, true)).rejects.toThrow("اكتمال اعتماد الإدارة العليا");
+    expect(render).toHaveBeenCalledTimes(2);
   });
   it("rolls back every earlier item, batch, signature and balance if a later item writer fails", async () => {
     const f = fixture();
@@ -970,9 +991,9 @@ describe("Unified DPB approval is atomic while item workflow links remain indepe
     expect(queue.items).toHaveLength(1);
     expect(queue.items[0].orderIds).toEqual([101, 102, 103]);
     expect(queue.items[0].coveredOrderIds).toEqual([101, 102]);
-    expect(f.queries).toHaveLength(4);
+    expect(f.queries).toHaveLength(5);
     await f.service.queue(accountant);
-    expect(f.queries).toHaveLength(8);
+    expect(f.queries).toHaveLength(10);
     f.memory.exec("DELETE FROM purchase_orders WHERE id=103");
     expect((await f.service.queue(accountant)).items).toEqual([]);
     f.ports.database = async () => ({
@@ -1223,7 +1244,7 @@ describe("Unified DPB approval is atomic while item workflow links remain indepe
     const result = await f.service.queue(accountant);
     expect(result.items).toHaveLength(50);
     expect(result.nextId).toBe(148);
-    expect(f.queries).toHaveLength(6);
+    expect(f.queries).toHaveLength(7);
     expect(
       f.queries
         .filter(
@@ -1235,7 +1256,7 @@ describe("Unified DPB approval is atomic while item workflow links remain indepe
     ).toBe(true);
     expect(f.guards).toHaveBeenCalledTimes(1);
     expect((await f.service.queue(accountant, 148)).items).toHaveLength(1);
-    expect(f.queries).toHaveLength(10);
+    expect(f.queries).toHaveLength(12);
     expect(f.guards).toHaveBeenCalledTimes(2);
     f.memory.exec("UPDATE purchase_orders SET requestedById=666 WHERE id=103");
     expect(
@@ -1316,5 +1337,89 @@ describe("Unified DPB approval is atomic while item workflow links remain indepe
       "dpb_approval:999999999999999999",
     ])
       expect(pricingBundleApprovalNotificationPath(value)).toBeNull();
+  });
+});
+
+describe("emergency pricing bundle preserves purchase/warehouse execution", () => {
+  const allIds = [1, 2, 3, 4, 5, 6, 7, 8];
+  const confirmed = (f: ReturnType<typeof fixture>, itemIds: number[]) => f.database.transaction(async tx => {
+    await lockEmergencyBundleRootsForItems(tx, itemIds);
+    for (const itemId of itemIds) {
+      await tx.execute(sql`INSERT INTO warehouse_receipts VALUES(${itemId},'confirmed')`);
+      await tx.execute(sql`INSERT INTO warehouse_receipt_items VALUES(${itemId},${itemId},${itemId},1)`);
+      await tx.execute(sql`INSERT INTO inventory_lots VALUES(${itemId},${itemId},${itemId},${itemId})`);
+      await tx.execute(sql`UPDATE purchase_order_items SET status='delivered_to_warehouse' WHERE id=${itemId}`);
+    }
+    await syncEmergencyBundleReceipts(tx, itemIds);
+  });
+
+  it("shows first confirmed receipt to accounting and waits for every item before approvals", async () => {
+    const f = fixture(true);
+    await f.database.execute(sql`UPDATE purchase_orders SET status='received' WHERE id=101`);
+    await f.database.execute(sql`UPDATE purchase_order_items SET status='delivered_to_warehouse' WHERE id=1`);
+    expect((await f.service.queue(accountant)).items).toEqual([]);
+    await confirmed(f, [1]);
+    const first = await f.service.queue(accountant);
+    expect(first.items).toHaveLength(1);
+    expect(first.items[0]).toMatchObject({ emergencyPurchase: true, status: "awaiting_receipt", approvalReady: false, receivedItemCount: 1, requiredItemCount: 8 });
+    await expect(f.service.approve(accountant, "accounting", input())).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(f.service.detail(management, 24, "accounting")).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await Promise.all([confirmed(f, [2, 3, 4]), confirmed(f, [5, 6, 7, 8])]);
+    const ready = (await f.service.queue(accountant)).items[0];
+    expect(ready).toMatchObject({ emergencyPurchase: true, status: "pending_accounting", approvalReady: true, receivedItemCount: 8, requiredItemCount: 8 });
+    await expect(f.service.approve(accountant, "accounting", { ...input(2), revision: ready.revision, rejections: [{ itemId: 1, reason: "رفض غير مسموح" }] })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    const accounting = await f.service.approve(accountant, "accounting", { ...input(3), revision: ready.revision });
+    const managementResult = await f.service.approve(management, "management", { ...input(4), revision: accounting.revision });
+    expect(managementResult.status).toBe("approved");
+    expect(allIds.map(id => f.get("purchase_order_items", id).status)).toEqual(allIds.map(() => "delivered_to_warehouse"));
+    expect(f.get("purchase_orders", 101).status).toBe("received");
+    expect(f.get("purchase_order_items", 99).status).toBe("estimated");
+  });
+
+  it("keeps canceled members in the frozen snapshot and omits a fully canceled bundle from finance", async () => {
+    const f = fixture(true);
+    await f.database.transaction(async tx => {
+      await lockEmergencyBundleRootsForItems(tx, allIds);
+      for (const itemId of allIds) {
+        await cancelEmergencyBundleItem(tx, itemId, 11, "تعذر الشراء من المورد");
+        await tx.execute(sql`UPDATE purchase_order_items SET status='cancelled' WHERE id=${itemId}`);
+      }
+      await syncEmergencyBundleReceipts(tx, allIds);
+    });
+    const [sidecar] = await f.database.execute(sql`SELECT cancelledAt,requiredItemCount FROM emergency_pricing_bundles WHERE bundleId=24`);
+    expect((sidecar as any[])[0]).toMatchObject({ cancelledAt: expect.any(String), requiredItemCount: 0 });
+    expect(f.get("delegate_pricing_bundle_approvals", 24)).toMatchObject({
+      status: "awaiting_receipt", accountingApprovedById: null, managementApprovedById: null,
+    });
+    expect((await f.service.queue(accountant)).items).toEqual([]);
+    await expect(f.service.approve(accountant, "accounting", input())).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(JSON.parse(f.get("delegate_pricing_bundles", 24).snapshotJson).rows).toHaveLength(8);
+  });
+
+  it("serializes a final receipt with pre-purchase cancellations and excludes canceled items from totals", async () => {
+    const f = fixture(true);
+    await confirmed(f, [1, 2, 3, 4, 5, 6]);
+    await Promise.all([
+      f.database.transaction(async tx => {
+        await lockEmergencyBundleRootsForItems(tx, [8]);
+        await cancelEmergencyBundleItem(tx, 8, 11, "تعذر شراء الصنف");
+        await tx.execute(sql`UPDATE purchase_order_items SET status='cancelled' WHERE id=8`);
+        await syncEmergencyBundleReceipts(tx, [8]);
+      }),
+      confirmed(f, [7]),
+    ]);
+    const ready = (await f.service.queue(accountant)).items[0];
+    expect(ready).toMatchObject({ status: "pending_accounting", receivedItemCount: 7, requiredItemCount: 7 });
+    const detail = await f.service.detail(accountant, 24, "accounting");
+    expect(detail.items.find((row: any) => row.id === 8)).toMatchObject({ currentStatus: "cancelled", emergencyCancellationReason: "تعذر شراء الصنف" });
+    const accounting = await f.service.approve(accountant, "accounting", { ...input(2), revision: ready.revision });
+    await f.service.approve(management, "management", { ...input(3), revision: accounting.revision });
+    expect(f.get("purchase_order_items", 8).status).toBe("cancelled");
+    const snapshot = JSON.parse(f.get("delegate_pricing_bundles", 24).snapshotJson);
+    const pdf = await approvedBundleSnapshot(f.database, { id: 24 }, snapshot, async () => "");
+    expect(pdf.emergencyPurchase).toBe(true);
+    expect(pdf.rows.find(row => row.id === 8)?.emergencyCancellationReason).toBe("تعذر شراء الصنف");
+    expect(pdf.approvedTotal).toBe("2400.00");
   });
 });

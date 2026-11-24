@@ -6,6 +6,8 @@ import { computePurchaseOrderPhases } from "../services/reports/purchaseCyclePha
 import { readScopeChunks } from "../_core/authz/read-batch";
 import { isRoutedPurchaseItem } from "../../shared/purchase-item-review";
 import { readAccountingSignature, captureAccountingSignature } from "../services/pdf/accountingSignature";
+import { sql } from "drizzle-orm";
+import { MySqlDialect } from "drizzle-orm/mysql-core";
 
 function functionSource(file: string, name: string) {
   const ast = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
@@ -13,19 +15,20 @@ function functionSource(file: string, name: string) {
   return ts.transpileModule(`(${node.getText(ast).replace(/^export /, "")})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 }
 const renderer = functionSource("server/services/export/exportService.ts", "generatePurchaseRequestPDF");
-function renderFixture(items: any[], reviewerRows = [{ id: 201, name: "Actual construction reviewer" }, { id: 202, name: "Actual senior reviewer" }]) {
+function renderFixture(items: any[], reviewerRows = [{ id: 201, name: "Actual construction reviewer" }, { id: 202, name: "Actual senior reviewer" }], emergency = false) {
   let html = ""; const reads: number[][] = [], writes = vi.fn(), images = vi.fn(async (source: string | null) => source ? `data:image/png;base64,${source}` : "");
+  const emergencyRead = vi.fn(async () => [[{ present: 1 }], []]);
   const db = { getPurchaseOrderById: async () => ({ id: 10, poNumber: "PR-10", requestedById: 100, reviewedById: 999, reviewerSignatureSnapshot: "WRONG-HEADER-SIGNATURE" }), getPOItems: async () => items,
     getPOPricingBatchById: async () => ({ id: 5, purchaseOrderId: 10, submittedById: 11, accountingApprovedById: 44, accountingSignatureSnapshot: captureAccountingSignature({ id: 44, name: "Senior management acting in accounting", signatureUrl: "captured-accounting" }), managementApprovedById: 44, delegateSignatureSnapshot: "delegate" }),
     getUserById: async (id: number) => { if (id === 999) throw Error("Unselected header reviewer must not be loaded"); return { id, name: `User ${id}`, role: id === 11 ? "delegate" : "senior_management", signatureUrl: `CURRENT-PROFILE-${id}` }; },
-    getDb: async () => ({ select: () => ({ from: () => ({ where: async (ids: number[]) => { reads.push(ids); return reviewerRows.filter(row => ids.includes(row.id)); } }) }) }), updatePurchaseOrder: writes,
+    getDb: async () => ({ execute: emergencyRead, select: () => ({ from: () => ({ where: async (ids: number[]) => { reads.push(ids); return reviewerRows.filter(row => ids.includes(row.id)); } }) }) }), updatePurchaseOrder: writes,
   };
   const render = vm.runInNewContext(renderer, { db, isRoutedPurchaseItem, readScopeChunks, inArray: (_: any, ids: number[]) => ids, users: { id: "id", name: "name" }, getSignatureDataUrl: images, readAccountingSignature,
-    replacementDocumentForBatch: async () => [],
+    replacementDocumentForBatch: async () => [], sql, emergencyPurchaseTablesAvailable: async () => emergency,
     escapeHtml: (value: any) => String(value).replaceAll("<", "&lt;"), fmtSAR: (value: number) => value.toFixed(2), amountToArabicCurrencyPhrase: String,
     htmlToPdf: async (value: string) => { html = value; return Buffer.from("%PDF-test"); },
   });
-  return { render, html: () => html, reads, images, writes };
+  return { render, html: () => html, reads, images, writes, emergencyRead };
 }
 const row = (id: number, extra: any = {}) => ({ id, purchaseOrderId: 10, itemName: `Item ${id}`, quantity: 1, unit: "قطعة", estimatedUnitCost: "10", estimatedTotalCost: "10", status: "estimated", delegateId: 11, batchId: 5, reviewRole: "construction_procurement_manager", reviewedById: 201, reviewedAt: "2026-11-03T08:00:00Z", reviewerSignatureSnapshot: "CAPTURED-201", ...extra });
 
@@ -40,6 +43,49 @@ describe("Routed purchase reviewer metadata without live database or environment
     expect(f.reads).toEqual([[201, 202]]);
     expect(f.writes.mock.calls.some(([, data]) => "reviewerSignatureSnapshot" in data)).toBe(false);
     expect(f.html().match(/>مراجع الطلب<\/td>/g)).toHaveLength(2);
+  });
+  it("marks direct PDF exports belonging to an emergency bundle using only the authorized pricing batch", async () => {
+    const normal = renderFixture([row(1)]);
+    const urgent = renderFixture([row(1)], undefined, true);
+    await normal.render(10, 44, 5);
+    await urgent.render(10, 44, 5);
+    expect(normal.html()).not.toContain(">شراء طارئ</span>");
+    expect(normal.emergencyRead).not.toHaveBeenCalled();
+    expect(urgent.html()).toContain(">شراء طارئ</span>");
+    const query = new MySqlDialect().sqlToQuery(urgent.emergencyRead.mock.calls[0][0]);
+    expect(query.sql).toContain("JOIN emergency_pricing_bundles");
+    expect(query.params).toEqual([5]);
+  });
+  it("labels approved emergency exclusions as pre-purchase cancellations and preserves their estimated amounts", async () => {
+    const f = renderFixture([]);
+    await f.render(10, 11, undefined, undefined, {
+      number: "DPB-2026-000024",
+      submittedAt: "2026-11-03T09:00:00Z",
+      delegate: { id: 11, name: "Delegate", signature: "" },
+      rows: [
+        row(1, { poNumber: "PR-10" }),
+        row(2, {
+          poNumber: "PR-10",
+          emergencyCancellationReason: "تعذر شراء الصنف <من المورد>",
+          approvalRejectionReason: "Should not be shown as a financial rejection",
+        }),
+      ],
+      signatures: [],
+      emergencyPurchase: true,
+      approvedTotal: "10.00",
+      financialApprovals: [{
+        reference: "DPB-2026-000024", poNumbers: ["PR-10"],
+        accountingName: "Accountant", accountingAt: "2026-11-03T10:00:00Z", accountingSignature: "",
+        managementName: "Manager", managementAt: "2026-11-03T11:00:00Z",
+        custodyLabel: "Custody", custodyValue: "0", notes: "",
+      }],
+    });
+    expect(f.html()).toContain(">شراء طارئ</span>");
+    expect(f.html()).toContain("أُلغي قبل الشراء: تعذر شراء الصنف &lt;من المورد>");
+    expect(f.html()).toContain("إجمالي الأصناف المعتمدة بعد استبعاد الإلغاءات");
+    expect(f.html()).toContain("استُلمت الأصناف المعتمدة بالمستودع قبل الاعتماد المالي");
+    expect(f.html()).not.toContain("Should not be shown as a financial rejection");
+    expect(f.html()).not.toContain("قرارات الرفض");
   });
   it("denies missing routed review decisions and missing reviewer records instead of borrowing the header actor", async () => {
     const missing = renderFixture([row(1, { reviewedAt: null })]); await expect(missing.render(10, 44, 5)).rejects.toThrow("توثيق");

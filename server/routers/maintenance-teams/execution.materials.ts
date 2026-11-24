@@ -1,6 +1,7 @@
 import { selectFullIssueLots, type WarehouseLotOption, type WarehouseLotSelection } from "../../../shared/warehouse-lot-selection";
 import { sql } from "drizzle-orm";
 import { filterSpecificationLots } from "../../services/purchase-specification-guards";
+import { loadEmergencyItemStates } from "../../services/emergency-purchases/service";
 import {
   TeamTicketError,
   type Snapshot,
@@ -592,6 +593,7 @@ export class ProductionMaterialGateway implements MaterialGateway {
       s => s.kind === "purchase" && s.sourceId === input.sourceId
     );
     const need = link && this.state.needs.find(n => n.id === link.needId);
+    const state = (await loadEmergencyItemStates(this.tx, [input.sourceId])).get(input.sourceId);
     if (
       !r ||
       !link ||
@@ -602,15 +604,10 @@ export class ProductionMaterialGateway implements MaterialGateway {
       r.unit !== need.unit ||
       Number(r.quantity) < link.quantity ||
       ["rejected", "cancelled", "purchase_cancelled"].includes(r.status) ||
-      [
-        "draft",
-        "pending_review",
-        "pending_estimate",
-        "pending_accounting",
-        "pending_management",
-        "rejected",
-        "revision_needed",
-      ].includes(r.poStatus)
+      ["draft", "rejected", "revision_needed"].includes(r.poStatus) ||
+      (state
+        ? !state.approved
+        : ["pending_review", "pending_estimate", "pending_accounting", "pending_management"].includes(r.poStatus))
     )
       throw new TeamTicketError(
         "CONFLICT",

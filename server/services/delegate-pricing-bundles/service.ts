@@ -6,13 +6,14 @@ import { assertBundleItemEligible, canReadPricingBundles, PRICING_BUNDLE_LIMIT, 
 import { hasOwnPurchaseDocumentApproval, isPurchasePdfApprover, PURCHASE_PDF_APPROVAL_MESSAGE } from "../../_core/authz/purchase-document";
 import { documentDayBoundary, documentSearchPattern, type DocumentListPageInput } from "../../../shared/document-list";
 import { supplierReturnDatabaseEnabled } from "../../supplier-return-followup/feature";
-import { approvedBundleCondition, approvedBundleSnapshot } from "./approved-document";
+import { approvedBundleCondition, approvedBundleSnapshot, withEmergencyCancellations } from "./approved-document";
 import { initializeUnifiedApproval, unifiedBundleApprovalsEnabled } from "./unified-feature";
 import type { UnifiedApprovalPorts } from "./unified-approval";
 import { isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
+import { emergencyItemIds, loadEmergencyBundleStates } from "../emergency-purchases/service";
 export interface PricingBundlePorts {
   database(): Promise<any>;
-  submitPO(poId: number, actor: PricingBundleActor, options: { selectedItemIds: number[]; tx: any; purchasePackageSubmissionId?: number; skipArchive: true; bundleId: number; delegateSignatureSnapshot?: string | null }): Promise<any>;
+  submitPO(poId: number, actor: PricingBundleActor, options: { selectedItemIds: number[]; tx: any; purchasePackageSubmissionId?: number; skipArchive: true; bundleId: number; emergencyPurchase?: true; delegateSignatureSnapshot?: string | null }): Promise<any>;
   createPackageSubmission(packageId: number, actorId: number, tx: any): Promise<{ id: number } | null>;
   render(snapshot: PricingBundleSnapshot): Promise<Buffer>;
   fixedApprovedPdf?(database: any, bundle: { id: number; bundleNumber: string }, approved: PricingBundleSnapshot): Promise<Buffer | null>;
@@ -38,7 +39,8 @@ export class PricingBundleService {
     const [bundle] = await rows(tx, sql`SELECT id,bundleNumber,delegateId,status,revision,createdAt,sentAt,effectsDone FROM delegate_pricing_bundles WHERE id=${id} ${lock ? sql`FOR UPDATE` : sql``}`);
     if (!bundle) fail("حزمة التسعير غير موجودة", "NOT_FOUND");
     if (isDelegateRole(actor.role) && Number(bundle.delegateId) !== actor.id) fail("الحزمة لا تخصك", "FORBIDDEN");
-    return bundle;
+    const emergency = (await loadEmergencyBundleStates(tx, [id])).get(id);
+    return emergency ? { ...bundle, ...emergency } : bundle;
   }
   private async approvalRows(database: any, ids: number[]) {
     if (!ids.length) return [];
@@ -98,13 +100,14 @@ export class PricingBundleService {
   }
   async list(actor: PricingBundleActor) {
     this.read(actor);
-    const bundles = await rows(await this.ports.database(), sql`SELECT b.id,b.bundleNumber,b.delegateId,b.status,b.revision,b.createdAt,b.sentAt,b.effectsDone,u.name AS delegateName,
+    const database = await this.ports.database();
+    const bundles = await rows(database, sql`SELECT b.id,b.bundleNumber,b.delegateId,b.status,b.revision,b.createdAt,b.sentAt,b.effectsDone,u.name AS delegateName,
       (SELECT COUNT(*) FROM delegate_pricing_bundle_items i WHERE i.bundleId=b.id AND i.removedAt IS NULL) AS itemCount,
       (SELECT SUM(p.estimatedTotalCost) FROM delegate_pricing_bundle_items i INNER JOIN purchase_order_items p ON p.id=i.purchaseOrderItemId WHERE i.bundleId=b.id AND i.removedAt IS NULL) AS openTotal,
       JSON_EXTRACT(b.snapshotJson,'$.rows[*].estimatedTotalCost') AS sentTotals,
       JSON_EXTRACT(b.snapshotJson,'$.rows[*].purchaseOrderId') AS sentOrderIds,JSON_EXTRACT(b.snapshotJson,'$.rows[*].poNumber') AS sentOrderNumbers
       FROM delegate_pricing_bundles b INNER JOIN users u ON u.id=b.delegateId WHERE ${isDelegateRole(actor.role) ? sql`b.delegateId=${actor.id}` : isPurchasePdfApprover(actor) ? sql`b.status IN ('sent','archived')` : sql`1=1`} ORDER BY b.id DESC LIMIT 200`);
-    return this.presentList(actor, bundles);
+    return this.presentList(database, actor, bundles);
   }
   /** Document center only: sent archive, filters and pagination before approval hydration. */
   async listPage(actor: PricingBundleActor, input: DocumentListPageInput) {
@@ -132,23 +135,27 @@ export class PricingBundleService {
       JSON_EXTRACT(b.snapshotJson,'$.rows[*].purchaseOrderId') AS sentOrderIds,JSON_EXTRACT(b.snapshotJson,'$.rows[*].poNumber') AS sentOrderNumbers
       FROM delegate_pricing_bundles b INNER JOIN users u ON u.id=b.delegateId WHERE ${where}
       ORDER BY COALESCE(b.sentAt,b.createdAt) ${direction},b.id ${direction} LIMIT ${input.pageSize} OFFSET ${(page - 1) * input.pageSize}`);
-    return { rows: await this.presentList(actor, bundles, true), total, page, pageSize: input.pageSize,
+    return { rows: await this.presentList(database, actor, bundles, true), total, page, pageSize: input.pageSize,
       count: delegates.reduce((n: number, row: any) => n + Number(row.count), 0),
       delegates: delegates.map((row: any) => ({ id: Number(row.delegateId), name: row.delegateName })) };
   }
-  private async presentList(actor: PricingBundleActor, bundles: any[], approvedDocuments = false) {
+  private async presentList(database: any, actor: PricingBundleActor, bundles: any[], approvedDocuments = false) {
     const visible = isPurchasePdfApprover(actor) ? bundles.filter((bundle: any) => ["sent", "archived"].includes(bundle.status)) : bundles;
     // listPage filters the complete membership through approvedBundleCondition before
     // pagination. Its final financial rendition is shared by the two approval roles;
     // the ordinary pricing list and the delegate's frozen PDF retain exact-actor rules.
     const completedForRole = approvedDocuments && isPurchasePdfApprover(actor);
-    const approvals = isPurchasePdfApprover(actor) && !completedForRole ? await this.approvalRows(await this.ports.database(), visible.map((bundle: any) => Number(bundle.id))) : [];
+    const visibleIds = visible.map((bundle: any) => Number(bundle.id));
+    const [approvals, emergency] = await Promise.all([
+      isPurchasePdfApprover(actor) && !completedForRole ? this.approvalRows(database, visibleIds) : [],
+      loadEmergencyBundleStates(database, visibleIds),
+    ]);
     return visible.map(({ openTotal, sentTotals, sentOrderIds, sentOrderNumbers, ...bundle }: any) => {
       const totals = sentTotals == null ? null : json(sentTotals);
       const total = bundle.status === "open" ? Number(openTotal || 0) : Array.isArray(totals) && totals.length > 0 ? totals.reduce((sum: number, value: unknown) => sum + Math.round(Number(value) * 100), 0) / 100 : null;
       const ids = sentOrderIds == null ? [] : json(sentOrderIds), numbers = sentOrderNumbers == null ? [] : json(sentOrderNumbers);
       const purchaseOrders = Array.isArray(ids) ? Array.from(new Map(ids.map((id: any, i: number) => [Number(id), { id: Number(id), poNumber: numbers?.[i] || `PR-${id}` }])).values()) : [];
-      return { ...bundle, total: total != null && Number.isFinite(total) ? total : null, purchaseOrders,
+      return { ...bundle, ...emergency.get(Number(bundle.id)), total: total != null && Number.isFinite(total) ? total : null, purchaseOrders,
         ...(completedForRole ? { pdfAllowed: true, pdfBlockedReason: null } : this.permission(actor, bundle, purchaseOrders.map((order: any) => order.id), approvals)) };
     });
   }
@@ -162,12 +169,13 @@ export class PricingBundleService {
       for (const link of links) items.push(this.snapshotRow(await this.source(tx, Number(link.purchaseOrderItemId))));
     } else {
       const [stored] = await rows(tx, sql`SELECT snapshotJson FROM delegate_pricing_bundles WHERE id=${id}`);
-      items = (json(stored.snapshotJson) as PricingBundleSnapshot).rows;
+      const snapshot = json(stored.snapshotJson) as PricingBundleSnapshot;
+      items = (await withEmergencyCancellations(tx, bundle, snapshot)).rows;
     }
     // Never disclose PDF bytes/keys or signature snapshots in read DTOs (observer included).
     const [person] = await rows(tx, sql`SELECT name FROM users WHERE id=${bundle.delegateId}`);
     const approvals = isPurchasePdfApprover(actor) ? await this.approvalRows(tx, [id]) : [];
-    return { ...bundle, delegateName: person?.name || "—", items, total: items.reduce((sum, item) => sum + Math.round(Number(item.estimatedTotalCost) * 100), 0) / 100,
+    return { ...bundle, delegateName: person?.name || "—", items, total: items.filter(item => !item.emergencyCancellationReason).reduce((sum, item) => sum + Math.round(Number(item.estimatedTotalCost) * 100), 0) / 100,
       ...this.permission(actor, bundle, items.map(item => Number(item.purchaseOrderId)), approvals) };
   }
   async add(actor: PricingBundleActor, itemId: number) {
@@ -177,16 +185,33 @@ export class PricingBundleService {
       const item = await this.source(tx, itemId, true); this.eligible(item, actor.id);
       const [existing] = await rows(tx, sql`SELECT bundleId FROM delegate_pricing_bundle_items WHERE reservedItemId=${itemId} FOR UPDATE`);
       if (existing) { await this.header(tx, actor, Number(existing.bundleId)); return { id: Number(existing.bundleId) }; }
-      let [bundle] = await rows(tx, sql`SELECT id,bundleNumber FROM delegate_pricing_bundles WHERE openDelegateId=${actor.id} FOR UPDATE`);
+      const emergencyPurchase = (await emergencyItemIds(tx, [itemId])).has(itemId);
+      let [bundle] = emergencyPurchase
+        ? await rows(tx, sql`SELECT bundleId AS id FROM emergency_pricing_bundles WHERE openDelegateId=${actor.id} FOR UPDATE`)
+        : await rows(tx, sql`SELECT id,bundleNumber FROM delegate_pricing_bundles WHERE openDelegateId=${actor.id} FOR UPDATE`);
       if (!bundle) {
-        await tx.execute(sql`INSERT INTO delegate_pricing_bundles (delegateId,openDelegateId,status) VALUES (${actor.id},${actor.id},'open')`);
-        [bundle] = await rows(tx, sql`SELECT id FROM delegate_pricing_bundles WHERE openDelegateId=${actor.id}`);
+        if (emergencyPurchase) {
+          const [created] = await tx.execute(sql`INSERT INTO delegate_pricing_bundles (delegateId,openDelegateId,status)
+            VALUES (${actor.id},NULL,'open')`);
+          if (!Number.isSafeInteger(Number(created?.insertId)) || Number(created.insertId) <= 0) fail("تعذر إنشاء الحزمة الطارئة");
+          bundle = { id: Number(created.insertId) };
+          await tx.execute(sql`INSERT INTO emergency_pricing_bundles (bundleId,openDelegateId)
+            VALUES (${bundle.id},${actor.id})`);
+        } else {
+          await tx.execute(sql`INSERT INTO delegate_pricing_bundles (delegateId,openDelegateId,status) VALUES (${actor.id},${actor.id},'open')`);
+          [bundle] = await rows(tx, sql`SELECT id FROM delegate_pricing_bundles WHERE openDelegateId=${actor.id}`);
+        }
         const number = `DPB-${new Intl.DateTimeFormat("en", { year: "numeric", timeZone: "Asia/Riyadh" }).format(new Date())}-${String(bundle.id).padStart(6, "0")}`;
         await tx.execute(sql`UPDATE delegate_pricing_bundles SET bundleNumber=${number} WHERE id=${bundle.id}`);
       }
       const [{ count }] = await rows(tx, sql`SELECT COUNT(*) AS count FROM delegate_pricing_bundle_items WHERE bundleId=${bundle.id} AND removedAt IS NULL`);
-      if (Number(count) >= PRICING_BUNDLE_LIMIT) fail("اكتمل الحد الأقصى للحزمة (20 صنفًا)؛ أرسلها للحسابات", "CONFLICT");
+      if (Number(count) >= PRICING_BUNDLE_LIMIT) fail("اكتمل الحد الأقصى للحزمة (20 صنفًا)؛ أرسل الحزمة الحالية", "CONFLICT");
       await tx.execute(sql`INSERT INTO delegate_pricing_bundle_items (bundleId,purchaseOrderItemId,reservedItemId) VALUES (${bundle.id},${itemId},${itemId})`);
+      if (emergencyPurchase) {
+        const [binding] = await tx.execute(sql`UPDATE emergency_purchase_items SET bundleId=${bundle.id}
+          WHERE purchaseOrderItemId=${itemId} AND bundleId IS NULL AND cancelledAt IS NULL`);
+        if (Number(binding?.affectedRows) !== 1) fail("تعذر ربط الصنف بالحزمة الطارئة", "CONFLICT");
+      }
       await tx.execute(sql`UPDATE delegate_pricing_bundles SET revision=revision+1 WHERE id=${bundle.id}`);
       await this.audit(tx, actor.id, Number(bundle.id), "pricing_bundle_item_added", { itemId });
       return { id: Number(bundle.id) };
@@ -200,6 +225,11 @@ export class PricingBundleService {
       const [link] = await rows(tx, sql`SELECT id FROM delegate_pricing_bundle_items WHERE bundleId=${id} AND purchaseOrderItemId=${itemId} AND removedAt IS NULL FOR UPDATE`);
       if (!link) fail("الصنف لا ينتمي إلى هذه الحزمة", "NOT_FOUND");
       await tx.execute(sql`UPDATE delegate_pricing_bundle_items SET reservedItemId=NULL,removedAt=CURRENT_TIMESTAMP WHERE id=${link.id}`);
+      if (bundle.emergencyPurchase) {
+        const [binding] = await tx.execute(sql`UPDATE emergency_purchase_items SET bundleId=NULL
+          WHERE purchaseOrderItemId=${itemId} AND bundleId=${id} AND cancelledAt IS NULL`);
+        if (Number(binding?.affectedRows) !== 1) fail("تعذر فصل الصنف من الحزمة الطارئة", "CONFLICT");
+      }
       await tx.execute(sql`UPDATE delegate_pricing_bundles SET revision=revision+1 WHERE id=${id}`);
       await this.audit(tx, actor.id, id, "pricing_bundle_item_returned", { itemId });
       return { success: true };
@@ -208,6 +238,18 @@ export class PricingBundleService {
   private async snapshot(tx: any, actor: PricingBundleActor, bundle: any) {
     const links = await rows(tx, sql`SELECT purchaseOrderItemId FROM delegate_pricing_bundle_items WHERE bundleId=${bundle.id} AND removedAt IS NULL ORDER BY purchaseOrderItemId FOR UPDATE`);
     if (links.length === 0 || links.length > PRICING_BUNDLE_LIMIT) fail("الحزمة يجب أن تحتوي من 1 إلى 20 صنفًا");
+    const memberIds = links.map(link => Number(link.purchaseOrderItemId));
+    const marked = await emergencyItemIds(tx, memberIds);
+    if (bundle.emergencyPurchase ? marked.size !== memberIds.length : marked.size !== 0) {
+      fail("لا يمكن خلط الأصناف العادية والطارئة في حزمة واحدة", "CONFLICT");
+    }
+    if (bundle.emergencyPurchase) {
+      const bound = await rows(tx, sql`SELECT purchaseOrderItemId FROM emergency_purchase_items
+        WHERE bundleId=${Number(bundle.id)} AND cancelledAt IS NULL FOR UPDATE`);
+      if (bound.length !== memberIds.length || bound.some(row => !memberIds.includes(Number(row.purchaseOrderItemId)))) {
+        fail("ارتباط أصناف الحزمة الطارئة غير مكتمل", "CONFLICT");
+      }
+    }
     const items: PricingBundleRow[] = [];
     const sources = new Map<number, any>();
     for (const link of links) { const item = await this.source(tx, Number(link.purchaseOrderItemId), true); this.eligible(item, Number(bundle.delegateId)); sources.set(Number(item.id), item); items.push(this.snapshotRow(item)); }
@@ -255,7 +297,7 @@ export class PricingBundleService {
         return { ...signature, requesterSignature, reviewerSignature };
       })),
     ]);
-    return { number: bundle.bundleNumber, submittedAt: new Date().toISOString(), delegate: { id: Number(delegate.id), name: delegate.name || "—", signature: delegateSignature, signatureSource: delegate.signatureUrl || null }, rows: items, signatures: frozenSignatures, ...(routedItems.length ? { reviewSignatureVersion: 2 as const } : {}) } satisfies PricingBundleSnapshot;
+    return { number: bundle.bundleNumber, submittedAt: new Date().toISOString(), delegate: { id: Number(delegate.id), name: delegate.name || "—", signature: delegateSignature, signatureSource: delegate.signatureUrl || null }, rows: items, signatures: frozenSignatures, ...(bundle.emergencyPurchase ? { emergencyPurchase: true as const } : {}), ...(routedItems.length ? { reviewSignatureVersion: 2 as const } : {}) } satisfies PricingBundleSnapshot;
   }
   async send(actor: PricingBundleActor, id: number, revision: number) {
     this.write(actor);
@@ -269,7 +311,7 @@ export class PricingBundleService {
       // aggregate custody writer instead, so reject that combination before
       // creating any accounting submission.
       const packagedOrderIds = Array.from(new Set(snapshot.rows.filter(item => item.packageId != null).map(item => item.purchaseOrderId)));
-      if (packagedOrderIds.length) {
+      if (packagedOrderIds.length && !snapshot.emergencyPurchase) {
         const [database] = await rows(tx, sql`SELECT DATABASE() AS databaseName`);
         if (supplierReturnDatabaseEnabled(database?.databaseName)) {
           const replacements = await rows(tx, sql`SELECT purchaseOrderId FROM supplier_return_replacement_plans
@@ -280,7 +322,7 @@ export class PricingBundleService {
       const compensations: NonNullable<PricingBundleSnapshot["compensations"]> = [];
       // Freeze the document inputs atomically with accounting; PDF rendering is deferred to download.
       const submissions = new Map<number, number>();
-      for (const packageId of Array.from(new Set(snapshot.rows.map(item => item.packageId).filter((v): v is number => v != null))).sort((a,b) => a-b)) {
+      for (const packageId of snapshot.emergencyPurchase ? [] : Array.from(new Set(snapshot.rows.map(item => item.packageId).filter((v): v is number => v != null))).sort((a,b) => a-b)) {
         await rows(tx, sql`SELECT id FROM purchase_packages WHERE id=${packageId} FOR UPDATE`);
         const submission = await this.ports.createPackageSubmission(packageId, actor.id, tx);
         if (!submission) throw new TRPCError({ code: "BAD_REQUEST", message: "تعذر إنشاء دفعة الحزمة الأصلية" });
@@ -296,7 +338,7 @@ export class PricingBundleService {
         } else {
           await tx.execute(sql`UPDATE purchase_orders SET requesterSignatureSnapshot=COALESCE(NULLIF(requesterSignatureSnapshot,''),${signature.requesterSource ?? null}),reviewerSignatureSnapshot=COALESCE(NULLIF(reviewerSignatureSnapshot,''),${signature.reviewerSource ?? null}) WHERE id=${poId}`);
         }
-        const batch = await this.ports.submitPO(poId, actor, { selectedItemIds: items.map(item => item.id), tx, purchasePackageSubmissionId: submissionId, skipArchive: true, bundleId: id, delegateSignatureSnapshot: snapshot.delegate.signatureSource });
+        const batch = await this.ports.submitPO(poId, actor, { selectedItemIds: items.map(item => item.id), tx, purchasePackageSubmissionId: submissionId, skipArchive: true, bundleId: id, ...(snapshot.emergencyPurchase ? { emergencyPurchase: true as const } : {}), delegateSignatureSnapshot: snapshot.delegate.signatureSource });
         if (!batch.batchId || batch.itemCount !== items.length) fail("لم تتطابق دفعة الحسابات مع أصناف الحزمة", "CONFLICT");
         if (batch.replacementCompensation) compensations.push(batch.replacementCompensation);
         await tx.execute(sql`INSERT INTO delegate_pricing_bundle_batches (bundleId,purchaseOrderId,pricingBatchId,purchasePackageSubmissionId) VALUES (${id},${poId},${batch.batchId},${submissionId ?? null})`);
@@ -305,7 +347,18 @@ export class PricingBundleService {
       await tx.execute(sql`UPDATE delegate_pricing_bundles SET status='archived',openDelegateId=NULL,sentAt=CURRENT_TIMESTAMP,revision=revision+1,snapshotJson=${JSON.stringify(compensations.length ? { ...snapshot, compensations } : snapshot)},pdfContent=NULL WHERE id=${id}`);
       await this.audit(tx, actor.id, id, "pricing_bundle_sent", { itemIds: snapshot.rows.map(item => item.id) });
       await this.audit(tx, actor.id, id, "pricing_bundle_archived", { automatic: true });
-      await initializeUnifiedApproval(tx,id);
+      if (snapshot.emergencyPurchase) {
+        if (!unifiedBundleApprovalsEnabled()) fail("يلزم تفعيل الاعتماد الموحد لإرسال الحزمة الطارئة", "CONFLICT");
+        await tx.execute(sql`UPDATE emergency_pricing_bundles
+          SET openDelegateId=NULL,submittedAt=CURRENT_TIMESTAMP,requiredItemCount=${snapshot.rows.length}
+          WHERE bundleId=${id}`);
+        await tx.execute(sql`UPDATE delegate_pricing_bundle_batches SET effectsDone=1 WHERE bundleId=${id}`);
+        await tx.execute(sql`UPDATE delegate_pricing_bundles SET effectsDone=1 WHERE id=${id}`);
+        await tx.execute(sql`INSERT INTO delegate_pricing_bundle_approvals (bundleId,status,sendEffectsDone)
+          VALUES (${id},'awaiting_receipt',1)`);
+      } else {
+        await initializeUnifiedApproval(tx,id);
+      }
     });
     // Durable per-PO finalization retries existing notifications/audit/ticket sync, never accounting submission.
     try { return {success:true,effectsDone:await this.finish(actor,id)}; }
@@ -326,7 +379,10 @@ export class PricingBundleService {
         await tx.execute(sql`UPDATE delegate_pricing_bundles SET effectsDone=1 WHERE id=${id}`); return true;
       } catch (error) { console.error("[PricingBundle] linked workflow finalization requires retry", error); return false; }
     });
-    if(unifiedBundleApprovalsEnabled()&&this.ports.finishUnifiedSend)await this.ports.finishUnifiedSend(actor,id);
+    if (unifiedBundleApprovalsEnabled() && this.ports.finishUnifiedSend) {
+      const database = await this.ports.database();
+      if (!(await loadEmergencyBundleStates(database, [id])).has(id)) await this.ports.finishUnifiedSend(actor,id);
+    }
     return done;
   }
   async pdf(actor: PricingBundleActor, id: number, approvedDocument = false) {
@@ -357,6 +413,13 @@ export class PricingBundleService {
       const approved = await approvedBundleSnapshot(database, bundle, snapshot, source => this.ports.signature(source));
       const fixed = await this.ports.fixedApprovedPdf?.(database, bundle, approved);
       const pdf = this.checkedPdf(fixed ?? await this.ports.render(approved));
+      return { name: `${bundle.bundleNumber}.pdf`, content: pdf.toString("base64") };
+    }
+    if (bundle.emergencyPurchase) {
+      const [stored] = await rows(database, sql`SELECT snapshotJson FROM delegate_pricing_bundles WHERE id=${id}`);
+      const snapshot = this.readSnapshot(stored?.snapshotJson, bundle);
+      if (!snapshot.emergencyPurchase) fail("لقطة الحزمة الطارئة غير مكتملة");
+      const pdf = this.checkedPdf(await this.ports.render(await withEmergencyCancellations(database, bundle, snapshot)));
       return { name: `${bundle.bundleNumber}.pdf`, content: pdf.toString("base64") };
     }
     let pending = this.pendingPdfs.get(id);

@@ -9,7 +9,8 @@ import type { InventoryBookExportFilters } from "../../../shared/inventory-expor
 import { appendInventoryBookSheet } from "./inventoryBookExcel";
 import { isRoutedPurchaseItem } from "../../../shared/purchase-item-review";
 import { readScopeChunks } from "../../_core/authz/read-batch";
-import { inArray } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
+import { emergencyPurchaseTablesAvailable } from "../emergency-purchases/service";
 import { users } from "../../../drizzle/schema";
 
 // ============================================================
@@ -950,7 +951,8 @@ export async function generatePurchaseRequestPDF(
       poNumber: item.__poNumber ?? po.poNumber,
       sectionName: item.sectionName || "—",
       supplierName: item.supplierName || "—",
-      approvalRejectionReason:bundleSnapshot?item.approvalRejectionReason:null,
+      approvalRejectionReason: bundleSnapshot ? item.approvalRejectionReason : null,
+      emergencyCancellationReason: bundleSnapshot?.emergencyPurchase ? item.emergencyCancellationReason : null,
     };
   });
 
@@ -979,21 +981,34 @@ export async function generatePurchaseRequestPDF(
   // في الوضع العادي لا يُضاف إطلاقًا، فيبقى المستند مطابقًا لما هو عليه اليوم.
   const isMultiOrderDoc = !!packageSubmissionId || !!bundleSnapshot;
   const showBundleSection = !!bundleSnapshot && !isApprovedBundle;
-  const hasRejectedQuoteTotal = bundleSnapshot?.approvedTotal != null && Number(bundleSnapshot.approvedTotal) !== grandTotal;
+  const hasAdjustedQuoteTotal = bundleSnapshot?.approvedTotal != null && Number(bundleSnapshot.approvedTotal) !== grandTotal;
 
-  const rowsHtml = rows.map(r => `
+  const rowsHtml = rows.map(r => {
+    const decision = r.emergencyCancellationReason
+      ? `أُلغي قبل الشراء: ${escapeHtml(r.emergencyCancellationReason)}`
+      : r.approvalRejectionReason ? `غير معتمد: ${escapeHtml(r.approvalRejectionReason)}` : "";
+    return `
       <tr>
         <td>${r.serial}</td>
         ${isMultiOrderDoc ? `<td class="po-number-cell"><span class="po-number-fit"><span class="po-number-text">${escapeHtml(r.poNumber)}</span></span></td>` : ""}
-        <td style="text-align: right;">${escapeHtml(r.itemName)}${showBundleSection ? `<small style="display:block;">المورد: ${escapeHtml(r.supplierName)}</small>` : ""}${r.approvalRejectionReason?`<small style="display:block;color:#b91c1c;">غير معتمد: ${escapeHtml(r.approvalRejectionReason)}</small>`:""}</td>
+        <td style="text-align: right;">${escapeHtml(r.itemName)}${showBundleSection ? `<small style="display:block;">المورد: ${escapeHtml(r.supplierName)}</small>` : ""}${decision ? `<small style="display:block;color:#b91c1c;">${decision}</small>` : ""}</td>
         ${showBundleSection ? `<td>${escapeHtml(r.sectionName)}</td>` : ""}
         <td>${r.qty}</td>
         <td>${escapeHtml(r.unit)}</td>
         <td>${r.unitCost > 0 ? fmtSAR(r.unitCost) + " ر.س" : "—"}</td>
         <td>${fmtSAR(r.rowTotal)} ر.س</td>
-      </tr>`).join("");
+      </tr>`;
+  }).join("");
 
   const compensationDb = !bundleSnapshot && batchId && !packageSubmissionId ? await db.getDb() : null;
+  let emergencyPurchase = bundleSnapshot?.emergencyPurchase === true;
+  if (compensationDb && batchId && await emergencyPurchaseTablesAvailable(compensationDb)) {
+    const [matches] = await compensationDb.execute(sql`SELECT 1 FROM delegate_pricing_bundle_batches l
+      JOIN emergency_pricing_bundles e ON e.bundleId=l.bundleId
+      WHERE l.pricingBatchId=${batchId} LIMIT 1`);
+    if (!Array.isArray(matches)) throw new Error("تعذر التحقق من تصنيف مستند الشراء");
+    emergencyPurchase = matches.length > 0;
+  }
   const compensationRows = bundleSnapshot?.compensations ?? (compensationDb && batchId
     ? await replacementDocumentForBatch(compensationDb, batchId, purchaseOrderId) : []);
   const supplierCreditsUsed = compensationRows.reduce((sum, item) => sum + Number(item.creditAllocated), 0);
@@ -1120,6 +1135,7 @@ export async function generatePurchaseRequestPDF(
     <div class="header-container">
         <div class="company-name">شركة تولان الدولية</div>
         <div class="doc-title">طلب مشتريات وصرف عهدة مالية</div>
+        ${emergencyPurchase ? '<span style="color:#991b1b;border:1px solid #991b1b;border-radius:4px;padding:1px 8px;font-weight:bold;margin-inline-start:6px;">شراء طارئ</span>' : ""}
     </div>
 
     <div class="meta-grid">
@@ -1138,7 +1154,7 @@ export async function generatePurchaseRequestPDF(
         <div class="meta-col">
             <div class="info-card">
                 <div class="info-row">
-                    <div class="info-label">${hasRejectedQuoteTotal?'إجمالي التسعير الأصلي:':'المبلغ الإجمالي:'}</div>
+                    <div class="info-label">${hasAdjustedQuoteTotal?'إجمالي التسعير الأصلي:':'المبلغ الإجمالي:'}</div>
                     <div class="info-value" style="font-weight: bold; color: #2b6cb0;">${fmtSAR(grandTotal)} ر.س</div>
                 </div>
             </div>
@@ -1171,11 +1187,15 @@ export async function generatePurchaseRequestPDF(
         </tbody>
     </table>
 
-    ${hasRejectedQuoteTotal?`<div class="info-card" style="margin-bottom:8px;">إجمالي الأصناف المعتمدة بعد قرارات الرفض: <strong>${fmtSAR(Number(bundleSnapshot!.approvedTotal))} ر.س</strong></div>`:""}
+    ${hasAdjustedQuoteTotal ? `<div class="info-card" style="margin-bottom:8px;">${emergencyPurchase ? "إجمالي الأصناف المعتمدة بعد استبعاد الإلغاءات" : "إجمالي الأصناف المعتمدة بعد قرارات الرفض"}: <strong>${fmtSAR(Number(bundleSnapshot!.approvedTotal))} ر.س</strong></div>` : ""}
     ${compensationHtml}
 
     <div class="declaration-box">
-        ☑ نحن الموقعين أدناه نؤكد بأن هذه الأصناف لا توجد بالمستودع (خاص بكادر المشتريات).
+        ${emergencyPurchase
+          ? isApprovedBundle || batch?.status === "approved"
+            ? "استُلمت الأصناف المعتمدة بالمستودع قبل الاعتماد المالي."
+            : "يُستكمل الاعتماد المالي بعد استلام الأصناف بالمستودع."
+          : "☑ نحن الموقعين أدناه نؤكد بأن هذه الأصناف لا توجد بالمستودع (خاص بكادر المشتريات)."}
     </div>
 
     <div class="section-title">مسار الاعتماد والتوقيعات</div>

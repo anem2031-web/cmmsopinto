@@ -40,6 +40,10 @@ export function purchaseSpecificationsDatabase() {
       .replace(/ON DUPLICATE KEY UPDATE lastNumber = lastNumber \+ 1/i, "ON CONFLICT(year) DO UPDATE SET lastNumber = lastNumber + 1");
     const params = raw.params.map(parameter);
     queries.push({ sql: raw.sql, params });
+    if (/FROM information_schema\.TABLES/i.test(text)) return [
+      memory.prepare("SELECT name AS TABLE_NAME FROM sqlite_master WHERE type='table' AND name IN ('emergency_purchase_items','emergency_pricing_bundles')").all(),
+      [],
+    ];
     const prepared = memory.prepare(text);
     if (/^\s*(SELECT|WITH)\b/i.test(text)) return [prepared.all(...params), []];
     const result = prepared.run(...params);
