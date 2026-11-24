@@ -180,7 +180,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "master-data",
     labelKey: "nav.sections.masterData",
     icon: Building2,
-    roles: ["supervisor","warehouse","maintenance_manager","general_maintenance_manager","construction_procurement_manager","senior_management","owner","admin"],
+    roles: ["supervisor","warehouse","maintenance_manager","general_maintenance_manager","construction_procurement_manager","it_manager","senior_management","owner","admin"],
     items: [
       { icon: MapPin,    labelKey: "nav.sites",        path: "/sites",
         roles: ["owner","admin","maintenance_manager","general_maintenance_manager","construction_procurement_manager"] },
