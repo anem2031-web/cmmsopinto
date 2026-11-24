@@ -20,7 +20,7 @@ export default function TeamTicketExecutionPage() {
   const assignmentId = Number(new URLSearchParams(search).get("teamExecution"));
   const allowed = user?.isActive === 1 && canReadTicketTeamExecution(user.role);
   const technician = user?.role === "technician";
-  const queue = trpc.ticketTeamAssignments.queue.useQuery({ language }, {
+  const queue = trpc.ticketTeamAssignments.queue.useQuery({ language, assignmentId }, {
     enabled:
       !!allowed && Number.isSafeInteger(assignmentId) && assignmentId > 0,
     retry: false,

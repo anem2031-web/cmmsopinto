@@ -1,3 +1,4 @@
+import { ticketTeamListInput } from "../../../shared/maintenance-team-tickets/list";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { router, protectedProcedure } from "../_shared/procedures";
@@ -19,12 +20,16 @@ export function createTicketTeamAssignmentRouter(service: TicketTeamAssignmentSe
   return router({
     candidates: protectedProcedure.query(({ ctx }) => result(() => service.candidates(actor(ctx)))),
     queue: protectedProcedure
-      .input(z.object({ language: z.enum(["ar", "en", "ur"]) }).strict().optional())
+      .input(z.object({ language: z.enum(["ar", "en", "ur"]), assignmentId: z.number().int().positive().optional() }).strict().optional())
       .query(({ ctx, input }) => result(async () => {
         const currentActor = actor(ctx);
-        const tickets = await service.queue(currentActor);
+        const tickets = await (input?.assignmentId == null ? service.queue(currentActor) : service.queue(currentActor, input.assignmentId));
         return input ? localizeTeamTicketQueue(tickets, input.language) : tickets;
       })),
+    list: protectedProcedure.input(ticketTeamListInput).query(({ ctx, input }) => result(async () => {
+      const page = await service.list(actor(ctx), input);
+      return { ...page, items: await localizeTeamTicketQueue(page.items, input.language) };
+    })),
     warehouseRequests: protectedProcedure.input(z.object({ search: z.string().max(200).optional() }).optional()).query(({ ctx, input }) => result(() => service.warehouseRequests(actor(ctx), input?.search))),
     assign: protectedProcedure.input(z.object({ ticketId: z.number().int().positive(), taskId: z.number().int().positive(), teamId: z.number().int().positive(), inspectionMinutes: z.number().int().min(1).max(525600) }).strict())
       .mutation(({ ctx, input }) => result(() => service.assign(actor(ctx), input))),

@@ -1,3 +1,5 @@
+import { loadTicketTeamList } from "./assignment-list";
+import type { TicketTeamListInput } from "../../../shared/maintenance-team-tickets/list";
 import { sql, type SQL } from "drizzle-orm";
 import { ticketExecutionSession } from "../../../shared/maintenance-team-tickets/execution-session";
 import { TeamTicketError } from "../../../shared/maintenance-team-tickets/model";
@@ -267,9 +269,13 @@ export class SqlTicketTeamAssignmentRepository implements TeamAssignmentReposito
       )
     ).map(team);
   }
+  async list(actor: TeamManagementActor, input: TicketTeamListInput) {
+    const { db } = await this.load();
+    return loadTicketTeamList(db, actor, input);
+  }
   async queue(
     actor: TeamManagementActor,
-    options: { materialsOnly?: boolean; search?: string } = {}
+    options: { materialsOnly?: boolean; search?: string; assignmentId?: number } = {}
   ): Promise<AssignedTeamTicket[]> {
     const { db } = await this.load();
     const scope = ticketTeamQueueScope(actor);
@@ -282,9 +288,11 @@ export class SqlTicketTeamAssignmentRepository implements TeamAssignmentReposito
     const searchScope = options.materialsOnly && options.search?.trim()
       ? sql` AND (a.ticketNumber LIKE ${term} ESCAPE '!' OR a.titleSnapshot LIKE ${term} ESCAPE '!' OR t.name LIKE ${term} ESCAPE '!' OR w.nameAr LIKE ${term} ESCAPE '!' OR s.name LIKE ${term} ESCAPE '!' OR c.name LIKE ${term} ESCAPE '!' OR k.description LIKE ${term} ESCAPE '!' OR EXISTS (SELECT 1 FROM ticket_team_material_needs searchNeed LEFT JOIN users searchUser ON searchUser.id=searchNeed.requestedById WHERE searchNeed.assignmentId=a.id AND (searchNeed.itemNameSnapshot LIKE ${term} ESCAPE '!' OR searchNeed.unitSnapshot LIKE ${term} ESCAPE '!' OR searchUser.name LIKE ${term} ESCAPE '!')))`
       : sql``;
+    const selectionScope = options.assignmentId == null ? sql`` : sql` AND a.ticketId=(
+      SELECT selected.ticketId FROM ticket_team_assignments selected WHERE selected.id=${options.assignmentId})`;
     const tickets = rows(
       await db.execute(
-        sql`SELECT a.id AS assignmentId,a.ticketId,a.ticketNumber,a.titleSnapshot AS title,a.teamId,t.name AS teamName,w.nameAr AS warehouseName,a.stage,k.status AS sourceStatus,s.name AS siteName,c.name AS sectionName,k.description FROM ticket_team_assignments a INNER JOIN maintenance_teams t ON t.id=a.teamId INNER JOIN tickets k ON k.id=a.ticketId INNER JOIN ticket_items i ON i.id=a.ticketItemId AND i.ticketId=a.ticketId LEFT JOIN warehouses w ON w.id=a.warehouseId LEFT JOIN sites s ON s.id=a.siteId LEFT JOIN sections c ON c.id=a.sectionId WHERE ${scope}${materialScope}${searchScope} ORDER BY a.createdAt DESC,a.id DESC LIMIT 200`
+        sql`SELECT a.id AS assignmentId,a.ticketId,a.ticketNumber,a.titleSnapshot AS title,a.teamId,t.name AS teamName,w.nameAr AS warehouseName,a.stage,k.status AS sourceStatus,s.name AS siteName,c.name AS sectionName,k.description FROM ticket_team_assignments a INNER JOIN maintenance_teams t ON t.id=a.teamId INNER JOIN tickets k ON k.id=a.ticketId INNER JOIN ticket_items i ON i.id=a.ticketItemId AND i.ticketId=a.ticketId LEFT JOIN warehouses w ON w.id=a.warehouseId LEFT JOIN sites s ON s.id=a.siteId LEFT JOIN sections c ON c.id=a.sectionId WHERE ${scope}${materialScope}${searchScope}${selectionScope} ORDER BY a.createdAt DESC,a.id DESC LIMIT 200`
       )
     ).map(r => ({
       ...r,

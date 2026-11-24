@@ -94,7 +94,7 @@ const warehouseQueries = [
   ...paths("transfers", "listCards getBatchDetail"),
   ...paths("purchaseOrders", "pendingDeliveryItems inventoryReadyForDelivery pendingPurchaseItems pendingWarehouseItems searchItemNames trackItem"),
   ...paths("operationalIssues", "status list detail availability itemUnits choices preparationOptions stockChoices preparedSelection"),
-  ...paths("ticketTeamAssignments", "queue warehouseRequests"),
+  ...paths("ticketTeamAssignments", "queue list warehouseRequests"),
   ...paths("ticketTeamExecution", "details balances searchMaterialIdentityCandidates preview catalog warehouseTicket"),
   ...paths("pmv2.warehouse", "waitingMaterialQueue searchMaterialIdentityCandidates readyToIssueQueue pendingReturns"),
   ...paths("pscmFulfillment", "ready recipients"),

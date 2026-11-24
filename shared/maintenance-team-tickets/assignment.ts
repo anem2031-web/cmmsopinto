@@ -1,5 +1,6 @@
 import type { TeamManagementActor } from "./team-management";
 import type { Stage } from "./model";
+import type { TicketTeamListInput, TicketTeamListResult } from "./list";
 
 export interface TeamAssignmentInput {
   ticketId: number;
@@ -55,6 +56,11 @@ export interface AssignedTeamTicket {
   siteName: string;
   sectionName: string;
   description: string;
+  responsibleDepartment?: string;
+  parentTicketNumber?: string | null;
+  siteId?: number;
+  sectionId?: number;
+  assignedAt?: string;
   executionInProgress?: boolean;
   hasOpenVisit?: boolean;
   reportMedia?: TicketReportMedia[];
@@ -100,6 +106,7 @@ export interface TeamAssignmentRepository {
   candidates(): Promise<AssignmentTeam[]>;
   queue(
     actor: TeamManagementActor,
-    options?: { materialsOnly?: boolean; search?: string }
+    options?: { materialsOnly?: boolean; search?: string; assignmentId?: number }
   ): Promise<AssignedTeamTicket[]>;
+  list?(actor: TeamManagementActor, input: TicketTeamListInput): Promise<TicketTeamListResult>;
 }

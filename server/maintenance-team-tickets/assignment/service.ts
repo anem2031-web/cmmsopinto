@@ -1,3 +1,4 @@
+import { ticketTeamListInput, type TicketTeamListInput } from "../../../shared/maintenance-team-tickets/list";
 import { TeamTicketError } from "../../../shared/maintenance-team-tickets/model";
 import { canAssignTicketTeams, type TeamManagementActor } from "../../../shared/maintenance-team-tickets/team-management";
 import { canReadTicketTeamExecution } from "../../../shared/maintenance-team-tickets/execution-permissions";
@@ -12,9 +13,14 @@ export class TicketTeamAssignmentService {
     this.manager(actor);
     return (await this.repository.candidates()).filter(t => t.active && t.warehouseActive && t.warehouseType === "branch" && t.memberCount > 0);
   }
-  async queue(actor: TeamManagementActor) {
+  async queue(actor: TeamManagementActor, assignmentId?: number) {
     if (!actor.active || !canReadTicketTeamExecution(actor.role)) throw new TeamTicketError("FORBIDDEN", "ليس لديك صلاحية لعرض تذاكر الفريق");
-    return this.repository.queue(actor);
+    return assignmentId == null ? this.repository.queue(actor) : this.repository.queue(actor, { assignmentId });
+  }
+  async list(actor: TeamManagementActor, input: TicketTeamListInput) {
+    if (!actor.active || !canReadTicketTeamExecution(actor.role)) throw new TeamTicketError("FORBIDDEN", "ليس لديك صلاحية لعرض تذاكر الفريق");
+    if (!this.repository.list) throw new TeamTicketError("UNAVAILABLE", "قائمة تذاكر الصيانة غير متاحة");
+    return this.repository.list(actor, ticketTeamListInput.parse(input));
   }
   async warehouseRequests(actor: TeamManagementActor, search = "") {
     if (!actor.active || !["warehouse", "owner", "admin", "senior_management"].includes(actor.role))
