@@ -9,11 +9,12 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowRight, CalendarDays, CheckCircle2, DollarSign, FileDown, Inbox, Loader2, Send, ShoppingCart, User, XCircle } from "lucide-react";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useStaticLabels, useBatchTranslation, useEntityTranslation, getLocalizedItemField } from "@/hooks/useContentTranslation";
 import { useTranslation } from "@/contexts/LanguageContext";
@@ -147,6 +148,23 @@ export default function PurchaseBatchDetail() {
   const [delegateChangeDialogItem, setDelegateChangeDialogItem] = useState<any>(null);
   const [delegateChangeReason, setDelegateChangeReason] = useState("");
 
+  const [delegateChangeTarget, setDelegateChangeTarget] = useState("");
+  const delegateChangeSubmitting = useRef(false);
+  const { data: delegateChangeOptions = [], isLoading: delegateChangeOptionsLoading, error: delegateChangeOptionsError } =
+    trpc.purchaseOrders.delegateAssignmentOptions.useQuery(
+      { forDelegateChange: true, itemId: delegateChangeDialogItem?.id || 0 },
+      { enabled: !!delegateChangeDialogItem },
+    );
+  const validDelegateChangeTarget = Number.isSafeInteger(Number(delegateChangeTarget)) && Number(delegateChangeTarget) > 0
+    && delegateChangeOptions.some((delegate: any) => Number(delegate.id) === Number(delegateChangeTarget))
+    && !delegateChangeOptionsLoading && !delegateChangeOptionsError;
+  const closeDelegateChangeDialog = () => {
+    if (delegateChangeSubmitting.current || requestDelegateChangeMut.isPending) return;
+    setDelegateChangeDialogItem(null);
+    setDelegateChangeReason("");
+    setDelegateChangeTarget("");
+  };
+
   const refreshPackage = () => {
     // إعادة مزامنة العرض من الخادم بعد أي إجراء على الحزمة، حتى إذا
     // نجح التغيير التشغيلي ثم فشلت خطوة لاحقة غير حرجة في نفس الطلب.
@@ -183,9 +201,11 @@ export default function PurchaseBatchDetail() {
       toast.success(t.workflow.purchase.delegateChangeSent);
       setDelegateChangeDialogItem(null);
       setDelegateChangeReason("");
+      setDelegateChangeTarget("");
       refreshPackage();
     },
-    onError: (e: any) => toast.error(localizeApiError(e.message)),
+    onError: (e: any) => toast.error(localizeApiError(e.message, language)),
+    onSettled: () => { delegateChangeSubmitting.current = false; },
   });
 
   const submitPackageBatchMut = trpc.purchasePackages.submitPackageBatch.useMutation({
@@ -678,6 +698,7 @@ export default function PurchaseBatchDetail() {
                                       onClick={() => {
                                         setDelegateChangeDialogItem(item);
                                         setDelegateChangeReason("");
+                                        setDelegateChangeTarget("");
                                       }}
                                     >
                                       {t.workflow.purchase.reassignDelegate}
@@ -766,15 +787,12 @@ export default function PurchaseBatchDetail() {
       <Dialog
         open={!!delegateChangeDialogItem}
         onOpenChange={(open) => {
-          if (!open) {
-            setDelegateChangeDialogItem(null);
-            setDelegateChangeReason("");
-          }
+          if (!open) closeDelegateChangeDialog();
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent dir={dir} className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{t.workflow.purchase.delegateChangeRequest}</DialogTitle>
+            <DialogTitle>{t.workflow.purchase.reassignDelegate}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
             <p className="text-sm text-muted-foreground">
@@ -784,8 +802,30 @@ export default function PurchaseBatchDetail() {
               {t.workflow.purchase.itemColon} <strong>{delegateChangeDialogItem?.itemName}</strong>
             </div>
             <div className="space-y-2">
+              <Label>{t.workflow.purchase.selectDelegate} *</Label>
+              <Select
+                dir={dir}
+                value={delegateChangeTarget}
+                onValueChange={setDelegateChangeTarget}
+                disabled={requestDelegateChangeMut.isPending || delegateChangeOptionsLoading || !!delegateChangeOptionsError}
+              >
+                <SelectTrigger><SelectValue placeholder={t.workflow.purchase.chooseDelegate} /></SelectTrigger>
+                <SelectContent>
+                  {delegateChangeOptions.map((delegate: any) => (
+                    <SelectItem key={delegate.id} value={String(delegate.id)}>{delegate.name || delegate.username}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {delegateChangeOptionsLoading && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}
+              {delegateChangeOptionsError && <p role="alert" className="text-xs text-destructive">{localizeApiError(delegateChangeOptionsError.message, language)}</p>}
+              {!delegateChangeOptionsLoading && !delegateChangeOptionsError && delegateChangeOptions.length === 0 && (
+                <p className="text-xs text-muted-foreground">{t.workflow.purchase.delegateChangeNoRecipients}</p>
+              )}
+            </div>
+            <div className="space-y-2">
               <Label>{t.workflow.purchase.delegateChangeReason}</Label>
               <Textarea
+                disabled={requestDelegateChangeMut.isPending}
                 value={delegateChangeReason}
                 onChange={(e) => setDelegateChangeReason(e.target.value)}
                 placeholder={t.workflow.purchase.delegateChangePlaceholder}
@@ -794,19 +834,21 @@ export default function PurchaseBatchDetail() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDelegateChangeDialogItem(null)}>{t.workflow.purchase.cancel}</Button>
+            <Button variant="outline" disabled={requestDelegateChangeMut.isPending} onClick={closeDelegateChangeDialog}>{t.workflow.purchase.cancel}</Button>
             <Button
-              disabled={delegateChangeReason.trim().length < 5 || requestDelegateChangeMut.isPending}
+              disabled={!validDelegateChangeTarget || delegateChangeReason.trim().length < 5 || requestDelegateChangeMut.isPending}
               onClick={() => {
-                if (!delegateChangeDialogItem) return;
+                if (!delegateChangeDialogItem || !validDelegateChangeTarget || delegateChangeReason.trim().length < 5 || requestDelegateChangeMut.isPending || delegateChangeSubmitting.current) return;
+                delegateChangeSubmitting.current = true;
                 requestDelegateChangeMut.mutate({
                   itemId: delegateChangeDialogItem.id,
+                  delegateId: Number(delegateChangeTarget),
                   reason: delegateChangeReason.trim(),
                 });
               }}
             >
               {requestDelegateChangeMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              {t.workflow.purchase.sendRequest}
+              {t.workflow.purchase.reassignDelegate}
             </Button>
           </DialogFooter>
         </DialogContent>

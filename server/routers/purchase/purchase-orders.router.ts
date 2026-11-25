@@ -35,7 +35,7 @@ import { prepareIdeaExecution, linkCreatedExecution, validateDirectIdeaPurchaseC
 import { findKnownInactiveCatalogUnitNames } from "../../_core/catalog-unit-governance";
 import { assertPurchaseCatalogBaseUnits } from "../../services/purchase-catalog-units";
 import { createBookIssueProcedure, inventoryDeliveryInput } from "../inventory/book-issue.procedure";
-import { assertCanViewPurchaseOrder, filterVisiblePurchaseOrders, assertCanPerformPOAction, assertCanPerformItemPOAction, assertCanPerformPurchaseItemReviewAction, createPurchaseOrderReadScope, assertPOItemAssignedToDelegate, isItemAssignedToPODelegate, assertCanPerformItemStatusPOAction, assertCanResolveReturnedPOItem, assertCanRequestDelegateChange, assertCanResolveDelegateChange } from "../../_core/authz/guard";
+import { assertCanViewPurchaseOrder, filterVisiblePurchaseOrders, assertCanPerformPOAction, assertCanPerformItemPOAction, assertCanPerformPurchaseItemReviewAction, createPurchaseOrderReadScope, assertPOItemAssignedToDelegate, isItemAssignedToPODelegate, assertCanPerformItemStatusPOAction, assertCanResolveReturnedPOItem, assertCanResolveDelegateChange } from "../../_core/authz/guard";
 import { OWN_REQUESTS_ONLY_ROLES } from "../../_core/authz/policy";
 import { computeActionablePOs, getDelegateItemActionMode } from "./actionable";
 import { rejectEmptyPendingPricingBatches } from "./pricing-batch-state";
@@ -2431,85 +2431,31 @@ export const purchaseOrdersRouter = router({
   }),
 
   requestDelegateChange: delegateProcedure.input(z.object({
-    itemId: z.number(),
-    reason: z.string().trim().min(5, "يجب كتابة سبب طلب تغيير المندوب"),
-  })).mutation(async ({ input, ctx }) => {
+    itemId: z.number().int().positive(),
+    delegateId: z.number({ error: "اختر المندوب الجديد" }).int("اختر مندوبًا صالحًا").positive("اختر مندوبًا صالحًا"),
+    reason: z.string().trim().min(5, "يجب كتابة سبب تغيير المندوب"),
+  }).strict()).mutation(async ({ input, ctx }) => {
+    const actor = ctx.authenticatedUser ?? ctx.user;
     const item = await db.getPOItemById(input.itemId);
     if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "الصنف غير موجود" });
-
     const po = await db.getPurchaseOrderById(item.purchaseOrderId);
     if (!po) throw new TRPCError({ code: "NOT_FOUND", message: "طلب الشراء غير موجود" });
-    if (item.reviewRole != null) assertRoutedPurchaseItemReady(po, item);
-
-    assertCanRequestDelegateChange(ctx.user, {
-      delegateId: item.delegateId,
-      itemStatus: item.status,
-      batchId: item.batchId,
-      estimatedUnitCost: item.estimatedUnitCost,
-      delegateChangeRequestedAt: item.delegateChangeRequestedAt,
-      reviewRole: item.reviewRole,
-      reviewedById: isRoutedPurchaseItem(item) ? item.reviewedById : po.reviewedById,
-    });
-
-    const requestSaved = await db.requestPOItemDelegateChangeAtomic({
-      itemId: item.id,
-      delegateId: ctx.user.id,
+    const transferred = await db.requestPOItemDelegateChangeAtomic({
+      itemId: item.id, delegateId: input.delegateId, actorUserId: actor.id, actorRole: actor.role,
       reason: input.reason,
-      requestedAt: new Date(),
-      actorName: ctx.user.name || null,
     });
-    if (!requestSaved) {
-      throw new TRPCError({
-        code: "CONFLICT",
-        message: "تغيّرت حالة الصنف أو بدأ تسعيره؛ قم بتحديث الصفحة ثم أعد المحاولة",
-      });
-    }
-    await queuePurchaseTranslation("PO_ITEM", item.id, [
-      { fieldName: "delegateChangeReason", text: input.reason },
-    ], ctx.user.id);
-
-    // ⚠️ 2026-08-13: الإشعار يذهب لنفس من راجع الطلب واختار المندوب لهذا
-    // الصنف أصلًا (po.reviewedById) — لا بثًّا لكل مديري المشتريات. هو الشخص
-    // الوحيد المخوَّل بحسم الطلب فعليًا (راجع canResolvePOItemDelegateChange)،
-    // فبثّ الإشعار لغيره كان يُري مديرين إشعارًا لا يقدرون على التصرف بموجبه.
-    // Fallback: طلب قديم بلا reviewedById مسجَّل — يُبث لكل المديرين كسابقًا،
-    // مطابقًا لتوسعة الحارس المؤقتة لنفس الحالة.
-    const responsibleReviewerId = isRoutedPurchaseItem(item) ? item.reviewedById : po.reviewedById;
-    if (responsibleReviewerId) {
+    if (!transferred) throw new TRPCError({
+      code: "CONFLICT", message: "تغيّرت حالة الصنف أو بدأ تسعيره؛ قم بتحديث الصفحة ثم أعد المحاولة",
+    });
+    // The item and its strict history/audit are already committed. Notification
+    // delivery must not report a failed transfer after a successful save.
+    try {
       await db.createNotification({
-        userId: responsibleReviewerId,
-        title: "طلب تغيير مندوب صنف",
-        message: `طلب المندوب ${ctx.user.name || "المندوب"} تغيير مسؤول الصنف "${item.itemName}" في طلب الشراء ${po.poNumber}. السبب: ${input.reason}`,
-        type: "warning",
-        relatedPoId: po.id,
+        userId: input.delegateId, title: "تم إسناد صنف شراء لك",
+        message: `تم نقل الصنف "${item.itemName}" من طلب الشراء ${po.poNumber} إليك، وهو بانتظار التسعير. السبب: ${input.reason}`,
+        type: "info", relatedPoId: po.id,
       });
-    } else {
-      const maintenanceManagers = await db.getPurchaseManagerUsers();
-      for (const manager of maintenanceManagers) {
-        if (!manager.isActive) continue;
-        await db.createNotification({
-          userId: manager.id,
-          title: "طلب تغيير مندوب صنف",
-          message: `طلب المندوب ${ctx.user.name || "المندوب"} تغيير مسؤول الصنف "${item.itemName}" في طلب الشراء ${po.poNumber}. السبب: ${input.reason}`,
-          type: "warning",
-          relatedPoId: po.id,
-        });
-      }
-    }
-
-    await db.createAuditLog({
-      userId: ctx.user.id,
-      action: "request_po_item_delegate_change",
-      entityType: "purchase_order_item",
-      entityId: item.id,
-      oldValues: { delegateId: item.delegateId },
-      newValues: {
-        delegateChangeRequestedById: ctx.user.id,
-        delegateChangeRequestedByName: ctx.user.name || null,
-        delegateChangeReason: input.reason,
-      },
-    });
-
+    } catch (error) { console.error("[DelegateItemTransfer] notification failed", error); }
     return { success: true };
   }),
 
@@ -2832,10 +2778,12 @@ list: protectedProcedure.input(z.object({
   // Delegate-only read archive; existing operation/download boundaries remain unchanged.
   completedItems: delegateProcedure.input(delegateCompletedInput).query(({ ctx, input }) => listDelegateCompleted(ctx.user, input)),
 
-  delegateAssignmentOptions: protectedProcedure.query(async ({ctx})=>{
-    const database=await db.getDb();if(!database)throw new TRPCError({code:"INTERNAL_SERVER_ERROR",message:"تعذر الاتصال بقاعدة البيانات"});
-    return delegateAssignmentOptions(database,ctx.authenticatedUser??ctx.user);
-  }),
+  delegateAssignmentOptions: protectedProcedure
+    .input(z.object({ forDelegateChange: z.literal(true), itemId: z.number().int().positive() }).strict().optional())
+    .query(async ({ctx,input})=>{
+      const database=await db.getDb();if(!database)throw new TRPCError({code:"INTERNAL_SERVER_ERROR",message:"تعذر الاتصال بقاعدة البيانات"});
+      return delegateAssignmentOptions(database,ctx.authenticatedUser??ctx.user,input);
+    }),
 
   assignOwnDelegateItem: protectedProcedure.input(z.object({purchaseOrderId:z.number().int().positive(),itemId:z.number().int().positive(),delegateId:z.number().int().positive()}).strict())
     .mutation(async({ctx,input})=>{

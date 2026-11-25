@@ -32,7 +32,7 @@ const roleScopeGuard = t.middleware(async opts => {
   if (!delegateDocumentCenterRpcAllowed(user?.role, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "مركز المستندات غير متاح لهذا الدور" });
   if (!supplyWaitRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "غير مصرح بإجراء توضيح انتظار التوريد" });
   if (!externalFollowupRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لمتابعة الصيانة الخارجية" });
-  if (!delegateManagerAssignmentRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "تعيين الصنف لمسئول المناديب فقط" });
+  if (!delegateManagerAssignmentRpcAllowed(user, opts.type, opts.path, opts.path === "purchaseOrders.delegateAssignmentOptions" && opts.type === "query" ? await opts.getRawInput() : undefined)) throw new TRPCError({ code: "FORBIDDEN", message: "تعيين الصنف لمسئول المناديب فقط" });
   if (!externalDelegateRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "الإجراء للمندوب المسند إليه الأصل فقط" });
   if (isDelegateRole(user?.role)) {
     assertDelegateDirectoryRpc(user, opts.path, await opts.getRawInput());

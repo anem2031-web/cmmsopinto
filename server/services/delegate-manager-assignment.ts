@@ -1,23 +1,29 @@
 import { TRPCError } from "@trpc/server";
 import { sql, type SQL } from "drizzle-orm";
 import { APP_ROLE } from "../../shared/roles";
+import { isDelegateRole, isDelegateChangeOptionsInput, type DelegateChangeOptionsInput } from "../../shared/delegate-role";
 import { isRoutedPurchaseItem } from "../../shared/purchase-item-review";
 import { hasCommittedPurchaseItemReview } from "../../shared/purchaseItemReviewWorkflow";
 import { readScopeChunks } from "../_core/authz/read-batch";
 
-type Actor={id:number;role:string;isActive?:number};
+export type DelegateAssignmentActor={id:number;role:string;isActive?:number};
+type Actor=DelegateAssignmentActor;
 type Database={execute(query:SQL):Promise<any>};
 async function rows(database:Database,query:SQL):Promise<any[]> {
   const [result]=await database.execute(query);if(!Array.isArray(result))throw Error("Invalid delegate assignment read response");return result;
 }
 const denied=()=>new TRPCError({code:"FORBIDDEN",message:"إسناد الصنف متاح لمسئول المناديب المسند إليه فقط"});
+const directDenied=()=>new TRPCError({code:"FORBIDDEN",message:"إعادة تعيين الصنف متاحة للمندوب أو مسئول المناديب المسند إليه فقط"});
 const conflict=()=>new TRPCError({code:"CONFLICT",message:"الصنف لم يعد متاحًا للإسناد؛ يجب أن يكون عاديًا ومعتمد المراجعة ولم يبدأ تسعيره"});
 async function manager(database:Database,actor:Actor,lock=false) {
   if(actor.role!==APP_ROLE.DELEGATE_MANAGER || !Number.isSafeInteger(actor.id) || actor.id<=0 || actor.isActive!==1)throw denied();
   const [current]=await rows(database,sql`SELECT id,role,isActive,name FROM users WHERE id=${actor.id} ${lock?sql`FOR UPDATE`:sql``}`);
   if(!current||current.role!==actor.role||Number(current.isActive)!==1)throw denied();return current;
 }
-async function sources(database:Database,ids:number[]) {
+export async function readDelegateAssignmentSources(database:Database,ids:number[],forUpdate=false) {
+  ids=Array.from(new Set(ids));
+  if(ids.some(id=>!Number.isSafeInteger(id)||id<=0))throw conflict();
+  if(!ids.length)return [];
   return readScopeChunks(ids,part=>rows(database,sql`SELECT i.*,p.status AS purchaseOrderStatus,p.reviewedById AS orderReviewedById,p.reviewedAt AS orderReviewedAt,
       p.ticketId AS sourceTicketId,p.ticketItemId AS sourceTicketItemId,t.id AS sourceTicketExists,t.maintenancePath AS sourceTicketPath,
       ti.id AS sourceTicketItemExists,ti.ticketId AS sourceItemTicketId,ti.maintenancePath AS sourceItemPath,
@@ -26,11 +32,11 @@ async function sources(database:Database,ids:number[]) {
       EXISTS(SELECT 1 FROM delegate_pricing_bundle_items member WHERE member.purchaseOrderItemId=i.id AND member.removedAt IS NULL) AS hasPricingBundle
     FROM purchase_order_items i INNER JOIN purchase_orders p ON p.id=i.purchaseOrderId
     LEFT JOIN tickets t ON t.id=p.ticketId LEFT JOIN ticket_items ti ON ti.id=p.ticketItemId
-    WHERE i.id IN (${sql.join(part.map(id=>sql`${id}`),sql`,`)})`));
+    WHERE i.id IN (${sql.join(part.map(id=>sql`${id}`),sql`,`)}) ${forUpdate?sql`FOR UPDATE`:sql``}`));
 }
 /** One source decision, shared by the list flag and the fresh transaction. */
-export function canManagerAssignOwnItem(actor:Actor,item:any):boolean {
-  if(actor.role!==APP_ROLE.DELEGATE_MANAGER||actor.isActive!==1||Number(item.delegateId)!==actor.id||item.status!=="pending"
+export function canDirectlyReassignOwnItem(actor:Actor,item:any):boolean {
+  if(!isDelegateRole(actor.role)||actor.isActive!==1||!Number.isSafeInteger(actor.id)||actor.id<=0||Number(item.delegateId)!==actor.id||item.status!=="pending"
     ||["draft","revision_needed","rejected","closed"].includes(item.purchaseOrderStatus)
     ||!item.purchaseOrderStatus||item.batchId!=null||item.delegateChangeRequestedAt!=null
     ||["estimatedUnitCost","estimatedTotalCost","estimatedById","actualUnitCost","actualTotalCost","purchasedAt","purchasedById"].some(field=>item[field]!=null)
@@ -40,16 +46,31 @@ export function canManagerAssignOwnItem(actor:Actor,item:any):boolean {
   if(item.sourceTicketItemId!=null&&(item.sourceTicketId==null||Number(item.sourceTicketItemExists)!==Number(item.sourceTicketItemId)||Number(item.sourceItemTicketId)!==Number(item.sourceTicketId)))return false;
   return item.sourceTicketPath!=="C"&&item.sourceItemPath!=="C";
 }
+export function canManagerAssignOwnItem(actor:Actor,item:any):boolean {
+  return actor.role===APP_ROLE.DELEGATE_MANAGER&&canDirectlyReassignOwnItem(actor,item);
+}
 export async function managerAssignableItemIds(database:Database,actor:Actor,itemIds:number[]) {
   const ids=Array.from(new Set(itemIds));if(ids.some(id=>!Number.isSafeInteger(id)||id<=0))throw conflict();
   if(!ids.length)return new Set<number>();await manager(database,actor);
   const included=new Set(ids),result=new Set<number>();
-  for(const item of await sources(database,ids)) { if(!included.has(Number(item.id)))throw Error("Invalid assignment source scope");if(canManagerAssignOwnItem(actor,item))result.add(Number(item.id)); }
+  for(const item of await readDelegateAssignmentSources(database,ids)) { if(!included.has(Number(item.id)))throw Error("Invalid assignment source scope");if(canManagerAssignOwnItem(actor,item))result.add(Number(item.id)); }
   return result;
 }
-export async function delegateAssignmentOptions(database:Database,actor:Actor) {
-  await manager(database,actor);
-  return rows(database,sql`SELECT id,name,username FROM users WHERE role='delegate' AND isActive=1 ORDER BY id`);
+export async function delegateAssignmentOptions(database:Database,actor:Actor,input?:DelegateChangeOptionsInput) {
+  if(input===undefined) {
+    await manager(database,actor);
+    return rows(database,sql`SELECT id,name,username FROM users WHERE role='delegate' AND isActive=1 ORDER BY id`);
+  }
+  // This mode reveals only eligible recipients for the actor's own unpriced item.
+  // It never grants the global user directory or the manager's distribution RPC.
+  if(!isDelegateChangeOptionsInput(input)||!isDelegateRole(actor.role)||actor.isActive!==1
+    ||!Number.isSafeInteger(actor.id)||actor.id<=0)throw directDenied();
+  const [current]=await rows(database,sql`SELECT id,role,isActive,name FROM users WHERE id=${actor.id}`);
+  if(!current||Number(current.id)!==actor.id||current.role!==actor.role||Number(current.isActive)!==1)throw directDenied();
+  const [item]=await readDelegateAssignmentSources(database,[input.itemId]);
+  if(!item||Number(item.id)!==input.itemId||Number(item.delegateId)!==actor.id)throw directDenied();
+  if(!canDirectlyReassignOwnItem(actor,item))throw conflict();
+  return rows(database,sql`SELECT id,name,username FROM users WHERE role IN ('delegate','delegate_manager') AND isActive=1 AND id<>${actor.id} ORDER BY id`);
 }
 /** Caller provides one transaction; no header, source link or financial state is changed. */
 export async function assignOwnDelegateItem(tx:Database,actor:Actor,input:{purchaseOrderId:number;itemId:number;delegateId:number}) {
@@ -62,7 +83,7 @@ export async function assignOwnDelegateItem(tx:Database,actor:Actor,input:{purch
   const current=participants.find(user=>Number(user.id)===actor.id),target=participants.find(user=>Number(user.id)===input.delegateId);
   if(!current||current.role!==actor.role||Number(current.isActive)!==1)throw denied();
   if(!target||target.role!==APP_ROLE.DELEGATE||Number(target.isActive)!==1)throw new TRPCError({code:"BAD_REQUEST",message:"اختر مندوبًا نشطًا"});
-  const [item]=await sources(tx,[input.itemId]);
+  const [item]=await readDelegateAssignmentSources(tx,[input.itemId]);
   if(!item||Number(item.purchaseOrderId)!==input.purchaseOrderId||Number(item.delegateId)!==actor.id)throw denied();
   if(!canManagerAssignOwnItem({...actor,isActive:1},item))throw conflict();
   const [written]=await tx.execute(sql`UPDATE purchase_order_items SET delegateId=${input.delegateId},delegateAssignedAt=CURRENT_TIMESTAMP

@@ -1,5 +1,7 @@
 import { readScopeChunks } from "../authz/read-batch";
-import { APP_ROLE } from "../../../shared/roles";
+import { APP_ROLE, isDelegateRole } from "../../../shared/roles";
+import { TRPCError } from "@trpc/server";
+import { canDirectlyReassignOwnItem, readDelegateAssignmentSources } from "../../services/delegate-manager-assignment";
 import { pricingBundlesEnabled, assertItemOutsidePricingBundle } from "../../services/delegate-pricing-bundles/reservations";
 import { getPackageSubmissionsWithBatchesForPackages } from "./purchase-read-lists";
 // ============================================================
@@ -1211,43 +1213,69 @@ export async function updatePOItemIfDelegateChangeUnlocked(
     && (!pricingBundlesEnabled() || expectedBatchId === undefined || row[0].batchId === expectedBatchId);
 }
 
-/** تسجيل طلب تغيير المندوب بصورة ذرية: لا ينجح إذا بدأ التسعير أو سبق تقديم طلب. */
+/** Direct transfer of one unpriced own item; legacy waiting requests resolve separately. */
 export async function requestPOItemDelegateChangeAtomic(input: {
   itemId: number;
   delegateId: number;
+  actorUserId: number;
+  actorRole: string;
   reason: string;
-  requestedAt: Date;
-  actorName?: string | null;
 }): Promise<boolean> {
+  const denied = () => new TRPCError({ code: "FORBIDDEN", message: "نقل الصنف متاح للمندوب الحالي المسند إليه فقط" });
+  if (![input.itemId, input.delegateId, input.actorUserId].every(id => Number.isSafeInteger(id) && id > 0)
+    || input.reason.trim().length < 5) throw new TRPCError({ code: "BAD_REQUEST", message: "اختر المندوب الجديد واكتب سبب التغيير" });
+  if (!isDelegateRole(input.actorRole)) throw denied();
+  if (input.delegateId === input.actorUserId) throw new TRPCError({ code: "BAD_REQUEST", message: "اختر مندوبًا آخر لنقل الصنف إليه" });
   const db = await getDb();
   if (!db) return false;
-  const before = await readPOItemHistorySnapshot(db, input.itemId);
-  const patch = {
-    delegateChangeRequestedById: input.delegateId,
-    delegateChangeReason: input.reason,
-    delegateChangeRequestedAt: input.requestedAt,
-  };
-  const result: any = await db
-    .update(purchaseOrderItems)
-    .set(patch)
-    .where(and(
-      eq(purchaseOrderItems.id, input.itemId),
-      eq(purchaseOrderItems.delegateId, input.delegateId),
-      eq(purchaseOrderItems.status, "pending"),
-      isNull(purchaseOrderItems.batchId),
-      isNull(purchaseOrderItems.estimatedUnitCost),
-      isNull(purchaseOrderItems.delegateChangeRequestedAt),
-    ));
-  const ok = Number(result?.[0]?.affectedRows ?? 0) === 1;
-  if (ok) {
-    await recordPOItemMutationHistory(db, before, patch, {
-      actorUserId: input.delegateId,
-      actorName: input.actorName ?? null,
-      eventType: "delegate_change_requested",
-      note: input.reason,
+  // Parent discovery is outside the transaction so it cannot establish a stale
+  // transaction snapshot before waiting for the canonical PO/item lock order.
+  const [source] = await db.select({ purchaseOrderId: purchaseOrderItems.purchaseOrderId })
+    .from(purchaseOrderItems).where(eq(purchaseOrderItems.id, input.itemId)).limit(1);
+  if (!source) return false;
+  return (db as any).transaction(async (tx: any) => {
+    const [orderRows] = await tx.execute(sql`SELECT * FROM purchase_orders WHERE id=${source.purchaseOrderId} FOR UPDATE`);
+    const [itemRows] = await tx.execute(sql`SELECT * FROM purchase_order_items WHERE id=${input.itemId} FOR UPDATE`);
+    const order = orderRows[0], item = itemRows[0];
+    if (!order || !item || Number(item.purchaseOrderId) !== Number(order.id) || Number(item.delegateId) !== input.actorUserId) throw denied();
+    const participantIds = Array.from(new Set([input.actorUserId, input.delegateId])).sort((a, b) => a - b);
+    const [participants] = await tx.execute(sql`SELECT id,role,isActive,name FROM users
+      WHERE id IN (${sql.join(participantIds.map(id => sql`${id}`), sql`,`)}) ORDER BY id FOR UPDATE`);
+    const actor = participants.find((user: any) => Number(user.id) === input.actorUserId);
+    const target = participants.find((user: any) => Number(user.id) === input.delegateId);
+    if (!actor || actor.role !== input.actorRole || !isDelegateRole(actor.role) || Number(actor.isActive) !== 1) throw denied();
+    if (!target || !isDelegateRole(target.role) || Number(target.isActive) !== 1)
+      throw new TRPCError({ code: "BAD_REQUEST", message: "اختر مندوبًا أو مسئول مناديب نشطًا" });
+    const [facts] = await readDelegateAssignmentSources(tx, [input.itemId], true);
+    if (!facts || Number(facts.purchaseOrderId) !== Number(order.id)) return false;
+    const current = { ...facts, ...item, purchaseOrderStatus: order.status, orderReviewedById: order.reviewedById,
+      orderReviewedAt: order.reviewedAt, sourceTicketId: order.ticketId, sourceTicketItemId: order.ticketItemId };
+    if (!canDirectlyReassignOwnItem({ id: input.actorUserId, role: actor.role, isActive: 1 }, current)) return false;
+    const reason = input.reason.trim();
+    const assignedAt = new Date();
+    const [written] = await tx.update(purchaseOrderItems)
+      .set({ delegateId: input.delegateId, delegateAssignedAt: assignedAt })
+      .where(and(eq(purchaseOrderItems.id, input.itemId), eq(purchaseOrderItems.purchaseOrderId, order.id),
+        eq(purchaseOrderItems.delegateId, input.actorUserId), eq(purchaseOrderItems.status, "pending"),
+        isNull(purchaseOrderItems.batchId), isNull(purchaseOrderItems.estimatedUnitCost), isNull(purchaseOrderItems.estimatedTotalCost),
+        isNull(purchaseOrderItems.estimatedById), isNull(purchaseOrderItems.actualUnitCost), isNull(purchaseOrderItems.actualTotalCost),
+        isNull(purchaseOrderItems.purchasedAt), isNull(purchaseOrderItems.purchasedById), isNull(purchaseOrderItems.delegateChangeRequestedAt)));
+    if (Number(written?.affectedRows) !== 1) return false;
+    const historyId = await createPOItemHistoryEvent({
+      purchaseOrderItemId: input.itemId, purchaseOrderId: Number(order.id), eventType: "delegate_changed",
+      previousStatus: "pending", newStatus: "pending", previousDelegateId: input.actorUserId, newDelegateId: input.delegateId,
+      actorUserId: input.actorUserId, actorName: actor.name ?? null, note: reason, createdAt: assignedAt,
+      metadata: { source: "delegate_item_transfer", previousDelegateAssignedAt: item.delegateAssignedAt ?? null },
+    }, tx);
+    if (!historyId) throw new Error("تعذر حفظ سجل نقل الصنف");
+    const [audit] = await tx.insert(auditLogs).values({
+      userId: input.actorUserId, action: "po_item_delegate_changed", entityType: "purchase_order_item", entityId: input.itemId,
+      oldValues: { delegateId: input.actorUserId, delegateName: actor.name ?? null, delegateAssignedAt: item.delegateAssignedAt ?? null },
+      newValues: { delegateId: input.delegateId, delegateName: target.name ?? null, delegateAssignedAt: assignedAt.toISOString(), purchaseOrderId: Number(order.id), reason },
     });
-  }
-  return ok;
+    if (!audit?.insertId) throw new Error("تعذر حفظ تدقيق نقل الصنف");
+    return true;
+  });
 }
 
 /** حسم طلب تغيير المندوب بصورة ذرية مع إبقاء الصنف pending وجاهزًا للتسعير. */

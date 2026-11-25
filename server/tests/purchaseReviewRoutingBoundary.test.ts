@@ -123,7 +123,7 @@ describe("Review-time edit/delete/cancel recheck at the locked write boundary", 
       const result: any = Promise.resolve(rows); result.for = vi.fn(async () => rows); return result;
     } }) }) };
     const withTransaction = vi.fn(async work => work(tx));
-    const run = evaluate(lockSource, { ...review, ...tables, TRPCError, db: { withTransaction }, eq: () => ({}), assertCanPerformPurchaseItemReviewAction: guard });
+    const run = evaluate(lockSource, { ...review, ...tables, TRPCError, db: { withTransaction }, eq: () => ({}), assertCanPerformPurchaseItemReviewAction: guard, assertNoBundledEmergencyItems: async () => {} });
     return { run, guard, withTransaction, order, tx };
   }
   it.each(["editItem", "deleteItem", "cancelItem"])("%s locks and rechecks the current actor, item and parent", async action => {

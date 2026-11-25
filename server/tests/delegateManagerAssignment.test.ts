@@ -142,7 +142,7 @@ describe("stale pricing and editing cannot overtake manager reassignment",()=>{
   });
   it("does not accept an old manager's nonprice edit or an expired current role",async()=>{
     const guard=vi.fn(),write=vi.fn();const before=item();
-    const lockedEdit=vm.runInNewContext(expression("withPendingReviewItemWrite","function"),{db:{withTransaction:(work:any)=>f.db.transaction(work)},isDelegateRole,purchaseOrders,purchaseOrderItems,users,eq,TRPCError,assertCanPerformPurchaseItemReviewAction:guard});
+    const lockedEdit=vm.runInNewContext(expression("withPendingReviewItemWrite","function"),{db:{withTransaction:(work:any)=>f.db.transaction(work)},isDelegateRole,purchaseOrders,purchaseOrderItems,users,eq,TRPCError,assertCanPerformPurchaseItemReviewAction:guard,assertNoBundledEmergencyItems:async()=>{}});
     await call().assignOwnDelegateItem({purchaseOrderId:100,itemId:1,delegateId:22});
     await expect(lockedEdit(actor,{id:100},before,"editItem",write)).rejects.toMatchObject({code:"FORBIDDEN"});
     expect(write).not.toHaveBeenCalled();

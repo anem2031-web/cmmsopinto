@@ -9,9 +9,21 @@ export function delegateDocumentCenterRpcAllowed(role: string | null | undefined
   return !isDelegateRole(role) || !["attachments.listByType", "delegatePricingBundles.listPage"].includes(path);
 }
 
-/** The manager's sole additional capability is this explicitly reviewed pair. */
-export function delegateManagerAssignmentRpcAllowed(user: { id: number; role: string; isActive?: number } | null | undefined, type: string, path: string): boolean {
+/** Recipient names for direct reassignment are scoped to one current owned item. */
+export type DelegateChangeOptionsInput = { forDelegateChange: true; itemId: number };
+export function isDelegateChangeOptionsInput(input: unknown): input is DelegateChangeOptionsInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  const value = input as Record<string, unknown>;
+  return Object.keys(value).length === 2 && value.forDelegateChange === true
+    && typeof value.itemId === "number" && Number.isSafeInteger(value.itemId) && value.itemId > 0;
+}
+
+/** The old manager assignment remains closed; only the named query mode adds delegate access. */
+export function delegateManagerAssignmentRpcAllowed(user: { id: number; role: string; isActive?: number } | null | undefined, type: string, path: string, raw?: unknown): boolean {
   if (!["purchaseOrders.assignOwnDelegateItem", "purchaseOrders.delegateAssignmentOptions"].includes(path)) return true;
-  return !!user && user.role === "delegate_manager" && user.isActive === 1 && Number.isSafeInteger(user.id) && user.id > 0
-    && (path === "purchaseOrders.assignOwnDelegateItem" ? type === "mutation" : type === "query");
+  if (!user || user.isActive !== 1 || !Number.isSafeInteger(user.id) || user.id <= 0) return false;
+  if (path === "purchaseOrders.assignOwnDelegateItem") return type === "mutation" && user.role === "delegate_manager";
+  if (type !== "query") return false;
+  return raw === undefined ? user.role === "delegate_manager"
+    : isDelegateRole(user.role) && isDelegateChangeOptionsInput(raw);
 }
