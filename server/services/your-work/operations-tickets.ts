@@ -5,12 +5,14 @@ import { canRecordItExecutionOutcome, canStartItSubTicket } from "../../../share
 import { canApproveTicketTeamResult, canReviewTicketTeamExecution } from "../../../shared/maintenance-team-tickets/execution-permissions";
 import { canManageTicketWorkflow, canReviewTicketInspection, canSelectTicketItemMaintenancePath, isRoleDeniedFromTickets } from "../../routers/tickets/tickets.access";
 import { ownsExternalRouteReview } from "../../../shared/external-route-review";
+import { readScopeChunks } from "../../_core/authz/read-batch";
 import type { YourWorkItem } from "../../../shared/your-work";
-import { operationCapability, operationItem, operationRows, privilegedOperationActor, type OperationsActor, type OperationsDatabase } from "./operations-port";
+import { operationCapability, operationIds, operationItem, operationRows, privilegedOperationActor, type OperationsActor, type OperationsDatabase } from "./operations-port";
 
 const managers = ["owner", "admin", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "supervisor", "it_manager", "it_member"];
 const workflowManagers = ["owner", "admin", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "it_manager", "it_member"];
 const closureRoles = [...workflowManagers, "supervisor"];
+const candidateStatuses = new Set(["pending_triage", "under_inspection", "ready_for_closure", "repaired", "verified", "closed", "department_planning", "in_progress", "assigned"]);
 const personallyResponsible = (actor: OperationsActor, managerId: any) => privilegedOperationActor(actor) || !managerId || Number(managerId) === actor.id;
 /** Read-side mirror of tickets.workflow.canManageDepartmentPlan; it does not grant a new workflow permission. */
 export function canManageOperationDepartment(actor: OperationsActor, row: any): boolean {
@@ -98,13 +100,10 @@ export async function readTicketOperations(db: OperationsDatabase, actor: Operat
       (SELECT COUNT(*) FROM tickets child WHERE child.parentTicketId=t.id AND child.workflowModel='sub_ticket' AND child.status NOT IN ('closed','requester_confirmed')) AS childOpenCount,
       (SELECT UNIX_TIMESTAMP(MAX(child.closedAt))*1000 FROM tickets child WHERE child.parentTicketId=t.id AND child.workflowModel='sub_ticket') AS lastChildClosedAt,
       (SELECT COUNT(*) FROM ticket_tasks task WHERE task.ticketId=t.id AND task.status<>'cancelled' AND task.convertedTicketId IS NULL) AS pendingTaskCount,
-      (SELECT COUNT(*) FROM ticket_tasks task WHERE task.ticketId=t.id AND task.status='cancelled' AND task.convertedTicketId IS NULL) AS cancelledPendingTasks,
-      review.id AS routeReturnId,JSON_UNQUOTE(JSON_EXTRACT(review.newValues,'$.reviewerId')) AS routeReviewerId,JSON_UNQUOTE(JSON_EXTRACT(review.newValues,'$.ticketId')) AS routeTicketId,UNIX_TIMESTAMP(review.createdAt)*1000 AS routeReturnedAt
+      (SELECT COUNT(*) FROM ticket_tasks task WHERE task.ticketId=t.id AND task.status='cancelled' AND task.convertedTicketId IS NULL) AS cancelledPendingTasks
       FROM tickets t INNER JOIN ticket_items i ON i.ticketId=t.id LEFT JOIN ticket_team_assignments a ON a.ticketId=t.id AND a.ticketItemId=i.id
-      LEFT JOIN audit_logs review ON review.entityType='ticket_item' AND review.entityId=i.id AND review.action='external_route_returned'
-        AND NOT EXISTS (SELECT 1 FROM audit_logs later WHERE later.entityType='ticket_item' AND later.entityId=i.id AND later.action IN ('external_route_returned','external_route_decided') AND later.id>review.id)
       WHERE (t.status IN ('pending_triage','under_inspection','ready_for_closure','repaired','verified','closed','department_planning','in_progress','assigned')
-        OR (review.id IS NOT NULL AND i.status='under_inspection' AND i.maintenancePath='C')) AND (${ticketScope(actor)})`),
+        OR (i.status='under_inspection' AND i.maintenancePath='C')) AND (${ticketScope(actor)})`),
     managers.includes(actor.role) ? operationRows(db, sql`/* your-work:department-planning */ SELECT d.id AS departmentId,d.ticketId,d.department,d.responsibleManagerId,d.claimedById,d.status AS departmentStatus,
       UNIX_TIMESTAMP(d.routedAt)*1000 AS routedAt,UNIX_TIMESTAMP(d.claimedAt)*1000 AS claimedAt,t.status,t.workflowModel,t.ticketNumber,t.title,t.maintenanceResponsibleDepartment,t.assignedToId,
       task.id AS taskId,task.title AS taskTitle,task.status AS taskStatus,UNIX_TIMESTAMP(task.createdAt)*1000 AS taskCreatedAt,
@@ -126,7 +125,25 @@ export async function readTicketOperations(db: OperationsDatabase, actor: Operat
       AND NOT EXISTS (SELECT 1 FROM ticket_team_actions pending WHERE pending.assignmentId=a.id AND pending.kind='external_route_returned'
         AND NOT EXISTS (SELECT 1 FROM ticket_team_actions decided WHERE decided.assignmentId=a.id AND decided.kind IN ('external_route_returned','external_route_decided') AND decided.revision>pending.revision))`) : Promise.resolve([]),
   ]);
-  const result = classifyLegacyTicketOperations(actor, legacy);
+  // TiDB rejects correlated subqueries inside JOIN ON. Keep the authorized
+  // structural candidates, then hydrate the last return/decision by item in
+  // bounded reads. A later decision removes the marker, never the ticket row.
+  const reviewRows = await readScopeChunks(legacy.map(row => Number(row.itemId)), ids => operationRows(db, sql`/* your-work:ticket-route-reviews */
+    SELECT a.id,a.entityId AS itemId,a.action,JSON_UNQUOTE(JSON_EXTRACT(a.newValues,'$.reviewerId')) AS routeReviewerId,
+      JSON_UNQUOTE(JSON_EXTRACT(a.newValues,'$.ticketId')) AS routeTicketId,UNIX_TIMESTAMP(a.createdAt)*1000 AS routeReturnedAt
+    FROM audit_logs a WHERE a.entityType='ticket_item' AND a.entityId IN (${operationIds(ids)})
+      AND a.action IN ('external_route_returned','external_route_decided') ORDER BY a.entityId,a.id DESC`));
+  const latestReview = new Map<number, any>();
+  for (const row of reviewRows) if (!latestReview.has(Number(row.itemId))) latestReview.set(Number(row.itemId), row);
+  for (const row of legacy) {
+    const last = latestReview.get(Number(row.itemId));
+    row.routeReturnId = last?.action === "external_route_returned" ? last.id : null;
+    row.routeReviewerId = row.routeReturnId ? last.routeReviewerId : null;
+    row.routeTicketId = row.routeReturnId ? last.routeTicketId : null;
+    row.routeReturnedAt = row.routeReturnId ? last.routeReturnedAt : null;
+  }
+  const result = classifyLegacyTicketOperations(actor, legacy.filter(row => candidateStatuses.has(row.status)
+    || row.routeReturnId && row.itemStatus === "under_inspection" && row.itemPath === "C"));
   for (const row of planning) {
     if (canClaimItDepartment(actor, row, row) && operationCapability(actor, "tickets.claimItTicket")) {
       result.push(operationItem({ key: `it-claim:${row.departmentId}`, kind: "ticket", reference: row.ticketNumber, title: row.title,

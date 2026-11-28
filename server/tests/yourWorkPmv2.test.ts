@@ -14,6 +14,10 @@ function insert(table: string, row: Record<string, any>) {
 }
 const database = () => ({ execute: async (statement: any) => {
   const q = dialect.sqlToQuery(statement); statements.push(q.sql);
+  // SQLite accepts these JOIN subqueries; the deployed TiDB boundary does not.
+  for (const join of Array.from(q.sql.matchAll(/\bON\b([\s\S]*?)(?=\b(?:LEFT|RIGHT|INNER|CROSS|FULL)\s+JOIN\b|\bWHERE\b|\bGROUP\s+BY\b|\bORDER\s+BY\b|$)/gi))) {
+    if (/\b(?:SELECT|EXISTS)\b/i.test(join[1])) throw Error("TiDB does not support subqueries in JOIN ON");
+  }
   if (q.sql.includes("your-work:pmv2-schema")) return [["pmv2_material_requests", "pmv2_material_request_items", "pmv2_task_items", "pmv2_tasks", "pmv2_teams", "pmv2_item_actions"].map(name => ({ name }))];
   if (!/^\s*(?:\/\*[^]*?\*\/\s*)?SELECT\b/i.test(q.sql)) throw Error("Not a read");
   return [memory.prepare(q.sql).all(...q.params.map(v => v instanceof Date ? v.toISOString() : v))];

@@ -142,6 +142,9 @@ function operationMemory() {
   const db = { execute: async (statement: any) => {
     const rendered = dialect.sqlToQuery(statement); statements.push(rendered.sql);
     if (!/^\s*(?:\/\*[^]*?\*\/\s*)?SELECT\b/i.test(rendered.sql)) throw Error("Operational inbox must be read only");
+    // SQLite accepts this syntax, but TiDB rejects subqueries in JOIN ON.
+    for (const on of Array.from(rendered.sql.matchAll(/\bJOIN\b[\s\S]*?\bON\b([\s\S]*?)(?=\bJOIN\b|\bWHERE\b|$)/gi)))
+      if (/\b(?:SELECT|EXISTS)\b/i.test(on[1])) throw Error("TiDB does not support subqueries in JOIN ON");
     return [memory.prepare(rendered.sql).all(...rendered.params as any[])];
   } };
   const insert = (table: string, row: Record<string, any>) => {
@@ -151,6 +154,11 @@ function operationMemory() {
 }
 
 describe("Operations actual SQL runs against real schema/DDL columns", () => {
+  it.each(["general_maintenance_manager", "maintenance_manager", "construction_procurement_manager"])("keeps the actual %s ticket queries within TiDB's JOIN restrictions", async role => {
+    const m = operationMemory();
+    try { expect(await readTicketOperations(m.db, actor(role))).toEqual([]); }
+    finally { m.memory.close(); }
+  });
   it("compiles every scoped ticket, external, settlement, idea and IT candidate query", async () => {
     const m = operationMemory();
     try {
@@ -205,6 +213,28 @@ describe("Operations actual SQL runs against real schema/DDL columns", () => {
       m.insert("audit_logs", { id: 6, entityType: "ticket_item", entityId: 2, action: "external_route_decided" });
       expect(await readTicketOperations(m.db, actor("general_maintenance_manager"))).toEqual([]);
     } finally { m.memory.close(); }
+  });
+  it("removes a stale return marker by latest event ID while retaining the ticket's current actionable inspection", async () => {
+    const m = operationMemory();
+    try {
+      m.insert("tickets", { id: 1, ticketNumber: "MT-1", status: "under_inspection", maintenanceResponsibleDepartment: DEPT.GENERAL, maintenanceResponsibleManagerId: 7,
+        inspectionWorkflowStatus: INSPECT.SUBMITTED_FOR_REVIEW, inspectionSubmittedAt: "2026-11-28 10:00:00" });
+      m.insert("ticket_items", { id: 2, ticketId: 1, itemNumber: 1, status: "under_inspection", maintenancePath: "C", responsibleDepartment: DEPT.GENERAL, responsibleManagerId: 7, approvedById: 7 });
+      m.insert("audit_logs", { id: 5, entityType: "ticket_item", entityId: 2, action: "external_route_returned", newValues: JSON.stringify({ ticketId: 1, reviewerId: 7 }), createdAt: "2026-11-28 09:00:00" });
+      // Preserve the previous query's id-based last event even when its timestamp is older.
+      m.insert("audit_logs", { id: 6, entityType: "ticket_item", entityId: 2, action: "external_route_decided", createdAt: "2026-11-27 09:00:00" });
+      expect(await readTicketOperations(m.db, actor("general_maintenance_manager"))).toMatchObject([
+        { action: "ticket_inspection_review", arrivedAt: Date.parse("2026-11-28T10:00:00Z") },
+      ]);
+    } finally { m.memory.close(); }
+  });
+  it("hydrates route evidence once per 500 distinct scoped items rather than per ticket", async () => {
+    const rows = Array.from({ length: 1200 }, (_, index) => ticket({ id: index + 1, itemId: index + 2000 }));
+    const db = database({ "ticket-candidates": rows });
+    expect(await readTicketOperations(db, actor("general_maintenance_manager"))).toHaveLength(1200);
+    const evidence = db.queries.filter(query => query.sql.includes("your-work:ticket-route-reviews"));
+    expect(evidence.map(query => query.params.length)).toEqual([500, 500, 200]);
+    expect(evidence.every(query => query.sql.includes("ORDER BY a.entityId,a.id DESC"))).toBe(true);
   });
 });
 

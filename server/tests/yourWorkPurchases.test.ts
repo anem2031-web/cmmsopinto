@@ -8,6 +8,14 @@ import { emergencyAccountingArrival, readCandidatePurchaseHeaders, readYourWorkP
 import { yourWorkMillis } from "../../shared/your-work";
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
+// SQLite accepts JOIN ON subqueries which the deployed TiDB planner rejects.
+// Keep its dialect boundary explicit before executing the real production SQL.
+function assertTiDbJoinShape(text: string) {
+  for (const on of Array.from(text.matchAll(/\bJOIN\b[\s\S]*?\bON\b([\s\S]*?)(?=\bJOIN\b|\bWHERE\b|$)/gi))) {
+    if (/\b(?:SELECT|EXISTS)\b/i.test(on[1])) throw Error("TiDB does not support subqueries in JOIN ON");
+  }
+}
+
 const f = vi.hoisted(() => ({ review: [] as any[], legacy: [] as any[] }));
 vi.mock("../_core/db", () => ({
   getPurchaseItemReviewScopeRows: async () => f.review,
@@ -173,6 +181,12 @@ describe("Personal purchase work reuses actual role and record guards", () => {
 });
 
 describe("Actual batched SQL metadata on an isolated database fixture", () => {
+  it("rejects a TiDB-incompatible JOIN ON subquery before SQLite can accept it", () => {
+    expect(() => assertTiDbJoinShape("SELECT p.id FROM purchase_orders p LEFT JOIN purchase_order_items i ON i.id IN (SELECT id FROM purchase_order_items) WHERE p.id=1"))
+      .toThrow("TiDB does not support subqueries in JOIN ON");
+    expect(() => assertTiDbJoinShape("SELECT p.id FROM purchase_orders p LEFT JOIN purchase_order_items i ON i.purchaseOrderId=p.id WHERE EXISTS (SELECT 1 FROM purchase_order_items j WHERE j.id=i.id)"))
+      .not.toThrow();
+  });
   it("proves an emergency accounting arrival from all physical receipt/cancellation members using the actual SQL", async () => {
     const memory = new DatabaseSync(":memory:");
     memory.exec(`CREATE TABLE delegate_pricing_bundle_approvals (bundleId INT,accountingApprovedAt TEXT);
@@ -188,7 +202,7 @@ describe("Actual batched SQL metadata on an isolated database fixture", () => {
       INSERT INTO warehouse_receipt_items VALUES (60,10,50,1),(61,10,51,1),(62,10,52,1);
       INSERT INTO inventory_lots VALUES (70,50,60,10),(71,51,61,10),(72,52,62,10);`);
     const dialect = new MySqlDialect(), queries: string[] = [];
-    const database = { execute: async (query: any) => { const rendered = dialect.sqlToQuery(query); queries.push(rendered.sql); return [memory.prepare(rendered.sql).all(...rendered.params as any[])]; } };
+    const database = { execute: async (query: any) => { const rendered = dialect.sqlToQuery(query); assertTiDbJoinShape(rendered.sql); queries.push(rendered.sql); return [memory.prepare(rendered.sql).all(...rendered.params as any[])]; } };
     const p = port([], [], { database: async () => database, bundleEnabled: () => true,
       bundleQueue: async () => ({ items: [{ id: 5, status: "pending_accounting", bundleNumber: "DPB-5", emergencyPurchase: true }], nextId: null }),
     });
@@ -213,7 +227,7 @@ describe("Actual batched SQL metadata on an isolated database fixture", () => {
       INSERT INTO po_pricing_batches VALUES (30,3,'pending_accounting');
       INSERT INTO purchase_order_items VALUES (50,5,'purchased',NULL,NULL),(20,2,'pending_review',NULL,NULL);`);
     const dialect = new MySqlDialect();
-    const database = { execute: async (query: any) => { const rendered = dialect.sqlToQuery(query); return [memory.prepare(rendered.sql).all(...rendered.params as any[])]; } };
+    const database = { execute: async (query: any) => { const rendered = dialect.sqlToQuery(query); assertTiDbJoinShape(rendered.sql); return [memory.prepare(rendered.sql).all(...rendered.params as any[])]; } };
     try {
       expect((await readCandidatePurchaseHeaders(database, user("warehouse"))).map(row => row.id)).toEqual([1, 3, 5, 6]);
       expect((await readCandidatePurchaseHeaders(database, user("operator"))).map(row => row.id)).toEqual([1, 6]);
@@ -236,7 +250,7 @@ describe("Actual batched SQL metadata on an isolated database fixture", () => {
     for (let id = 1; id <= 1200; id++) write.run(id);
     const queries: string[] = [], dialect = new MySqlDialect();
     const database = { execute: async (query: any) => {
-      const rendered = dialect.sqlToQuery(query); queries.push(rendered.sql);
+      const rendered = dialect.sqlToQuery(query); assertTiDbJoinShape(rendered.sql); queries.push(rendered.sql);
       if (rendered.sql.includes("information_schema.TABLES")) return [[{ name: "purchase_order_item_history" }, { name: "delegate_pricing_bundle_approvals" }]];
       return [memory.prepare(rendered.sql).all(...rendered.params as any[])];
     } };

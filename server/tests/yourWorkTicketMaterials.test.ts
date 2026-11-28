@@ -5,6 +5,11 @@ import { readTicketMaterialOperations } from "../services/your-work/operations-t
 import type { OperationsActor } from "../services/your-work/operations-port";
 vi.mock("../maintenance-team-tickets/ticket-translations", () => ({ queueTeamTicketTranslations: async () => {} }));
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite");
+function assertTiDbJoinShape(text: string) {
+  for (const on of Array.from(text.matchAll(/\bJOIN\b[\s\S]*?\bON\b([\s\S]*?)(?=\bJOIN\b|\bWHERE\b|$)/gi))) {
+    if (/\b(?:SELECT|EXISTS)\b/i.test(on[1])) throw Error("TiDB does not support subqueries in JOIN ON");
+  }
+}
 const stores: any[] = [];
 const actor = (role = "warehouse", isActive = 1): OperationsActor => ({ id: 7, role, isActive });
 beforeEach(() => vi.stubEnv("INVENTORY_LOTS_ENABLED", "true"));
@@ -43,7 +48,7 @@ function fixture() {
   `);
   const queries: Array<{ sql: string; params: any[] }> = [], dialect = new MySqlDialect();
   const db: any = { execute: async (statement: any) => {
-    const query = dialect.sqlToQuery(statement); queries.push(query);
+    const query = dialect.sqlToQuery(statement); assertTiDbJoinShape(query.sql); queries.push(query);
     return [memory.prepare(query.sql).all(...query.params), []];
   } };
   const replacements = new Map<number, any[]>(), emergencies = new Map<number, { approved: boolean }>();
@@ -77,6 +82,12 @@ function fixture() {
 }
 
 describe("personal ticket material operations", () => {
+  it("models the TiDB JOIN ON restriction while allowing subqueries in WHERE", () => {
+    expect(() => assertTiDbJoinShape("SELECT n.id FROM ticket_team_material_needs n JOIN ticket_team_assignments a ON EXISTS (SELECT 1 FROM tickets t WHERE t.id=a.ticketId)"))
+      .toThrow("TiDB does not support subqueries in JOIN ON");
+    expect(() => assertTiDbJoinShape("SELECT n.id FROM ticket_team_material_needs n JOIN ticket_team_assignments a ON a.id=n.assignmentId WHERE EXISTS (SELECT 1 FROM tickets t WHERE t.id=a.ticketId)"))
+      .not.toThrow();
+  });
   it.each(["senior_management", "technician", "delegate", "it_manager", "accountant"])("does not show read-only or other actors' warehouse work to %s", async role => {
     const f = fixture(); f.add(); expect(await readTicketMaterialOperations(f.db, actor(role), f.support)).toEqual([]); expect(f.queries).toHaveLength(0);
   });
