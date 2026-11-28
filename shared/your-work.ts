@@ -44,9 +44,33 @@ export function yourWorkMillis(value: unknown): number | null {
   const at = typeof value === "number" ? value : value instanceof Date ? value.getTime() : Date.parse(timestamp);
   return Number.isFinite(at) ? at : null;
 }
-/** Fixed UTC+03:00 is Riyadh; the arrival day itself is never overdue. */
+const DAY_MS = 86400000;
+const RIYADH_OFFSET_MS = 10800000;
+// Unix day zero was Thursday; normalize the modulo for dates before 1970 too.
+const isFriday = (day: number) => ((day + 4) % 7 + 7) % 7 === 5;
+/** Allow the arrival date and one further eligible date. Friday is excluded;
+ * the overdue boundary is midnight on the following non-Friday Riyadh date. */
 export function yourWorkOverdueAt(arrivedAt: number | null): number | null {
-  return arrivedAt == null ? null : (Math.floor((arrivedAt + 10800000) / 86400000) + 1) * 86400000 - 10800000;
+  if (arrivedAt == null || !Number.isFinite(arrivedAt)) return null;
+  let day = Math.floor((arrivedAt + RIYADH_OFFSET_MS) / DAY_MS);
+  if (!Number.isSafeInteger(day)) return null;
+  for (let allowed = 0; allowed < 2; day++) if (!isFriday(day)) allowed++;
+  if (isFriday(day)) day++;
+  return day * DAY_MS - RIYADH_OFFSET_MS;
+}
+/** Elapsed overdue time excludes Friday as well. An already overdue action
+ * stays overdue on Friday, while its duration pauses until Saturday. */
+export function yourWorkOverdueMillis(arrivedAt: number | null, now: number): number | null {
+  const start = yourWorkOverdueAt(arrivedAt);
+  if (start == null || !Number.isFinite(now)) return null;
+  if (now <= start) return 0;
+  const startDay = Math.floor((start + RIYADH_OFFSET_MS) / DAY_MS);
+  const currentDay = Math.floor((now + RIYADH_OFFSET_MS) / DAY_MS);
+  const fullDays = currentDay - startDay;
+  let eligibleDays = Math.floor(fullDays / 7) * 6;
+  for (let offset = 0; offset < fullDays % 7; offset++) if (!isFriday(startDay + offset)) eligibleDays++;
+  const partialDay = isFriday(currentDay) ? 0 : now - (currentDay * DAY_MS - RIYADH_OFFSET_MS);
+  return eligibleDays * DAY_MS + partialDay;
 }
 export function splitYourWork(rows: readonly YourWorkItem[], now: number): YourWorkResponse {
   const unique = new Map<string, YourWorkItem>();

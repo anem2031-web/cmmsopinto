@@ -5,7 +5,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
-import { canReadYourWork, YOUR_WORK_PATH, splitYourWork, yourWorkOverdueAt, type YourWorkIdentity, type YourWorkItem } from "@shared/your-work";
+import { canReadYourWork, YOUR_WORK_PATH, splitYourWork, yourWorkOverdueMillis, type YourWorkIdentity, type YourWorkItem } from "@shared/your-work";
 import { yourWorkCopy, yourWorkDate, yourWorkDuration } from "./copy";
 
 export function YourWorkSidebarLink({ actor, collapsed, active, language, onNavigate }: {
@@ -86,8 +86,8 @@ export default function YourWork() {
               <th scope="col" className="px-3 py-3 text-center font-semibold">{tab === "overdue" ? copy.overdueDuration : copy.elapsed}</th>
             </tr></thead>
             <tbody>{rows.length ? rows.map((row, index) => {
-              const since = tab === "overdue" ? yourWorkOverdueAt(row.arrivedAt) : row.arrivedAt;
-              const duration = since == null ? null : Math.max(0, referenceNow - since);
+              const duration = tab === "overdue" ? yourWorkOverdueMillis(row.arrivedAt, referenceNow)
+                : row.arrivedAt == null ? null : Math.max(0, referenceNow - row.arrivedAt);
               const description = `${copy.kinds[row.kind]} ${row.reference} — ${copy.actions[row.action]}`;
               return <tr key={row.key} tabIndex={0} onClick={() => openRow(row)} onKeyDown={event => keyOpenRow(event, row)}
                 aria-label={description} data-work-key={row.key}

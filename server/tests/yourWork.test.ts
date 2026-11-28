@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { APP_ROLE, canRoleAccessPath } from "../../shared/roles";
 import { businessPageAllowed, businessRpcAllowed, isBusinessGuardedRole } from "../../shared/business-role-policy";
-import { YOUR_WORK_ROLES, canAccessYourWork, canReadYourWork, splitYourWork, yourWorkOverdueAt, yourWorkMillis, yourWorkRpcAllowed, type YourWorkItem } from "../../shared/your-work";
+import { YOUR_WORK_ROLES, canAccessYourWork, canReadYourWork, splitYourWork, yourWorkOverdueAt, yourWorkOverdueMillis, yourWorkMillis, yourWorkRpcAllowed, type YourWorkItem } from "../../shared/your-work";
 const f = vi.hoisted(() => ({ read: vi.fn() }));
 vi.mock("../_core/db", () => ({}));
 vi.mock("../services/your-work", () => ({ readYourWork: f.read }));
@@ -75,9 +75,9 @@ describe("Your Work capability boundary", () => {
 });
 
 describe("Riyadh calendar-day classification", () => {
-  it("keeps the arrival day actionable through its final millisecond, then moves at midnight", () => {
+  it("keeps arrival and the following eligible day actionable until the third eligible date", () => {
     const item = row();
-    const boundary = at("2026-11-29T00:00:00+03:00");
+    const boundary = at("2026-11-30T00:00:00+03:00");
     expect(yourWorkOverdueAt(item.arrivedAt)).toBe(boundary);
     expect(splitYourWork([item], boundary - 1).counts).toEqual({ overdue: 0, required: 1 });
     expect(splitYourWork([item], boundary).counts).toEqual({ overdue: 1, required: 0 });
@@ -86,7 +86,50 @@ describe("Riyadh calendar-day classification", () => {
   it("uses Riyadh day rather than the UTC or host day", () => {
     const item = row("late-night", at("2026-11-28T21:30:00Z")); // 29 Nov 00:30 Riyadh.
     expect(splitYourWork([item], at("2026-11-29T10:00:00Z")).counts.overdue).toBe(0);
-    expect(yourWorkOverdueAt(item.arrivedAt)).toBe(at("2026-11-29T21:00:00Z"));
+    expect(yourWorkOverdueAt(item.arrivedAt)).toBe(at("2026-11-30T21:00:00Z"));
+  });
+  it.each([
+    ["2026-11-22", "2026-11-24"], // Sunday -> Tuesday.
+    ["2026-11-23", "2026-11-25"], // Monday -> Wednesday.
+    ["2026-11-24", "2026-11-26"], // Tuesday -> Thursday.
+    ["2026-11-25", "2026-11-28"], // Wednesday -> Saturday; never start on Friday.
+    ["2026-11-26", "2026-11-29"], // Thursday -> Sunday; Friday grants no day.
+    ["2026-11-27", "2026-11-30"], // Friday arrival -> Saturday/Sunday allowance.
+    ["2026-11-28", "2026-11-30"], // Saturday -> Monday, the approved example.
+  ])("excludes Friday for arrival %s and first becomes overdue %s", (arrival, deadline) => {
+    const boundary = at(`${deadline}T00:00:00+03:00`);
+    for (const clock of ["00:00:00.000", "23:59:59.999"]) {
+      const item = row("calendar", at(`${arrival}T${clock}+03:00`));
+      expect(yourWorkOverdueAt(item.arrivedAt)).toBe(boundary);
+      expect(splitYourWork([item], boundary - 1).counts).toEqual({ overdue: 0, required: 1 });
+      expect(splitYourWork([item], boundary).counts).toEqual({ overdue: 1, required: 0 });
+    }
+  });
+  it("keeps the approved 28 November action in required for all of the 29th", () => {
+    const item = row();
+    expect(splitYourWork([item], at("2026-11-29T23:59:59.999+03:00")).counts).toEqual({ overdue: 0, required: 1 });
+    expect(yourWorkOverdueMillis(item.arrivedAt, at("2026-11-30T00:00:00+03:00"))).toBe(0);
+    expect(yourWorkOverdueMillis(item.arrivedAt, at("2026-11-30T02:00:00+03:00"))).toBe(2 * 3600000);
+  });
+  it("excludes all Friday hours from overdue duration while preserving the overdue action", () => {
+    const arrived = at("2026-11-28T13:00:00+03:00"); // Starts Monday 30 Nov.
+    const friday = at("2026-12-04T00:00:00+03:00"), saturday = at("2026-12-05T00:00:00+03:00");
+    expect(yourWorkOverdueMillis(arrived, friday)).toBe(4 * 86400000);
+    expect(yourWorkOverdueMillis(arrived, saturday - 1)).toBe(4 * 86400000);
+    expect(yourWorkOverdueMillis(arrived, saturday)).toBe(4 * 86400000);
+    expect(yourWorkOverdueMillis(arrived, saturday + 3600000)).toBe(4 * 86400000 + 3600000);
+    expect(splitYourWork([row("older", arrived)], friday + 12 * 3600000).counts).toEqual({ overdue: 1, required: 0 });
+  });
+  it("excludes repeated Fridays across months and years, with the current partial day intact", () => {
+    const arrived = at("2026-11-28T13:00:00+03:00");
+    const afterTenWeeks = at("2027-02-08T03:25:00+03:00");
+    expect(yourWorkOverdueMillis(arrived, afterTenWeeks)).toBe(60 * 86400000 + (3 * 60 + 25) * 60000);
+  });
+  it("does not manufacture overdue durations for missing or invalid times", () => {
+    expect(yourWorkOverdueMillis(null, Date.now())).toBeNull();
+    expect(yourWorkOverdueMillis(NaN, Date.now())).toBeNull();
+    expect(yourWorkOverdueMillis(row().arrivedAt, Infinity)).toBeNull();
+    expect(yourWorkOverdueMillis(row().arrivedAt, at("2026-11-28T14:00:00+03:00"))).toBe(0);
   });
   it("does not invent arrival evidence or label unknown/future arrivals overdue", () => {
     const result = splitYourWork([row("unknown", null), row("future", at("2026-12-01T10:00:00Z")), row("invalid", NaN)], at("2026-11-29T13:00:00Z"));

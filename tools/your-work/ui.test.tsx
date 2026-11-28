@@ -54,7 +54,7 @@ import YourWork, { YourWorkSidebarLink } from "../../client/src/pages/your-work/
 const now = Date.parse("2026-11-28T08:00:00Z");
 const row = (key: string, arrivedAt: number | null): YourWorkItem => ({ key, kind: "purchase", reference: `PR-${key}`, title: "مصباح", action: "purchase_review", href: `/purchase-orders/12?itemId=${key}#item-${key}`, arrivedAt });
 const data = (): YourWorkResponse => ({
-  overdue: [row("101", Date.parse("2026-11-27T13:53:00Z")), row("102", Date.parse("2026-11-26T13:53:00Z"))],
+  overdue: [row("101", Date.parse("2026-11-25T13:53:00Z")), row("102", Date.parse("2026-11-24T13:53:00Z"))],
   required: [row("201", Date.parse("2026-11-28T07:30:00Z"))], counts: { overdue: 2, required: 1 }, generatedAt: now,
 });
 const content = (value: any): string => Array.isArray(value) ? value.map(content).join("") : React.isValidElement(value) ? content((value.props as any).children) : value == null ? "" : String(value);
@@ -83,22 +83,22 @@ describe("Your work personal page", () => {
     expect(content(tab("required").children)).toContain("(1)");
     expect(html).toContain('class="px-3 py-3 text-start font-semibold"');
     expect(html).toContain('class="px-3 py-3 text-center font-semibold"');
-    expect(html).toContain('dir="ltr" dateTime="2026-11-27T13:53:00.000Z"');
-    expect(html).toContain("2026-11-27-16:53");
+    expect(html).toContain('dir="ltr" dateTime="2026-11-25T13:53:00.000Z"');
+    expect(html).toContain("2026-11-25-16:53");
   });
   it.each(["ar", "en", "ur"])("translates idea and IT purchase workflow action rows in %s", language => {
     f.language = language;
     const actions = ["idea_classify", "idea_study", "idea_decide", "it_purchase_submit", "it_purchase_create"] as const;
-    f.result.data.overdue = actions.map((action, index) => ({ ...row(String(index + 1), Date.parse("2026-11-27T13:53:00Z")), action }));
+    f.result.data.overdue = actions.map((action, index) => ({ ...row(String(index + 1), Date.parse("2026-11-25T13:53:00Z")), action }));
     const html = render();
     for (const action of actions) expect(html).toContain(yourWorkCopy(language).actions[action]);
     expect(f.rows).toHaveLength(actions.length);
   });
-  it("shows serials within each tab and separates elapsed time from next-day overdue time", () => {
+  it("shows serials within each tab and separates elapsed time from the working-day overdue time", () => {
     let html = render();
     expect(f.rows).toHaveLength(2);
     expect(html).toContain('tabular-nums">1</td>'); expect(html).toContain('tabular-nums">2</td>');
-    expect(html).toContain("11 ساعة"); // overdue since midnight Riyadh, not arrival yesterday.
+    expect(html).toContain("11 ساعة"); // Wednesday arrival becomes overdue Saturday midnight after Thursday grace and Friday exclusion.
     expect(html).not.toContain("PR-201");
     tab("required").onClick(); html = render();
     expect(f.rows).toHaveLength(1); expect(html).toContain("PR-201"); expect(html).not.toContain("PR-101");
@@ -150,8 +150,8 @@ describe("Your work personal page", () => {
     const html = render(); expect(html.match(/غير مسجل/g)?.length).toBe(2);
     expect(html).not.toContain("Invalid Date"); expect(html).not.toContain("NaN");
   });
-  it("moves work to overdue at the start of the next Riyadh day on the minute tick", () => {
-    vi.setSystemTime(new Date("2026-11-28T20:59:40Z"));
+  it("moves work to overdue after the extra working day at the Riyadh midnight minute tick", () => {
+    vi.setSystemTime(new Date("2026-11-29T20:59:40Z"));
     f.result.data = { overdue: [], required: [row("201", Date.parse("2026-11-28T07:30:00Z"))], counts: { overdue: 0, required: 1 }, generatedAt: Date.now() };
     vi.stubGlobal("window", { setInterval, clearInterval });
     render(); expect(content(tab("overdue").children)).toContain("(0)");
@@ -162,9 +162,33 @@ describe("Your work personal page", () => {
     expect(f.rows).toHaveLength(1); cleanup();
   });
   it("does not move a fresh midnight server result back to the previous day while the local timer is waiting", () => {
-    vi.setSystemTime(new Date("2026-11-28T20:59:40Z"));
-    f.result.data = { overdue: [row("201", Date.parse("2026-11-28T07:30:00Z"))], required: [], counts: { overdue: 1, required: 0 }, generatedAt: Date.parse("2026-11-28T21:00:20Z") };
+    vi.setSystemTime(new Date("2026-11-29T20:59:40Z"));
+    f.result.data = { overdue: [row("201", Date.parse("2026-11-28T07:30:00Z"))], required: [], counts: { overdue: 1, required: 0 }, generatedAt: Date.parse("2026-11-29T21:00:20Z") };
     render(); expect(content(tab("overdue").children)).toContain("(1)"); expect(f.rows).toHaveLength(1);
+  });
+  it("freezes overdue duration throughout Friday while real elapsed time continues", () => {
+    vi.setSystemTime(new Date("2026-11-26T21:00:00Z")); // Friday 00:00 Riyadh.
+    const arrival = Date.parse("2026-11-24T07:30:00Z"); // Tuesday: due Thursday 00:00 Riyadh.
+    f.result.data = { overdue: [row("301", arrival)], required: [], counts: { overdue: 1, required: 0 }, generatedAt: Date.now() };
+    vi.stubGlobal("window", { setInterval, clearInterval });
+    render(); const before = content(f.rows[0].children[4]);
+    expect(before).toBe("يوم");
+    const cleanup = f.effects[0]();
+    vi.advanceTimersByTime(23 * 3_600_000 + 59 * 60_000); render();
+    expect(content(f.rows[0].children[4])).toBe(before);
+    expect(content(tab("overdue").children)).toContain("(1)");
+    vi.advanceTimersByTime(2 * 60_000); render(); // Saturday 00:01 resumes counted delay.
+    expect(content(f.rows[0].children[4])).toBe("يوم ودقيقة"); cleanup();
+  });
+  it("reclassifies a cached old-boundary response with the same rule as the current API and keeps arrival elapsed real", () => {
+    vi.setSystemTime(new Date("2026-11-27T08:00:00Z")); // Friday 11:00 Riyadh: Thursday arrival is not overdue, but elapsed time includes Friday.
+    f.result.data = { overdue: [row("201", Date.parse("2026-11-26T07:30:00Z"))], required: [], counts: { overdue: 1, required: 0 }, generatedAt: Date.now() };
+    render();
+    expect(content(tab("overdue").children)).toContain("(0)");
+    expect(content(tab("required").children)).toContain("(1)");
+    tab("required").onClick(); const html = render();
+    expect(f.rows).toHaveLength(1); expect(html).toContain("PR-201");
+    expect(content(f.rows[0].children[4])).toBe("يوم و30 دقيقة");
   });
   it("keeps the mobile layout as a horizontally scrollable table", () => {
     const html = render(); expect(html).toContain("overflow-x-auto"); expect(html).toContain("min-w-[680px]"); expect(html).toContain("<table");
@@ -227,6 +251,6 @@ describe("Your work navigation and stable formatting", () => {
     expect(yourWorkDuration(26 * 3600000, "en", "missing")).toBe("1 day and 2 hours");
     expect(yourWorkDuration(26 * 3600000, "ur", "missing")).toBe("1 دن اور 2 گھنٹے");
     expect(yourWorkDuration(null, "ar", "missing")).toBe("missing");
-    expect(yourWorkOverdueAt(Date.parse("2026-11-28T00:01:00Z"))).toBe(Date.parse("2026-11-28T21:00:00Z"));
+    expect(yourWorkOverdueAt(Date.parse("2026-11-28T00:01:00Z"))).toBe(Date.parse("2026-11-29T21:00:00Z"));
   });
 });
