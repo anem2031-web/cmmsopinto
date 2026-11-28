@@ -142,6 +142,12 @@ export const warehouseProcedure = roleMiddleware([
   APP_ROLE.ADMIN,
 ]);
 
+/** Read-only external maintenance oversight; warehouse writers stay separate. */
+export const externalMaintenanceWarehouseReadProcedure = roleMiddleware([
+  APP_ROLE.WAREHOUSE,
+  APP_ROLE.SENIOR_MANAGEMENT,
+]);
+
 /**
  * قائمة فارغة تعني عمليًا "أدمن ومالك فقط" — roleMiddleware يسمح بهما دائمًا
  * بغض النظر عن القائمة الممرَّرة (راجع أعلى الملف). تُستخدم لعمليات حسّاسة

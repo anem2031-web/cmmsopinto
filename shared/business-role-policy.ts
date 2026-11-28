@@ -113,6 +113,7 @@ const warehouseQueries = [
  * warehouse workflow mutations remain exclusive to the warehouse role.
  */
 const warehouseOversightQueries = [
+  "externalMaintenance.listForWarehouse",
   ...paths("warehouseRequestDocuments", "list detail"),
   ...paths("pmv2.warehouse", "waitingMaterialQueue readyToIssueQueue pendingReturns"),
   "pscmFulfillment.ready",
@@ -203,7 +204,7 @@ export function businessRpcAllowed(user: BusinessIdentity | null | undefined, ty
 const commonPages = new Set(["/", "/notifications", "/improvement-ideas", "/purchase-orders", "/purchase-orders/new", "/documents", "/inventory/reports", "/inventory/reconciliation",
   "/inventory/reports/stock-balance", "/inventory/reports/movements", "/inventory/reports/valuation", "/inventory/reports/analytics"]);
 const warehousePages = new Set(["/inventory", "/inventory-operations", "/warehouse/receive-v2", "/warehouse/return", "/warehouse/returns", "/warehouse/transfer", "/warehouse/issue", "/warehouses", "/purchase-cycle", "/external-maintenance", "/item-tracker", "/users", "/catalog", "/operational-issues", "/maintenance-team-tickets", "/scheduled-maintenance/warehouse-requests"]);
-const warehouseOversightPages = new Set(["/inventory", "/inventory-operations", "/warehouse/returns", "/warehouse/transfer", "/warehouse/issue", "/warehouses", "/item-tracker", "/scheduled-maintenance/warehouse-requests"]);
+const warehouseOversightPages = new Set(["/external-maintenance", "/inventory", "/inventory-operations", "/warehouse/returns", "/warehouse/transfer", "/warehouse/issue", "/warehouses", "/item-tracker", "/scheduled-maintenance/warehouse-requests"]);
 const managementPages = new Set(["/tickets", "/tickets/inbox", "/tickets/new", "/reports", "/reports/technicians", "/reports/purchase-cycle", "/reports/maintenance-cycle", "/reports/section-report", "/reports/preventive", "/inspection-dashboard", "/ai-assistant"]);
 export function businessPageAllowed(role: BusinessRole, rawPath: string): boolean {
   const path = rawPath.split(/[?#]/, 1)[0] || "/";

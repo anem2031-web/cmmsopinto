@@ -14,6 +14,7 @@ import {
   protectedProcedure,
   router,
   warehouseProcedure,
+  externalMaintenanceWarehouseReadProcedure,
 } from "../_shared/procedures";
 import * as db from "../../_core/db";
 import { assertTicketReadable } from "../tickets/tickets.access";
@@ -111,7 +112,7 @@ export const externalMaintenanceRouter = router({
     return db.getExternalMaintenanceJobByTicketId(input.ticketId);
   }),
 
-  listForWarehouse: warehouseProcedure.query(async () => {
+  listForWarehouse: externalMaintenanceWarehouseReadProcedure.query(async () => {
     const [waitingPreparation, jobs] = await Promise.all([
       db.listPathCTicketsWaitingWarehousePreparation(),
       db.listExternalMaintenanceJobs([

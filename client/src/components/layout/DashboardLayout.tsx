@@ -123,7 +123,7 @@ const NAV_SECTIONS: NavSection[] = [
       { icon: FileText, labelKey: "nav.pmv2MaintenanceReports", path: "/scheduled-maintenance/reports",
         roles: ["maintenance_manager","general_maintenance_manager","owner","admin"] },
       { icon: Wrench, labelKey: "nav.externalMaintenance", path: "/external-maintenance",
-        roles: ["warehouse","owner","admin"] },
+        roles: ["warehouse","senior_management","owner","admin"] },
       { icon: CalendarClock, labelKey: "nav.preventive",      path: "/preventive",
         roles: ["owner","admin"] },
       { icon: Brain,         labelKey: "nav.predictiveMaint", path: "/predictive",

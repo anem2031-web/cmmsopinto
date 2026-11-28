@@ -12,7 +12,7 @@ import { APP_ROLE, isDelegateRole } from "../../shared/roles";
 const fixture = vi.hoisted(() => ({
   actual: { id: 7, role: "delegate", isActive: 1 } as any, user: { id: 7, role: "delegate", isActive: 1 } as any,
   loading: false, language: "ar", translations: {} as any, rows: [] as any[], warehouse: { waitingPreparation: [], jobs: [] } as any,
-  cells: [] as any[], cursor: 0, buttons: [] as any[], inputs: [] as any[], areas: [] as any[], calls: [] as any[], queries: [] as string[],
+  cells: [] as any[], cursor: 0, buttons: [] as any[], cards: [] as any[], inputs: [] as any[], areas: [] as any[], calls: [] as any[], queries: [] as string[], directoryQueries: [] as any[],
   pending: false, callbacks: {} as Record<string, any>, invalidations: [] as string[],
 }));
 vi.mock("react", async original => ({ ...await original<typeof import("react")>(), useState: (initial: any) => {
@@ -30,11 +30,15 @@ vi.mock("../../client/src/hooks/useOfflineUpload", () => ({ compressImage: vi.fn
 vi.mock("../../client/src/i18n/apiError", () => ({ localizeApiError: (message: string) => message }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("../../client/src/components/ui/button", () => ({ Button: (props: any) => { fixture.buttons.push(props); return <button {...props} />; } }));
+vi.mock("../../client/src/components/ui/card", () => ({
+  Card: (props: any) => { fixture.cards.push(props); return <div {...props} />; },
+  CardContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+}));
 vi.mock("../../client/src/components/ui/input", () => ({ Input: (props: any) => { fixture.inputs.push(props); return <input {...props} />; } }));
 vi.mock("../../client/src/components/ui/textarea", () => ({ Textarea: (props: any) => { fixture.areas.push(props); return <textarea {...props} />; } }));
 vi.mock("../../client/src/components/ui/dialog", () => ({
   Dialog: ({ open, children }: any) => open ? <section role="dialog">{children}</section> : null,
-  DialogContent: ({ children }: any) => <div>{children}</div>, DialogFooter: ({ children }: any) => <footer>{children}</footer>,
+  DialogContent: ({ children, dir }: any) => <div dir={dir}>{children}</div>, DialogFooter: ({ children }: any) => <footer>{children}</footer>,
   DialogHeader: ({ children }: any) => <header>{children}</header>, DialogTitle: ({ children }: any) => <h2>{children}</h2>,
 }));
 vi.mock("../../client/src/components/ui/tabs", () => ({
@@ -49,7 +53,7 @@ vi.mock("../../client/src/lib/trpc", () => {
   const invalidate = (name: string) => ({ invalidate: () => fixture.invalidations.push(name) });
   return { trpc: {
     useUtils: () => ({ externalMaintenance: { listForDelegate: invalidate("delegate"), listForWarehouse: invalidate("warehouse") } }),
-    users: { list: { useQuery: () => ({ data: [{ id: 7, role: "delegate", name: "Delegate", isActive: 1 }] }) } },
+    users: { list: { useQuery: (...args: any[]) => { fixture.directoryQueries.push(args); return { data: [{ id: 7, role: "delegate", name: "Delegate", isActive: 1 }, { id: 8, role: "technician", name: "Technician", isActive: 1 }] }; } } },
     externalMaintenance: {
       listForDelegate: { useQuery: () => { fixture.queries.push("delegate"); return { data: fixture.rows, isLoading: false }; } },
       listForWarehouse: { useQuery: () => ({ data: fixture.warehouse, isLoading: false }) },
@@ -72,13 +76,13 @@ const button = (label: string) => {
   expect(found, `button ${label}`).toBeTruthy(); return found!;
 };
 function render(element = <DelegateExternalMaintenanceCards />) {
-  fixture.cursor = 0; fixture.buttons = []; fixture.inputs = []; fixture.areas = [];
+  fixture.cursor = 0; fixture.buttons = []; fixture.cards = []; fixture.inputs = []; fixture.areas = [];
   return renderToStaticMarkup(element);
 }
 beforeEach(() => {
   fixture.actual = { id: 7, role: "delegate", isActive: 1 }; fixture.user = fixture.actual; fixture.loading = false;
   fixture.language = "ar"; fixture.translations = ar; fixture.rows = [prepared()]; fixture.warehouse = { waitingPreparation: [], jobs: [] };
-  fixture.cells = []; fixture.cursor = 0; fixture.calls = []; fixture.queries = []; fixture.callbacks = {}; fixture.invalidations = []; fixture.pending = false;
+  fixture.cells = []; fixture.cursor = 0; fixture.calls = []; fixture.queries = []; fixture.directoryQueries = []; fixture.callbacks = {}; fixture.invalidations = []; fixture.pending = false;
   vi.clearAllMocks();
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -245,6 +249,135 @@ describe("Warehouse title and re-preparation", () => {
     expect(fixture.calls).toEqual([{ name: "prepare", input: { ticketId: 9, ticketItemId: 10, jobId: 20, expectedRevision: 4, purchaseTitle: "Motor replacement maintenance", assetName: "Asset A", assetBeforePhotoUrl: "uploads/asset.webp", assetBeforeCondition: "Stopped", delegateId: 7, warehouseNotes: "Keep upright" } }]);
     fixture.callbacks.prepare.onSuccess({ exitDocumentNumber: "EXT-20" });
     expect(printExternalMaintenanceDocument).toHaveBeenCalledWith("exit", expect.objectContaining({ job: expect.objectContaining({ purchaseTitle: "  Motor replacement maintenance  ", exitDocumentNumber: "EXT-20", delegateReceiptStatus: "pending" }) }));
+  });
+});
+
+describe("Senior-management external-maintenance read-only cards", () => {
+  function loadRow(kind: "unprepared" | "preparation" | "receipt" | "handover" | "monitoring") {
+    fixture.actual = { id: 50, role: "senior_management", isActive: 1 };
+    fixture.user = fixture.actual;
+    const row = prepared();
+    Object.assign(row, { delegateName: "Delegate", assignedTechnicianName: "Technician", poNumber: "PR-20" });
+    Object.assign(row.job, {
+      assetAfterReturnPhotoUrl: "uploads/returned.webp", returnCondition: "Repaired",
+      warehouseReturnNotes: "Returned safely", gateExitApprovedAt: "2026-11-04T08:00:00Z",
+      gateEntryApprovedAt: "2026-11-05T09:00:00Z", gateEntryCarrierName: "Carrier",
+      returnDocumentNumber: "RETURN-20", handoverDocumentNumber: "HANDOVER-20",
+    });
+    if (kind === "unprepared") {
+      const waiting = { ticketId: 9, ticketItemId: 10, ticketNumber: row.ticketNumber,
+        ticketTitle: row.ticketTitle, itemDescription: row.ticketDescription,
+        assetName: "Asset A", assignedTechnicianName: "Technician", ticketBeforePhotoUrl: "uploads/original.webp" };
+      fixture.warehouse = { waitingPreparation: [waiting], jobs: [] };
+      return waiting;
+    }
+    row.job.status = kind === "preparation" ? "waiting_delegate_receipt"
+      : kind === "receipt" ? "waiting_warehouse_receipt"
+      : kind === "handover" ? "waiting_technician_handover" : "purchase_cycle";
+    fixture.warehouse = { waitingPreparation: [], jobs: [row] };
+    return row;
+  }
+
+  function expectNoOperationalControls(html: string) {
+    const forbiddenLabels = ["تعديل التجهيز", "Edit preparation", "تیاری میں ترمیم کریں",
+      "إعادة للمسؤول لمراجعة المسار", "Return for route review", "راستے کے جائزے کیلئے واپس",
+      ...[ar, en, ur].flatMap(({ workflow: { purchase } }) => [purchase.prepareAsset, purchase.receiveAsset,
+        purchase.handoverAsset, purchase.saveIssueDocument, purchase.confirmReceipt, purchase.confirmHandover,
+        purchase.exitDocument, purchase.returnDocument, purchase.handoverDocument])];
+    expect(fixture.buttons.filter(props => forbiddenLabels.includes(text(props.children).trim()))).toEqual([]);
+    expect(fixture.inputs.some(props => props.type === "file" || props.id === "external-purchase-title")).toBe(false);
+    expect(fixture.areas).toHaveLength(0);
+    expect(html).not.toContain('type="file"');
+    expect(fixture.calls).toEqual([]);
+    expect(printExternalMaintenanceDocument).not.toHaveBeenCalled();
+  }
+
+  it.each(["unprepared", "preparation", "receipt", "handover", "monitoring"] as const)("opens %s card details without any operational controls", kind => {
+    const row = loadRow(kind);
+    let html = render(<ExternalMaintenanceWarehouseTab />);
+    expect(html).toContain(row.ticketNumber);
+    expectNoOperationalControls(html);
+    const cards = fixture.cards.filter(props => props.role === "button");
+    expect(cards).toHaveLength(1);
+    expect(cards[0].tabIndex).toBe(0);
+    cards[0].onClick();
+    html = render(<ExternalMaintenanceWarehouseTab />);
+    expect(html).toContain('role="dialog"');
+    const details = html.slice(html.indexOf('role="dialog"'));
+    expect(details).toContain(row.ticketNumber);
+    expect(details).toContain("Asset A");
+    if ("job" in row) {
+      expect(details).toContain(row.job.purchaseTitle);
+      expect(details).toContain("Stopped");
+      expect(details).toContain("Delegate");
+      expect(details).toContain("/api/media?key=uploads%2Fasset.webp");
+    } else {
+      expect(details).toContain(row.ticketTitle);
+      expect(details).toContain("/api/media?key=uploads%2Foriginal.webp");
+    }
+    expectNoOperationalControls(html);
+    expect(fixture.directoryQueries.at(-1)?.[1]?.enabled).toBe(false);
+  });
+
+  it.each(["Enter", " "])("opens a read-only card with the %s key", key => {
+    loadRow("monitoring");
+    render(<ExternalMaintenanceWarehouseTab />);
+    const card = fixture.cards.find(props => props.role === "button");
+    expect(card).toBeTruthy();
+    const cardElement = {};
+    card.onKeyDown({ key, target: cardElement, currentTarget: cardElement, preventDefault: vi.fn() });
+    const html = render(<ExternalMaintenanceWarehouseTab />);
+    expect(html).toContain('role="dialog"');
+    expectNoOperationalControls(html);
+    button("إغلاق").onClick();
+    expect(render(<ExternalMaintenanceWarehouseTab />)).not.toContain('role="dialog"');
+    expect(fixture.calls).toEqual([]);
+  });
+
+  it("offers the Details control without a print or write action", () => {
+    loadRow("monitoring");
+    render(<ExternalMaintenanceWarehouseTab />);
+    button("التفاصيل").onClick({ stopPropagation: vi.fn() });
+    const html = render(<ExternalMaintenanceWarehouseTab />);
+    expect(html).toContain('role="dialog"');
+    expectNoOperationalControls(html);
+  });
+
+  it.each([
+    ["ar", ar, "rtl", "التفاصيل", "تفاصيل الصيانة الخارجية"],
+    ["en", en, "ltr", "Details", "External maintenance details"],
+    ["ur", ur, "rtl", "تفصیلات", "بیرونی مینٹیننس کی تفصیلات"],
+  ] as const)("localizes the read-only Details control and dialog direction in %s", (language, translations, direction, detailsLabel, title) => {
+    loadRow("monitoring");
+    fixture.language = language; fixture.translations = translations;
+    render(<ExternalMaintenanceWarehouseTab />);
+    button(detailsLabel).onClick({ stopPropagation: vi.fn() });
+    const html = render(<ExternalMaintenanceWarehouseTab />);
+    expect(html).toContain('role="dialog"');
+    const dialog = html.slice(html.indexOf('<section role="dialog">'));
+    expect(dialog).toContain(`dir="${direction}"`);
+    expect(dialog).toContain(`<h2>${title}</h2>`);
+    expect(dialog).toContain("MT-2026-010");
+    expect(dialog).toContain("Asset A");
+    expectNoOperationalControls(html);
+  });
+
+  it.each(["warehouse", "owner", "admin"])("retains the existing %s warehouse actions and document controls", role => {
+    loadRow("unprepared");
+    fixture.actual = { id: 20, role, isActive: 1 }; fixture.user = fixture.actual;
+    const receipt = prepared(); receipt.job.id = 21; receipt.job.status = "waiting_warehouse_receipt";
+    const handover = prepared(); handover.job.id = 22; handover.job.status = "waiting_technician_handover";
+    const monitoring = prepared(); monitoring.job.id = 23; monitoring.job.status = "purchase_cycle";
+    Object.assign(monitoring.job, { exitDocumentNumber: "EXIT-23", returnDocumentNumber: "RETURN-23", handoverDocumentNumber: "HANDOVER-23" });
+    fixture.warehouse.jobs = [receipt, handover, monitoring];
+    render(<ExternalMaintenanceWarehouseTab />);
+    for (const label of [ar.workflow.purchase.prepareAsset, "إعادة للمسؤول لمراجعة المسار",
+      ar.workflow.purchase.receiveAsset, ar.workflow.purchase.handoverAsset,
+      ar.workflow.purchase.exitDocument, ar.workflow.purchase.returnDocument, ar.workflow.purchase.handoverDocument]) {
+      expect(button(label).onClick).toEqual(expect.any(Function));
+    }
+    expect(fixture.directoryQueries.at(-1)?.[1]?.enabled).toBe(true);
+    expect(fixture.cards.every(props => props.role !== "button")).toBe(true);
   });
 });
 

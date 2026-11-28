@@ -8,7 +8,7 @@ export default function ExternalMaintenance() {
   const { t, dir } = useLanguage();
   const w = t.workflow.purchase;
   const role = user?.role;
-  const isAllowed = role === "warehouse" || role === "owner" || role === "admin";
+  const isAllowed = role === "warehouse" || role === "senior_management" || role === "owner" || role === "admin";
 
   if (!isAllowed) {
     return (

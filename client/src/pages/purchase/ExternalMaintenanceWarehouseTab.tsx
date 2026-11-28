@@ -1,5 +1,5 @@
 import { isDelegateRole } from "@shared/roles";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type KeyboardEvent } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { mediaUrl } from "@/lib/mediaUrl";
@@ -205,6 +205,7 @@ async function uploadFile(file: File, t: any): Promise<string> {
 
 function stageLabel(status: string, t: any) {
   const labels: Record<string, string> = {
+    waiting_warehouse_preparation: t.workflow.purchase.stageWarehousePreparation,
     waiting_delegate_receipt: t.workflow.purchase.statusWaitingDelegateReceipt,
     waiting_gate_exit: t.workflow.purchase.statusWaitingGateExit,
     purchase_cycle: t.workflow.purchase.statusPurchaseCycle,
@@ -275,7 +276,18 @@ export default function ExternalMaintenanceWarehouseTab() {
   const utils = trpc.useUtils();
   const { user } = useAuth();
   const { data, isLoading } = trpc.externalMaintenance.listForWarehouse.useQuery();
-  const { data: users = [] } = trpc.users.list.useQuery();
+  const readOnly = user?.role === "senior_management";
+  const { data: users = [] } = trpc.users.list.useQuery(undefined, { enabled: !readOnly });
+  const [detailsRow, setDetailsRow] = useState<any>(null);
+  const readOnlyCardProps = (row: any) => readOnly ? {
+    role: "button", tabIndex: 0, "data-external-readonly": true,
+    onClick: () => setDetailsRow(row),
+    onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault(); setDetailsRow(row);
+      }
+    },
+  } : {};
 
   const [prepareTicket, setPrepareTicket] = useState<any>(null);
   const [returnTicket, setReturnTicket] = useState<any>(null);
@@ -418,6 +430,47 @@ export default function ExternalMaintenanceWarehouseTab() {
       },
     };
   };
+  const detailRow = detailsRow ? localizeExternalRow(detailsRow) : null;
+  const detailJob = detailRow?.job || {};
+  const dateTime = (value: any) => value ? new Date(value).toLocaleString(language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-GB", { timeZone: "Asia/Riyadh" }) : "—";
+  const detailFields = detailRow ? [
+    [routeText("رقم البلاغ", "Ticket number", "ٹکٹ نمبر"), detailRow.ticketNumber],
+    [routeText("عنوان البلاغ", "Ticket title", "ٹکٹ کا عنوان"), detailRow.ticketTitle],
+    [routeText("التفاصيل", "Description", "تفصیل"), detailRow.itemDescription || detailRow.ticketDescription],
+    [t.workflow.purchase.externalPurchaseTitle, detailJob.purchaseTitle],
+    [t.workflow.purchase.asset, detailJob.assetName || detailRow.assetName || detailRow.assetRegisteredName],
+    [t.workflow.purchase.assignedTechnician, detailRow.assignedTechnicianName],
+    [routeText("المرحلة الحالية", "Current stage", "موجودہ مرحلہ"), stageLabel(detailJob.status || "waiting_warehouse_preparation", t)],
+    [routeText("المندوب المسؤول", "Responsible delegate", "ذمہ دار نمائندہ"), detailRow.delegateName],
+    [routeText("طلب الشراء", "Purchase order", "خریداری کا آرڈر"), detailRow.poNumber],
+    [routeText("حالة الأصل قبل الخروج", "Asset condition before exit", "باہر جانے سے پہلے اثاثے کی حالت"), detailJob.assetBeforeCondition],
+    [t.workflow.purchase.warehouseNotes, detailJob.warehouseNotes],
+    [routeText("اسم الورشة", "Workshop name", "ورکشاپ کا نام"), detailJob.workshopName],
+    [routeText("هاتف الورشة", "Workshop phone", "ورکشاپ کا فون"), detailJob.workshopPhone],
+    [routeText("رابط موقع الورشة", "Workshop location", "ورکشاپ کا مقام"), detailJob.workshopLocationUrl],
+    [routeText("موعد العودة المتوقع", "Expected return date", "واپسی کی متوقع تاریخ"), detailJob.expectedReturnDate ? String(detailJob.expectedReturnDate).slice(0, 10) : null],
+    [routeText("ملاحظات الورشة", "Workshop notes", "ورکشاپ کے نوٹس"), detailJob.workshopNotes],
+    [routeText("جهّز الأصل", "Prepared by", "تیار کرنے والا"), detailRow.warehousePreparedByName],
+    [routeText("وقت التجهيز", "Preparation time", "تیاری کا وقت"), dateTime(detailJob.warehousePreparedAt)],
+    [routeText("وقت استلام المندوب", "Delegate receipt time", "نمائندے کی وصولی کا وقت"), dateTime(detailJob.delegateReceiptAt)],
+    [routeText("سبب رفض المندوب", "Delegate rejection reason", "نمائندے کے انکار کی وجہ"), detailJob.delegateReceiptReason],
+    [routeText("وقت اعتماد الخروج", "Exit approval time", "خروج کی منظوری کا وقت"), dateTime(detailJob.gateExitApprovedAt)],
+    [routeText("اعتمد الخروج", "Exit approved by", "خروج منظور کرنے والا"), detailRow.gateExitApprovedByName],
+    [routeText("الشخص الذي أخرج الأصل", "Exit carrier", "اثاثہ باہر لے جانے والا"), detailJob.gateExitCarrierName],
+    [routeText("وقت اعتماد الدخول", "Entry approval time", "داخلے کی منظوری کا وقت"), dateTime(detailJob.gateEntryApprovedAt)],
+    [routeText("اعتمد الدخول", "Entry approved by", "داخلہ منظور کرنے والا"), detailRow.gateEntryApprovedByName],
+    [t.workflow.purchase.returnedBy, detailJob.gateEntryCarrierName],
+    [routeText("وقت استلام المستودع", "Warehouse receipt time", "گودام کی وصولی کا وقت"), dateTime(detailJob.warehouseReceivedAt)],
+    [routeText("استلم بالمستودع", "Warehouse received by", "گودام میں وصول کرنے والا"), detailRow.warehouseReceivedByName],
+    [routeText("حالة الأصل عند العودة", "Returned asset condition", "واپسی پر اثاثے کی حالت"), detailJob.returnCondition],
+    [routeText("ملاحظات الاستلام", "Receipt notes", "وصولی کے نوٹس"), detailJob.warehouseReturnNotes],
+    [routeText("وقت التسليم للفني", "Technician handover time", "ٹیکنیشن کو حوالے کرنے کا وقت"), dateTime(detailJob.handoverAt)],
+    [routeText("المستلم الفعلي", "Actual recipient", "اصل وصول کنندہ"), detailRow.actualRecipientName],
+    [t.workflow.purchase.handoverNotes, detailJob.handoverNotes],
+    [t.workflow.purchase.exitDocument, detailJob.exitDocumentNumber],
+    [t.workflow.purchase.returnDocument, detailJob.returnDocumentNumber],
+    [t.workflow.purchase.handoverDocument, detailJob.handoverDocumentNumber],
+  ] : [];
   const receiptRows = jobs.filter(row => row.job.status === "waiting_warehouse_receipt");
   const handoverRows = jobs.filter(row => row.job.status === "waiting_technician_handover");
   const preparationIds = new Set(preparationRows.map(row => row.job?.id).filter(Boolean));
@@ -487,7 +540,7 @@ export default function ExternalMaintenanceWarehouseTab() {
           {waitingPreparation.length === 0 ? (
             <Card><CardContent className="py-7 text-center text-muted-foreground">{t.workflow.purchase.noWaitingPreparation}</CardContent></Card>
           ) : <>{pagedPreparation.map((ticket: any) => (
-            <Card key={ticket.ticketItemId ?? ticket.ticketId} className="border-orange-200">
+            <Card key={ticket.ticketItemId ?? ticket.ticketId} className="border-orange-200" {...readOnlyCardProps(ticket)}>
               <CardContent className="p-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="font-semibold flex items-center gap-2 flex-wrap">
@@ -512,11 +565,11 @@ export default function ExternalMaintenanceWarehouseTab() {
                     </div>
                   )}
                 </div>
-                <Button onClick={() => {
+                {readOnly ? <Button variant="outline" onClick={event => { event.stopPropagation(); setDetailsRow(ticket); }}>{routeText("التفاصيل", "Details", "تفصیلات")}</Button> : <Button onClick={() => {
                   setPrepareTicket(ticket);
                   setPrepareForm(externalPreparationDraft(ticket));
-                }} className="gap-2"><Truck className="w-4 h-4"/> {ticket.job ? routeText("تعديل التجهيز", "Edit preparation", "تیاری میں ترمیم کریں") : t.workflow.purchase.prepareAsset}</Button>
-                {!ticket.job && <Button variant="outline" onClick={() => { setReturnTicket(ticket); setReturnReason(""); returnRoute.reset(); }}>
+                }} className="gap-2"><Truck className="w-4 h-4"/> {ticket.job ? routeText("تعديل التجهيز", "Edit preparation", "تیاری میں ترمیم کریں") : t.workflow.purchase.prepareAsset}</Button>}
+                {!readOnly && !ticket.job && <Button variant="outline" onClick={() => { setReturnTicket(ticket); setReturnReason(""); returnRoute.reset(); }}>
                   {routeText("إعادة للمسؤول لمراجعة المسار", "Return for route review", "راستے کے جائزے کیلئے واپس")}
                 </Button>}
               </CardContent>
@@ -529,13 +582,13 @@ export default function ExternalMaintenanceWarehouseTab() {
           {waitingReceipt.length === 0 ? (
             <Card><CardContent className="py-7 text-center text-muted-foreground">{t.workflow.purchase.noWaitingReceipt}</CardContent></Card>
           ) : <>{pagedReceipt.map((row: any) => (
-            <Card key={row.job.id} className="border-green-200">
+            <Card key={row.job.id} className="border-green-200" {...readOnlyCardProps(row)}>
               <CardContent className="p-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="font-semibold">{row.ticketNumber} — {(externalJobTranslations[Number(row.job.id)]?.assetName || row.job.assetName)}</div>
                   <div className="text-xs text-muted-foreground mt-1">{t.workflow.purchase.returnedBy}: {row.job.gateEntryCarrierName || "—"} · {t.workflow.purchase.gateEntryApproval}: {row.job.gateEntryApprovedAt ? new Date(row.job.gateEntryApprovedAt).toLocaleString(language === "ar" ? "ar-SA" : language === "ur" ? "ur-PK" : "en-GB") : "—"}</div>
                 </div>
-                <Button onClick={() => { setReceiveRow(row); setReceiveForm({ assetAfterReturnPhotoUrl: "", returnCondition: "", workshopReportUrl: "", notes: "" }); }} className="gap-2"><PackageCheck className="w-4 h-4"/> {t.workflow.purchase.receiveAsset}</Button>
+                {readOnly ? <Button variant="outline" onClick={event => { event.stopPropagation(); setDetailsRow(row); }}>{routeText("التفاصيل", "Details", "تفصیلات")}</Button> : <Button onClick={() => { setReceiveRow(row); setReceiveForm({ assetAfterReturnPhotoUrl: "", returnCondition: "", workshopReportUrl: "", notes: "" }); }} className="gap-2"><PackageCheck className="w-4 h-4"/> {t.workflow.purchase.receiveAsset}</Button>}
               </CardContent>
             </Card>
           ))}
@@ -546,13 +599,13 @@ export default function ExternalMaintenanceWarehouseTab() {
           {waitingHandover.length === 0 ? (
             <Card><CardContent className="py-7 text-center text-muted-foreground">{t.workflow.purchase.noWaitingHandover}</CardContent></Card>
           ) : <>{pagedHandover.map((row: any) => (
-            <Card key={row.job.id} className="border-indigo-200">
+            <Card key={row.job.id} className="border-indigo-200" {...readOnlyCardProps(row)}>
               <CardContent className="p-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="font-semibold">{row.ticketNumber} — {(externalJobTranslations[Number(row.job.id)]?.assetName || row.job.assetName)}</div>
                   <div className="text-xs text-muted-foreground mt-1">{t.workflow.purchase.ticketAssignedTechnician}: {row.assignedTechnicianName || t.workflow.purchase.notAssigned}</div>
                 </div>
-                <Button onClick={() => { setHandoverRow(row); setHandoverForm({ actualRecipientId: String(row.ticketAssignedToId || ""), notes: "" }); }} className="gap-2"><Send className="w-4 h-4"/> {t.workflow.purchase.handoverAsset}</Button>
+                {readOnly ? <Button variant="outline" onClick={event => { event.stopPropagation(); setDetailsRow(row); }}>{routeText("التفاصيل", "Details", "تفصیلات")}</Button> : <Button onClick={() => { setHandoverRow(row); setHandoverForm({ actualRecipientId: String(row.ticketAssignedToId || ""), notes: "" }); }} className="gap-2"><Send className="w-4 h-4"/> {t.workflow.purchase.handoverAsset}</Button>}
               </CardContent>
             </Card>
           ))}
@@ -563,7 +616,7 @@ export default function ExternalMaintenanceWarehouseTab() {
           {monitoring.length === 0 ? (
             <Card><CardContent className="py-7 text-center text-muted-foreground">{t.workflow.purchase.noOtherOperations}</CardContent></Card>
           ) : <>{pagedMonitoring.map((row: any) => (
-            <Card key={row.job.id}>
+            <Card key={row.job.id} {...readOnlyCardProps(row)}>
               <CardContent className="p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -574,11 +627,11 @@ export default function ExternalMaintenanceWarehouseTab() {
                       {row.poNumber && <Badge variant="secondary">{row.poNumber}</Badge>}
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  {readOnly ? <Button variant="outline" onClick={event => { event.stopPropagation(); setDetailsRow(row); }}>{routeText("التفاصيل", "Details", "تفصیلات")}</Button> : <div className="flex gap-2">
                     {row.job.exitDocumentNumber && <Button variant="outline" size="sm" onClick={() => printExternalMaintenanceDocument("exit", localizeExternalRow(row))}><FileText className="w-4 h-4 me-1"/>{t.workflow.purchase.exitDocument}</Button>}
                     {row.job.returnDocumentNumber && <Button variant="outline" size="sm" onClick={() => printExternalMaintenanceDocument("return", localizeExternalRow(row))}><FileText className="w-4 h-4 me-1"/>{t.workflow.purchase.returnDocument}</Button>}
                     {row.job.handoverDocumentNumber && <Button variant="outline" size="sm" onClick={() => printExternalMaintenanceDocument("handover", localizeExternalRow(row))}><FileText className="w-4 h-4 me-1"/>{t.workflow.purchase.handoverDocument}</Button>}
-                  </div>
+                  </div>}
                 </div>
                 <div className="border-t pt-2">
                   <ExternalMaintenanceTimeline job={row.job} />
@@ -590,7 +643,34 @@ export default function ExternalMaintenanceWarehouseTab() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={!!returnTicket} onOpenChange={open => { if (!open && !returnRoute.isPending) setReturnTicket(null); }}>
+      <Dialog open={readOnly && !!detailsRow} onOpenChange={open => !open && setDetailsRow(null)}>
+        <DialogContent dir={dir} className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader className="text-start sm:text-start"><DialogTitle>{routeText("تفاصيل الصيانة الخارجية", "External maintenance details", "بیرونی مینٹیننس کی تفصیلات")}</DialogTitle></DialogHeader>
+          {detailRow && <>
+            {detailJob.status && <ExternalMaintenanceTimeline job={detailJob} />}
+            <dl className="grid gap-4 sm:grid-cols-2">
+              {detailFields.map(([label, value], index) => <div key={index} className="min-w-0">
+                <dt className="text-sm text-muted-foreground">{label}</dt>
+                <dd className="mt-1 break-words whitespace-pre-wrap">{value || "—"}</dd>
+              </div>)}
+            </dl>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {[
+                [t.workflow.purchase.ticketInitialPhoto, detailRow.ticketBeforePhotoUrl || detailRow.assetPhotoUrl],
+                [routeText("صورة الأصل قبل الخروج", "Asset photo before exit", "باہر جانے سے پہلے اثاثے کی تصویر"), detailJob.assetBeforePhotoUrl],
+                [routeText("صورة الأصل بعد العودة", "Asset photo after return", "واپسی کے بعد اثاثے کی تصویر"), detailJob.assetAfterReturnPhotoUrl],
+              ].filter(([, url]) => !!url).map(([label, url]) => <figure key={`${label}:${url}`}>
+                <figcaption className="mb-2 text-sm text-muted-foreground">{label}</figcaption>
+                <img src={mediaUrl(url)} alt={label} className="max-h-64 w-full rounded-md border object-contain" />
+              </figure>)}
+            </div>
+            {detailJob.workshopReportUrl && <a href={mediaUrl(detailJob.workshopReportUrl)} target="_blank" rel="noopener noreferrer" className="text-primary underline">{t.workflow.purchase.workshopInvoiceReport}</a>}
+          </>}
+          <DialogFooter><Button variant="outline" onClick={() => setDetailsRow(null)}>{routeText("إغلاق", "Close", "بند کریں")}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!readOnly && !!returnTicket} onOpenChange={open => { if (!open && !returnRoute.isPending) setReturnTicket(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{routeText("إعادة للمسؤول لمراجعة المسار", "Return for route review", "راستے کے جائزے کیلئے واپس")}</DialogTitle></DialogHeader>
           <Label>{routeText("سبب الإعادة (مطلوب)", "Return reason (required)", "واپسی کی وجہ (ضروری)")}</Label>
@@ -599,7 +679,7 @@ export default function ExternalMaintenanceWarehouseTab() {
           <DialogFooter><Button disabled={!returnReason.trim() || returnRoute.isPending} onClick={() => returnRoute.mutate({ ticketId: returnTicket.ticketId, ticketItemId: returnTicket.ticketItemId, reason: returnReason })}>{routeText("تأكيد الإعادة", "Confirm return", "واپسی کی تصدیق")}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={!!prepareTicket} onOpenChange={open => !open && setPrepareTicket(null)}>
+      <Dialog open={!readOnly && !!prepareTicket} onOpenChange={open => !open && setPrepareTicket(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{t.workflow.purchase.prepareExternalTitle}</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -626,7 +706,7 @@ export default function ExternalMaintenanceWarehouseTab() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!receiveRow} onOpenChange={open => !open && setReceiveRow(null)}>
+      <Dialog open={!readOnly && !!receiveRow} onOpenChange={open => !open && setReceiveRow(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{t.workflow.purchase.receiveExternalTitle}</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -639,7 +719,7 @@ export default function ExternalMaintenanceWarehouseTab() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!handoverRow} onOpenChange={open => !open && setHandoverRow(null)}>
+      <Dialog open={!readOnly && !!handoverRow} onOpenChange={open => !open && setHandoverRow(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{t.workflow.purchase.handoverReinstallTitle}</DialogTitle></DialogHeader>
           <div className="space-y-3">
