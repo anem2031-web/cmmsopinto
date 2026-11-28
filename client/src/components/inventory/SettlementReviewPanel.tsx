@@ -208,7 +208,10 @@ export default function SettlementReviewPanel({
       ),
     })[action] || tx("تحديث موثّق", "Recorded update", "ریکارڈ شدہ تبدیلی");
   const utils = trpc.useUtils();
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(() => {
+    const id = typeof window === "undefined" ? NaN : Number(new URLSearchParams(window.location?.search || "").get("draftId"));
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  });
   const [filter, setFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [newCountId, setNewCountId] = useState("");

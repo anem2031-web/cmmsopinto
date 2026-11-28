@@ -97,7 +97,7 @@ export function SpecificationReviewList({ data, isLoading, error, page, onPageCh
         { label: "صورة الصنف المشترى", url: row.purchasedPhotoUrl },
         { label: "صورة الفاتورة", url: row.invoicePhotoUrl },
       ].filter(photo => !!photo.url);
-      return <Card key={row.id}><CardContent className="space-y-4 p-4">
+      return <Card key={row.id} id={`purchase-specification-${row.id}`}><CardContent className="space-y-4 p-4">
         <SpecificationFacts row={row} />
         {!!photos.length && <div className="flex flex-wrap gap-3">
           {photos.map(photo => <button key={photo.label} type="button" className="space-y-1 text-xs" onClick={() => setPreview({ url: mediaUrl(photo.url), label: photo.label })}>

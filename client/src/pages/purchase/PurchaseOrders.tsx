@@ -87,6 +87,11 @@ const PURCHASE_ORDERS_HISTORY_KEY = "__cmmsPurchaseOrdersState";
 
 export default function PurchaseOrders() {
   const [, setLocation] = useLocation();
+  const workSearch = useSearch();
+  const workParams = new URLSearchParams(workSearch);
+  const workSpecificationView = workParams.get("workView") === "specifications";
+  const workFocusId = Number(workParams.get("focusId"));
+  const workFocusPage = Number(workParams.get("focusPage"));
   const { t, language, dir } = useTranslation();
   const { getPOStatusLabel, getPOItemStatusLabel } = useStaticLabels();
   const { user, authenticatedUser } = useAuth();
@@ -141,11 +146,21 @@ export default function PurchaseOrders() {
   // ── عرض "بانتظار إجرائي" مقابل "جميع الطلبات" ──
   // مدير الصيانة دوره إشرافي ويتابع جميع الطلبات بغض النظر عن منشئها، لذلك
   // يبدأ من العرض الكامل. المندوب يبدأ بأصنافه، وبقية الأدوار تبدأ بانتظار إجرائها.
-  const [selectedView, setView] = useState<"actionable" | "items" | "tracking" | "supply" | "completed" | "returns" | "specifications" | "external" | "external_followup" | "all">(savedHistoryState?.view ?? "actionable");
+  const [selectedView, setView] = useState<"actionable" | "items" | "tracking" | "supply" | "completed" | "returns" | "specifications" | "external" | "external_followup" | "all">(workSpecificationView ? "specifications" : savedHistoryState?.view ?? "actionable");
   const canReviewSpecifications = ["construction_procurement_manager", "admin", "owner"].includes(user?.role || "");
   const canViewSpecifications = canReviewSpecifications || user?.role === "senior_management";
-  const [specificationPage, setSpecificationPage] = useState(1);
+  const [specificationPage, setSpecificationPage] = useState(workSpecificationView && Number.isSafeInteger(workFocusPage) && workFocusPage > 0 && workFocusPage <= 100000 ? workFocusPage : 1);
   const specifications = trpc.purchaseSpecifications.list.useQuery({ page: specificationPage, pageSize: PAGE_SIZE }, { enabled: canViewSpecifications, retry: false, ...independentReadOptions });
+  useEffect(() => {
+    if (!workSpecificationView || !canViewSpecifications) return;
+    setView("specifications");
+    if (Number.isSafeInteger(workFocusPage) && workFocusPage > 0 && workFocusPage <= 100000) setSpecificationPage(workFocusPage);
+  }, [workSearch, canViewSpecifications]);
+  useEffect(() => {
+    if (!workSpecificationView || !canViewSpecifications || !Number.isSafeInteger(workFocusId) || workFocusId <= 0 || !specifications.data?.rows.some(row => row.id === workFocusId)) return;
+    const timer = window.setTimeout(() => document.getElementById(`purchase-specification-${workFocusId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
+    return () => window.clearTimeout(timer);
+  }, [workSearch, specifications.data, canViewSpecifications]);
   useEffect(() => {
     if (!specifications.data) return;
     const lastPage = Math.max(1, Math.ceil(specifications.data.total / PAGE_SIZE));
@@ -199,7 +214,7 @@ export default function PurchaseOrders() {
   const isPackageSubmissionActionRole =
     user?.role === "accountant" || user?.role === "senior_management";
   const isSeniorReviewRole = user?.role === "senior_management";
-  const requestedReviewStage = new URLSearchParams(useSearch()).get("reviewStage");
+  const requestedReviewStage = workParams.get("reviewStage");
   const [seniorActionTab, setSeniorActionTab] = useState<SeniorActionTab>(requestedReviewStage === "accounting" || requestedReviewStage === "management" ? requestedReviewStage : "review");
   useEffect(() => { if (isSeniorReviewRole && (requestedReviewStage === "accounting" || requestedReviewStage === "management")) { setSeniorActionTab(requestedReviewStage); setView("actionable"); } }, [isSeniorReviewRole, requestedReviewStage]);
   const unifiedApprovalQ=trpc.delegatePricingBundles.approvalQueue.useQuery(undefined,{enabled:isPackageSubmissionActionRole,retry:false,...independentReadOptions});

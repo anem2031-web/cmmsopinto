@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
@@ -22,11 +22,27 @@ export function OperationalIssueQueue({ process = false, returnsOnly = false, se
   const text = operationalIssueText[language];
   const list = trpc.operationalIssues.list.useQuery(process && !returnsOnly && search ? { search } : undefined, { retry: false });
   const [id, setId] = useState<number | null>(null);
+  useEffect(() => {
+    const selected = typeof window === "undefined" ? NaN : Number(new URLSearchParams(window.location?.search || "").get("orderId"));
+    if (process && Number.isSafeInteger(selected) && selected > 0) setId(selected);
+  }, [process]);
   const detail = trpc.operationalIssues.detail.useQuery({ id: id || 0 }, { enabled: Boolean(id && list.data?.enabled), retry: false });
   const approve = trpc.operationalIssues.approve.useMutation();
   const canProcess = process && canProcessOperationalIssue(user?.role);
   const canSeeStock = !returnsOnly && (canProcess || user?.role === "observer" || user?.role === "senior_management");
   const stock = trpc.operationalIssues.availability.useQuery({ id: id || 0 }, { enabled: Boolean(id && list.data?.enabled && canSeeStock), retry: false });
+  const workFocused = useRef(false);
+  useEffect(() => {
+    if (workFocused.current || !process || !detail.data || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location?.search || "");
+    if (Number(params.get("orderId")) !== Number(detail.data.order.id)) return;
+    const lineId = Number(params.get("workLine"));
+    const target = document.getElementById(Number.isSafeInteger(lineId) && lineId > 0 ? `work-operational-line-${lineId}` : `work-operational-order-${detail.data.order.id}`);
+    if (!target) return;
+    workFocused.current = true; target.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    target.setAttribute("tabindex", "-1"); target.focus({ preventScroll: true });
+    target.classList.add("ring-2", "ring-primary", "ring-offset-2");
+  }, [detail.data, process]);
   const refresh = async () => { await Promise.all([list.refetch(), ...(id ? [detail.refetch(), ...(canSeeStock ? [stock.refetch()] : [])] : [])]); };
   const run = async (work: () => Promise<unknown>) => {
     try { await work(); toast.success(text.success); await refresh(); }
@@ -51,7 +67,7 @@ export function OperationalIssueQueue({ process = false, returnsOnly = false, se
     </Card>)}</div>
     {showDetail && id && detail.isLoading && <p>{text.load}</p>}
     {showDetail && detail.error && <p role="alert" className="text-destructive">{detail.error.message}</p>}
-    {showDetail && detail.data && <Card><CardHeader><CardTitle>{detail.data.order.orderNumber}</CardTitle></CardHeader><CardContent className="space-y-4">
+    {showDetail && detail.data && <Card id={`work-operational-order-${detail.data.order.id}`}><CardHeader><CardTitle>{detail.data.order.orderNumber}</CardTitle></CardHeader><CardContent className="space-y-4">
       <p>{text.creator}: {detail.data.order.creatorName} · {text.collector}: {detail.data.order.collectorName}</p>
       <p>{text.reason}: {detail.data.order.reason}</p>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-lg border p-3 text-sm">

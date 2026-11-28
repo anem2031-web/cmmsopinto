@@ -94,7 +94,7 @@ export function PreparedDispatchPanel({
         const stock = stocks?.find(s => s.itemId === Number(line.id)),
           saved = dispatch.find(d => d.itemId === Number(line.id));
         return (
-          <section key={line.id} className="border rounded-lg p-4 space-y-3">
+          <section key={line.id} id={`work-operational-line-${line.id}`} className="border rounded-lg p-4 space-y-3">
             <strong>{line.itemName}</strong>
             <p className="text-sm">
               {text.requested}: {line.quantity} {line.unit} · {text.issued}:{" "}

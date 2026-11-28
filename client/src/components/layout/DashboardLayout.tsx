@@ -1,4 +1,6 @@
 import { isDelegateRole } from "@shared/roles";
+import { YOUR_WORK_PATH } from "@shared/your-work";
+import { YourWorkSidebarLink } from "@/pages/your-work/YourWork";
 import { canAccessReturnsCenter, RETURNS_CENTER_PATH, RETURNS_CENTER_SUPPLIER_ROLES } from "@shared/returns-center";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { businessHomePath, isBusinessGuardedRole } from "@shared/business-role-policy";
@@ -456,7 +458,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
   });
   const sidebarRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const favoritesStorageKey = `${FAVORITES_STORAGE_PREFIX}:${authenticatedUser?.id ?? user?.id ?? "anonymous"}`;
   const [favoritePaths, setFavoritePaths] = useState<string[]>(() => {
     try {
@@ -592,7 +594,9 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
   const approvedDocumentsAccess = canReadApprovedPricingDocuments(user);
   const canAccessCurrentPath = !authLoading && (location.split(/[?#]/, 1)[0] === RETURNS_CENTER_PATH
     ? returnsCenterAccess
-    : canRoleAccessPath(role, location) || approvedPricingDocumentPageAllowed(user, location));
+    : location.split(/[?#]/, 1)[0] === YOUR_WORK_PATH
+      ? canRoleAccessPath(authenticatedUser?.role ?? role, location)
+      : canRoleAccessPath(role, location) || approvedPricingDocumentPageAllowed(user, location));
   useEffect(() => {
     if (authLoading || canAccessCurrentPath) return;
     const fallback = role === "technician"
@@ -792,6 +796,8 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
 
           {/* ── Content ── */}
           <SidebarContent className="gap-0 overflow-y-auto pt-1 pb-2">
+            <YourWorkSidebarLink actor={authenticatedUser ?? user} collapsed={isCollapsed}
+              active={location.split(/[?#]/, 1)[0] === YOUR_WORK_PATH} language={language} onNavigate={navigateFromSidebar} />
 
             {/* Search Results */}
             {searchResults !== null ? (

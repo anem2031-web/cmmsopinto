@@ -1,3 +1,4 @@
+import { canAccessYourWork, YOUR_WORK_PATH } from "./your-work";
 /** Central capability boundary for the reviewed business roles.
  * Exact path/type grants are deliberately additive to existing ownership,
  * document-stage and module guards. They never substitute a more powerful role.
@@ -21,6 +22,7 @@ export const isBusinessGuardedRole = (role?: string | null): role is BusinessRol
 const paths = (namespace: string, names: string) => names.trim().split(/\s+/).filter(Boolean).map(name => `${namespace}.${name}`);
 
 const sharedQueries = [
+  "yourWork.list",
   "purchaseSupplyWait.list",
   "auth.me", "notifications.summary", "notifications.list", "notifications.unreadCount", "push.getStatus", "push.getVapidPublicKey",
   "users.list", "users.byRole", "users.listTechnicians", "sites.list", "sections.list", "assets.list",
@@ -208,6 +210,7 @@ const warehouseOversightPages = new Set(["/external-maintenance", "/inventory", 
 const managementPages = new Set(["/tickets", "/tickets/inbox", "/tickets/new", "/reports", "/reports/technicians", "/reports/purchase-cycle", "/reports/maintenance-cycle", "/reports/section-report", "/reports/preventive", "/inspection-dashboard", "/ai-assistant"]);
 export function businessPageAllowed(role: BusinessRole, rawPath: string): boolean {
   const path = rawPath.split(/[?#]/, 1)[0] || "/";
+  if (path === YOUR_WORK_PATH) return canAccessYourWork(role);
   if (path === RETURNS_CENTER_PATH) return canAccessReturnsCenter(role);
   if (path === "/catalog") return role === "warehouse" || role === "senior_management";
   if (path === "/inventory-settlement-review") return role === "warehouse" || role === "senior_management";

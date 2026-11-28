@@ -14,7 +14,7 @@ function Decision({ row, onChanged }: { row: ExternalRouteReview; onChanged: () 
   const [path, setPath] = useState<ExternalRoute>("A");
   useExecutionDraftDirty(Boolean(reason.trim() || path !== "A"));
   const mutation = trpc.externalMaintenance.decideRouteReview.useMutation({ onSuccess: onChanged });
-  return <section className="rounded-md border border-orange-300 p-4 space-y-3">
+  return <section id={`work-route-review-${row.ticketItemId}`} className="rounded-md border border-orange-300 p-4 space-y-3">
     <p className="font-semibold">{l("مراجعة طلب معاد من المستودع — البند", "Warehouse return — item", "گودام سے واپس — آئٹم")} {row.itemNumber}</p>
     <p className="whitespace-pre-wrap">{row.reason}</p>
     <label className="block">{l("المسار", "Route", "راستہ")}

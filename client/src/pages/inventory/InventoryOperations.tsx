@@ -426,7 +426,10 @@ export default function InventoryOperations() {
   const isWarehouse = ["warehouse", "admin", "owner"].includes(user?.role || "");
   const canApplySettlement = !isReadOnly && ["admin", "owner"].includes(user?.role || "");
   const canPrepareSettlement = !isReadOnly && isWarehouse;
-  const [operationsTab, setOperationsTab] = useState("disposal");
+  const [operationsTab, setOperationsTab] = useState(() => {
+    const id = typeof window === "undefined" ? NaN : Number(new URLSearchParams(window.location?.search || "").get("draftId"));
+    return Number.isSafeInteger(id) && id > 0 ? "settlements" : "disposal";
+  });
   const [reviewSourceCountId, setReviewSourceCountId] = useState<number | null>(null);
 
   // ── بيانات القائمة ──

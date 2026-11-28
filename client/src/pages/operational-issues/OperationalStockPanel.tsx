@@ -46,7 +46,7 @@ export function OperationalStockPanel({ line, stock, orderId, approved, canProce
     catch (error) { toast.error(error instanceof Error ? error.message : text.error); }
     finally { try { await refresh(); } finally { busy.current = false; } }
   };
-  return <section className="rounded-lg border p-4 space-y-3">
+  return <section id={`work-operational-line-${line.id}`} className="rounded-lg border p-4 space-y-3">
     <p className="font-semibold">{line.itemName}</p>
     <p className="text-sm text-muted-foreground">{text.requested}: {line.quantity} {line.unit} · {text.issued}: {line.issuedQuantity} {line.unit} · {text.remaining}: {remaining} {line.unit}</p>
     {showStock && <>

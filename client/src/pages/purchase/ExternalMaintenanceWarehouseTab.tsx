@@ -1,5 +1,5 @@
 import { isDelegateRole } from "@shared/roles";
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { mediaUrl } from "@/lib/mediaUrl";
@@ -279,6 +279,8 @@ export default function ExternalMaintenanceWarehouseTab() {
   const readOnly = user?.role === "senior_management";
   const { data: users = [] } = trpc.users.list.useQuery(undefined, { enabled: !readOnly });
   const [detailsRow, setDetailsRow] = useState<any>(null);
+  const [selectedTab, setSelectedTab] = useState("preparation");
+  const appliedWorkFocus = useRef("");
   const readOnlyCardProps = (row: any) => readOnly ? {
     role: "button", tabIndex: 0, "data-external-readonly": true,
     onClick: () => setDetailsRow(row),
@@ -480,6 +482,35 @@ export default function ExternalMaintenanceWarehouseTab() {
   const waitingHandover = filterSortExternalWarehouseRows(handoverRows, search, sort);
   const monitoring = filterSortExternalWarehouseRows(monitoringRows, search, sort);
 
+  useEffect(() => {
+    if (!data || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location?.search || "");
+    const jobId = Number(params.get("workJob")), itemId = Number(params.get("workItem"));
+    const focusKey = Number.isSafeInteger(jobId) && jobId > 0 ? `job:${jobId}` : Number.isSafeInteger(itemId) && itemId > 0 ? `item:${itemId}` : "";
+    if (!focusKey || appliedWorkFocus.current === focusKey) return;
+    const row = focusKey.startsWith("job:") ? jobs.find(row => Number(row.job?.id) === jobId)
+      : preparationRows.find(row => Number(row.ticketItemId) === itemId);
+    if (!row) return;
+    appliedWorkFocus.current = focusKey;
+    setSearch(""); resetPages();
+    const targetItemId = row.ticketItemId ?? row.job?.ticketItemId;
+    const sameRow = (entry: any) => row.job?.id ? Number(entry.job?.id) === Number(row.job.id) : targetItemId != null && Number(entry.ticketItemId) === Number(targetItemId);
+    const preparationIndex = filterSortExternalWarehouseRows(preparationRows, "", sort).findIndex(sameRow);
+    if (preparationIndex >= 0) {
+      setSelectedTab("preparation"); setPagePreparation(Math.floor(preparationIndex / PAGE_SIZE) + 1);
+      if (readOnly) setDetailsRow(row); else { setPrepareTicket(row); setPrepareForm(externalPreparationDraft(row)); }
+    } else if (row.job?.status === "waiting_warehouse_receipt") {
+      setSelectedTab("receipt"); setPageReceipt(Math.max(1, Math.floor(filterSortExternalWarehouseRows(receiptRows, "", sort).findIndex(sameRow) / PAGE_SIZE) + 1));
+      if (readOnly) setDetailsRow(row); else { setReceiveRow(row); setReceiveForm({ assetAfterReturnPhotoUrl: "", returnCondition: "", workshopReportUrl: "", notes: "" }); }
+    } else if (row.job?.status === "waiting_technician_handover") {
+      setSelectedTab("handover"); setPageHandover(Math.max(1, Math.floor(filterSortExternalWarehouseRows(handoverRows, "", sort).findIndex(sameRow) / PAGE_SIZE) + 1));
+      if (readOnly) setDetailsRow(row); else { setHandoverRow(row); setHandoverForm({ actualRecipientId: String(row.ticketAssignedToId || ""), notes: "" }); }
+    } else {
+      setSelectedTab("monitoring"); setPageMonitoring(Math.max(1, Math.floor(filterSortExternalWarehouseRows(monitoringRows, "", sort).findIndex(sameRow) / PAGE_SIZE) + 1));
+      if (readOnly) setDetailsRow(row);
+    }
+  }, [data, readOnly]);
+
   // عرض 15 عملية فقط بكل تبويب دفعة واحدة — يقلّل عدد العناصر المرسومة فعليًا
   // بالصفحة (خصوصًا تبويب "متابعة المسار C" اللي يرسم خطًا زمنيًا كاملًا لكل بلاغ).
   const pagedPreparation = waitingPreparation.slice((pagePreparation - 1) * PAGE_SIZE, pagePreparation * PAGE_SIZE);
@@ -512,7 +543,7 @@ export default function ExternalMaintenanceWarehouseTab() {
         </div>
       </div>
 
-      <Tabs defaultValue="preparation">
+      <Tabs value={selectedTab} onValueChange={setSelectedTab}>
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="preparation" className="gap-1.5">
             <PackageCheck className="w-4 h-4"/>

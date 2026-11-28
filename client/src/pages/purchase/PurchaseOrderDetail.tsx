@@ -356,6 +356,12 @@ const submitDraftMut = trpc.purchaseOrders.submitDraft.useMutation({
     typeof window !== "undefined"
       ? Number(new URLSearchParams(window.location.search).get("itemId") || 0) || null
       : null;
+  const focusedBatchId = typeof window !== "undefined" ? Number(new URLSearchParams(window.location.search).get("workBatchId")) : 0;
+  useEffect(() => {
+    if (!Number.isSafeInteger(focusedBatchId) || focusedBatchId <= 0 || !pricingBatches.some(batch => batch.id === focusedBatchId)) return;
+    const timer = window.setTimeout(() => document.getElementById(`purchase-pricing-batch-${focusedBatchId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
+    return () => window.clearTimeout(timer);
+  }, [focusedBatchId, pricingBatches]);
 
   // فتح الصنف من أي قائمة مسطحة (المندوب أو «متابعة أصنافي» أو «متابعة التوريد»)
   // يمرر itemId؛ نمرر الشاشة إليه ثم نعطي بطاقته نبضة قصيرة مع إبقاء إطار
@@ -1962,7 +1968,7 @@ const visibleItems = useMemo(() => {
         </CardHeader>
         <CardContent className="space-y-3">
           {visibleBatches.map((batch: any) => (
-              <div key={batch.id} className="bg-white rounded-lg border p-3 flex flex-col gap-2">
+              <div key={batch.id} id={`purchase-pricing-batch-${batch.id}`} className="bg-white rounded-lg border p-3 flex flex-col gap-2">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <p className="text-sm font-bold">

@@ -1,7 +1,7 @@
 import { WarehouseLotSelection } from "@/components/inventory/WarehouseLotSelection";
 import { selectFullIssueLots, type WarehouseLotSelection as LotSelection } from "@shared/warehouse-lot-selection";
 import { AlertTriangle, ArrowLeftRight, Boxes, ClipboardList, Link2, Loader2, PackageCheck, RefreshCw, RotateCcw, Send, ShoppingCart, Warehouse } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -87,6 +87,30 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
   const [selectedIdentityCatalogId, setSelectedIdentityCatalogId] = useState<number | null>(null);
   const [sectionState, setActiveSection] = useState<"waiting" | "ready" | "returns">(section ?? "waiting");
   const activeSection = returnsOnly ? "returns" : sectionState;
+  const workFocusApplied = useRef("");
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const query = new URLSearchParams(window.location?.search || "");
+    const positive = (name: string) => { const id = Number(query.get(name)); return Number.isSafeInteger(id) && id > 0 ? id : null; };
+    const requestId = positive("workRequest"), requestItemId = positive("workRequestItem"), requirementId = positive("workRequirement"), returnId = positive("workReturn");
+    const key = `${requestId}:${requestItemId}:${requirementId}:${returnId}`;
+    if ((!requestId && !requestItemId && !requirementId && !returnId) || workFocusApplied.current === key) return;
+    let next: "waiting" | "ready" | "returns", elementId: string;
+    if (returnId) { next = "returns"; elementId = `work-pmv2-return-${returnId}`; }
+    else if (requirementId) { next = "ready"; elementId = `work-pmv2-requirement-${requirementId}`; }
+    else {
+      const waiting = queue.data?.items.find((item: any) => requestItemId ? Number(item.requestItemId) === requestItemId : Number(item.requestId) === requestId);
+      const ready = readyIssue.data?.find((item: any) => requestItemId && Number(item.materialRequestItemId) === requestItemId);
+      if (waiting) { next = "waiting"; elementId = `work-pmv2-request-${waiting.requestItemId}`; }
+      else if (ready) { next = "ready"; elementId = `work-pmv2-requirement-${ready.routeDecisionActionId}`; }
+      else return;
+    }
+    if (activeSection !== next && !returnsOnly) { setActiveSection(next); return; }
+    const element = document.getElementById(elementId);
+    if (!element) return;
+    workFocusApplied.current = key; element.setAttribute("tabindex", "-1");
+    element.classList.add("ring-2", "ring-violet-400", "scroll-mt-6"); element.scrollIntoView?.({ block: "center" }); element.focus?.({ preventScroll: true });
+  }, [queue.data, readyIssue.data, pendingReturns.data, activeSection, returnsOnly]);
   const [lotSelections,setLotSelections]=useState<Record<number,LotSelection>>({});
   const pscmItems = pscmReadyIssue.data?.items ?? [];
   const nextPscmCursor = pscmReadyIssue.data?.nextCursor;
@@ -344,7 +368,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
               const statusView = STATUS_VIEW[item.availabilityStatus] ?? STATUS_VIEW.insufficient;
               const inventory = item.mainWarehouseAvailability;
               return (
-                <Card key={item.requestItemId} className="overflow-hidden">
+                <Card key={item.requestItemId} id={`work-pmv2-request-${item.requestItemId}`} className="overflow-hidden">
                   <CardHeader className="gap-3 bg-muted/10 rounded-t-xl border border-orange-500 dark:border-orange-400">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                       <div>
@@ -538,7 +562,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
               let manualReady=true;
               if(selection.mode==="manual")try{selectFullIssueLots(item.availableLotOptions||[],item.remainingQuantity,item.unit,selection);}catch{manualReady=false;}
               return (
-                <Card key={item.routeDecisionActionId} className={item.canIssue ? "border-emerald-200" : "border-amber-200"}>
+                <Card key={item.routeDecisionActionId} id={`work-pmv2-requirement-${item.routeDecisionActionId}`} className={item.canIssue ? "border-emerald-200" : "border-amber-200"}>
                   <CardHeader className="pb-3 rounded-t-xl border border-orange-500 dark:border-orange-400">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                       <div>
@@ -650,7 +674,7 @@ export default function Pmv2WarehouseQueue({ section, embedded = false, search =
         ) : (
           <div className="space-y-3">
             {visibleReturns.map((item: any) => (
-              <Card key={item.declarationActionId}>
+              <Card key={item.declarationActionId} id={`work-pmv2-return-${item.declarationActionId}`}>
                 <CardHeader className={embedded ? "border-b pb-3" : "pb-3 rounded-t-xl border border-orange-500 dark:border-orange-400"}><CardTitle className={embedded ? "text-base" : "text-base font-bold text-emerald-700 dark:text-emerald-300"}>{item.itemName}</CardTitle><CardDescription>{item.taskNumber} · {item.taskItemTitle}</CardDescription></CardHeader>
                   <details className="group">
                     <summary className="cursor-pointer list-none border-b px-6 py-3 text-sm font-medium text-primary hover:bg-muted/40 [&::-webkit-details-marker]:hidden">

@@ -43,7 +43,7 @@ import {
   ArrowRight, Clock, User, MapPin, CheckCircle2, Wrench, ShoppingCart,
   Camera, Loader2, FileText, AlertCircle, ExternalLink, Upload, X, ZoomIn, Download, Video, PlayCircle, Pencil, Archive, Printer, ClipboardList, Users, Plus, GitBranch, Search
 } from "lucide-react";
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/contexts/LanguageContext";
@@ -165,6 +165,34 @@ const { getField } = useResolvedTranslation(
   // بنود البلاغ — الخطوة 2 من ميزة البلاغ متعدد الجهات (2026-08-08). قراءة فقط، بنفس حارس
   // صلاحية البلاغ نفسه (tickets.items تُحقق assertTicketReadable داخليًا).
   const { data: ticketItems } = trpc.tickets.items.useQuery({ ticketId }, { enabled: !!ticketId });
+  const workFocusApplied = useRef("");
+  useEffect(() => {
+    if (!ticket || typeof window === "undefined" || typeof document === "undefined") return;
+    const query = new URLSearchParams(window.location?.search || "");
+    const positive = (name: string) => { const id = Number(query.get(name)); return Number.isSafeInteger(id) && id > 0 ? id : null; };
+    const taskId = positive("workTask"), departmentId = positive("workDepartment"), itemId = positive("workItem"), needId = positive("workNeed");
+    const workAction = ["it_purchase_create", "it_purchase_submit", "ticket_external_review", "ticket_close"].includes(query.get("workAction") || "") ? query.get("workAction") : null;
+    const key = `${ticketId}:${taskId}:${departmentId}:${itemId}:${needId}:${workAction}`;
+    if ((!taskId && !departmentId && !itemId && !needId && !workAction) || workFocusApplied.current === key) return;
+    const focus = () => {
+      const actionTarget = workAction === "ticket_external_review" ? `work-route-review-${itemId}`
+        : workAction === "ticket_close" && ticket.workflowModel === "department_tasks" ? "work-ticket-parent-close"
+          : workAction === "it_purchase_submit" ? "work-it-purchase" : "work-ticket-actions";
+      const element = workAction ? document.getElementById(actionTarget) : taskId ? document.getElementById(`work-task-${taskId}`) : needId ? document.getElementById(`work-it-need-${needId}`)
+        : departmentId ? document.getElementById(`work-it-department-${departmentId}`) || document.getElementById(`work-department-${departmentId}`)
+          : document.getElementById(`work-item-action-${itemId}`) || document.getElementById(`work-item-${itemId}`) || (ticketItems?.length === 1 ? document.getElementById("work-ticket-actions") : null);
+      if (!element) return false;
+      workFocusApplied.current = key; element.setAttribute("tabindex", "-1");
+      element.classList.add("ring-2", "ring-violet-400", "scroll-mt-6");
+      element.scrollIntoView?.({ block: "center" }); element.focus?.({ preventScroll: true });
+      return true;
+    };
+    if (focus() || typeof MutationObserver === "undefined") return;
+    const observer = new MutationObserver(() => { if (focus()) observer.disconnect(); });
+    observer.observe(document.body, { childList: true, subtree: true });
+    const timeout = window.setTimeout(() => observer.disconnect(), 10_000);
+    return () => { observer.disconnect(); window.clearTimeout(timeout); };
+  }, [ticketId, ticket, ticketItems, departmentPlan]);
   const { data: externalRouteReviews = [] } = trpc.externalMaintenance.routeReviews.useQuery({ ticketId }, { enabled: !!ticketId && !!user && isExternalRouteReviewer(user.role) });
 
   const approveMut = trpc.tickets.approve.useMutation({ onSuccess: () => { toast.success(t.common.confirm); refetch(); } });
@@ -829,7 +857,7 @@ const { getField } = useResolvedTranslation(
               const parentClosed = ticket.status === "closed" || ticket.status === "requester_confirmed";
               const canCloseParent = (isSupervisor || isManager) && summary.allFinished && !parentClosed;
               return (
-                <div className={`rounded-lg border p-3 space-y-2 ${summary.allFinished && !parentClosed ? "border-emerald-300 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/30" : "bg-muted/30"}`}>
+                <div id="work-ticket-parent-close" className={`rounded-lg border p-3 space-y-2 ${summary.allFinished && !parentClosed ? "border-emerald-300 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/30" : "bg-muted/30"}`}>
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="text-sm font-medium">
                       {t.workflow.ticket.parentTaskCompletion}: {summary.finished} / {summary.total}
@@ -896,7 +924,7 @@ const { getField } = useResolvedTranslation(
               const hasPromotedDepartmentTask = deptTasks.some((task: any) => !!task.convertedTicketId || task.status === "promoted" || task.status === "completed");
               const draft = departmentTaskDrafts[dept.id] || { title: "", description: "" };
               return (
-                <div key={dept.id} className="rounded-lg border p-3 space-y-3">
+                <div key={dept.id} id={`work-department-${dept.id}`} className="rounded-lg border p-3 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <p className="font-medium text-sm">{dept.department === MAINTENANCE_RESPONSIBLE_DEPARTMENT.IT ? t.workflow.ticket.departmentIt : dept.department === MAINTENANCE_RESPONSIBLE_DEPARTMENT.CONSTRUCTION ? t.workflow.ticket.departmentConstruction : t.workflow.ticket.departmentGeneral}</p>
@@ -955,7 +983,7 @@ const { getField } = useResolvedTranslation(
                           ? technicians.filter((tech: any) => String(tech.name || tech.email || "").toLocaleLowerCase().includes(normalizedAssigneeSearch))
                           : technicians;
                         return (
-                          <div key={task.id} className="rounded-md border bg-background p-3 space-y-2">
+                          <div key={task.id} id={`work-task-${task.id}`} className="rounded-md border bg-background p-3 space-y-2">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div>
                                 <p className="text-sm font-medium flex flex-wrap gap-1" dir="auto">
@@ -1123,7 +1151,7 @@ const { getField } = useResolvedTranslation(
               const canApproveItemClose = !isTicketReadOnly && isItemManager && item.status === "ready_for_closure";
 
               return (
-                <div key={item.id} className="space-y-2">
+                <div key={item.id} id={`work-item-${item.id}`} className="space-y-2">
                   <TicketItemStepCard item={item} getStatusLabel={getStatusLabel} />
 
                   {canStart && (
@@ -1435,7 +1463,7 @@ const { getField } = useResolvedTranslation(
             </Card>
           )}
 
-          <Card>
+          <Card id="work-ticket-actions">
             <CardHeader><CardTitle className="text-base">{t.common.actions}</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               {canApprove && (
@@ -1963,7 +1991,7 @@ const { getField } = useResolvedTranslation(
                 }).map((item: any) => {
                   const sel = itemPathSelections[item.id] || { path: "A" as const, justification: "" };
                   return (
-                    <div key={item.id} className="space-y-3 bg-green-50 dark:bg-green-950/20 rounded-xl p-4 border border-green-200 dark:border-green-800">
+                    <div key={item.id} id={`work-item-action-${item.id}`} className="space-y-3 bg-green-50 dark:bg-green-950/20 rounded-xl p-4 border border-green-200 dark:border-green-800">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="text-green-600 dark:text-green-400 font-semibold text-sm">
                           ✅ {t.workflow.ticket.ticketItems} {item.itemNumber} — {t.workflow.ticket.chooseItemPath}

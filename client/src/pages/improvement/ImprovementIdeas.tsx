@@ -1159,6 +1159,23 @@ function MyIdeasView({ onCreateClick }: { onCreateClick: () => void }) {
 // ════════════════════════════════════════════════════════════════════════
 // المكوّن الرئيسي
 // ════════════════════════════════════════════════════════════════════════
+function WorkIdeaDialog({ id, action, onClose }: { id: number; action: string; onClose: () => void }) {
+  const { user } = useAuth();
+  const { t, language, dir } = useTranslation();
+  const query = trpc.improvementIdeas.getById.useQuery({ id, includeExecutionProgress: false }, { ...IMPROVEMENT_QUERY_OPTIONS, ...independentReadOptions });
+  const triage = !!user && ["owner", "admin", "maintenance_manager", "general_maintenance_manager", "construction_procurement_manager"].includes(user.role);
+  const decide = !!user && ["owner", "admin", "senior_management", "executive_director"].includes(user.role);
+  if (query.data?.status === "new" && action === "idea_classify" && triage) return <ClassifyDialog idea={query.data} onClose={onClose} />;
+  if (query.data?.status === "classified" && action === "idea_study" && triage) return <CostStudyDialog idea={query.data} onClose={onClose} />;
+  if (query.data?.status === "classified" && action === "idea_decide" && decide) return <DecideDialog idea={query.data} onClose={onClose} />;
+  return <Dialog open onOpenChange={open => !open && onClose()}><DialogContent dir={dir}>
+    <DialogHeader><DialogTitle>{t.improvementIdeas.pageTitle}</DialogTitle></DialogHeader>
+    {query.isLoading ? <ImprovementLoadingNotice /> : query.error ? <QueryFailure retry={() => query.refetch()} fetching={query.isFetching} /> :
+      <p>{language === "ar" ? "لم تعد هذه المعاملة تنتظر هذا الإجراء منك. حدّث صفحة أعمالك." : language === "ur" ? "یہ معاملہ اب آپ کی اس کارروائی کا منتظر نہیں۔ اپنے کاموں کا صفحہ تازہ کریں۔" : "This transaction no longer needs this action from you. Refresh Your work."}</p>}
+    <DialogFooter><Button variant="outline" onClick={onClose}>{t.common.close}</Button></DialogFooter>
+  </DialogContent></Dialog>;
+}
+
 export default function ImprovementIdeas() {
   const { t } = useTranslation();
   const { user } = useAuth();
@@ -1167,6 +1184,10 @@ export default function ImprovementIdeas() {
   const [, setLocation] = useLocation();
   const detailId = Number(new URLSearchParams(search).get("ideaId"));
   const sourceDetails = Number.isInteger(detailId) && detailId > 0 ? <IdeaOutcomeDialog id={detailId} onClose={() => setLocation("/improvement-ideas")} /> : null;
+  const workIdeaId = Number(new URLSearchParams(search).get("workIdea"));
+  const workAction = new URLSearchParams(search).get("workAction") || "";
+  const workDetails = Number.isSafeInteger(workIdeaId) && workIdeaId > 0 && ["idea_classify", "idea_study", "idea_decide"].includes(workAction)
+    ? <WorkIdeaDialog id={workIdeaId} action={workAction} onClose={() => setLocation("/improvement-ideas")} /> : null;
 
   const isTriageRole = !!user && ["maintenance_manager", "general_maintenance_manager", "construction_procurement_manager", "owner", "admin"].includes(user.role);
   const isSeniorMgmt = !!user && ["senior_management", "executive_director"].includes(user.role);
@@ -1179,7 +1200,7 @@ export default function ImprovementIdeas() {
   if (!isElevated) {
     return (
       <>
-        {sourceDetails}
+        {sourceDetails}{workDetails}
         <MyIdeasView onCreateClick={() => setCreateOpen(true)} />
         <CreateIdeaDialog open={createOpen} onOpenChange={setCreateOpen} />
       </>
@@ -1188,7 +1209,7 @@ export default function ImprovementIdeas() {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      {sourceDetails}
+      {sourceDetails}{workDetails}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2"><Lightbulb className="w-6 h-6 text-amber-500" /><h1 className="text-xl font-bold">{t.improvementIdeas.pageTitle}</h1></div>
         <Button onClick={() => setCreateOpen(true)}><Plus className="w-4 h-4 ml-1" />{t.improvementIdeas.createNew}</Button>

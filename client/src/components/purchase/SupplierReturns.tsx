@@ -17,7 +17,10 @@ const replacementStatus: Record<string, string> = {
 
 export function SupplierReturns({ centerMode = false, search = "" }: { centerMode?: boolean; search?: string } = {}) {
   const { user } = useAuth();
-  const [page, setPage] = useState(1);
+  const workParams = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+  const workFocusId = Number(workParams.get("focusId"));
+  const workFocusPage = Number(workParams.get("focusPage"));
+  const [page, setPage] = useState(Number.isSafeInteger(workFocusPage) && workFocusPage > 0 && workFocusPage <= 100000 ? workFocusPage : 1);
   const [returnStatus, setReturnStatus] = useState<"active" | "completed">("active");
   const [reason, setReason] = useState<Record<number, string>>({});
   const [refundReference, setRefundReference] = useState<Record<number, string>>({});
@@ -28,6 +31,11 @@ export function SupplierReturns({ centerMode = false, search = "" }: { centerMod
   const [keys] = useState(() => new Map<string, string>());
   const status = trpc.supplierReturns.status.useQuery();
   const list = trpc.supplierReturns.list.useQuery({ page, pageSize: 20, status: returnStatus }, { enabled: status.data?.enabled === true });
+  useEffect(() => {
+    if (!Number.isSafeInteger(workFocusId) || workFocusId <= 0 || !list.data?.items.some(row => Number(row.id) === workFocusId)) return;
+    const timer = window.setTimeout(() => document.getElementById(`supplier-return-${workFocusId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
+    return () => window.clearTimeout(timer);
+  }, [workFocusId, list.data]);
   useEffect(() => {
     if (list.data && page > Math.max(1, Math.ceil(list.data.total / 20))) setPage(Math.max(1, Math.ceil(list.data.total / 20)));
   }, [list.data?.total, page]);
@@ -90,7 +98,7 @@ export function SupplierReturns({ centerMode = false, search = "" }: { centerMod
     {centerMode && list.data && <p className="text-sm text-muted-foreground" role="status">البحث في الصفحة الحالية فقط — المعروض {visibleRows.length} من {loadedRows.length}. إجمالي ملفات الحالة: {list.data.total}.</p>}
     {list.data?.items.length === 0 && <p>{centerMode && (searchTerm || list.data.total > 0) ? "لا توجد بيانات في الصفحة الحالية؛ يمكنك تغيير الصفحة أو حالة المتابعة." : returnStatus === "completed" ? "لا توجد متابعات مرتجع مكتملة." : "لا توجد مرتجعات قيد المتابعة."}</p>}
     {centerMode && searchTerm && loadedRows.length > 0 && visibleRows.length === 0 && <p>لا توجد نتائج مطابقة في الصفحة الحالية؛ جرّب صفحة أخرى أو غيّر البحث.</p>}
-    {visibleRows.map(row => <Card key={row.id}><CardContent className="p-4 space-y-3">
+    {visibleRows.map(row => <Card key={row.id} id={`supplier-return-${row.id}`}><CardContent className="p-4 space-y-3">
       <h3 className="font-semibold">{row.itemName || "صنف المرتجع"} — {row.returnNumber}</h3>
       <p>{row.poNumber || "بدون طلب شراء"} · {row.returnedQuantity} {row.returnedUnit}</p>
       {row.originalReceiptNumber && !row.poNumber && <p>سند الاستلام المستقل: {row.originalReceiptNumber}</p>}

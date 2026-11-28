@@ -19,6 +19,7 @@ import TicketsInbox from "@/pages/tickets/TicketsInbox";
 import CreateTicket from "@/pages/tickets/CreateTicket";
 import PurchaseOrders from "@/pages/purchase/PurchaseOrders";
 import Achievement from "@/pages/achievement/Achievement";
+import YourWork from "@/pages/your-work/YourWork";
 import PurchaseOrderDetail from "@/pages/purchase/PurchaseOrderDetail";
 import PurchaseBatchDetail from "@/pages/purchase/PurchaseBatchDetail";
 import CreatePurchaseOrder from "@/pages/purchase/CreatePurchaseOrder";
@@ -110,6 +111,7 @@ function Router() {
             <Route path="/tickets/inbox" component={TicketsInbox} />
             <Route path="/tickets/:id" component={TicketDetail} />
             <Route path="/achievement" component={Achievement} />
+            <Route path="/your-work" component={YourWork} />
             <Route path="/purchase-orders" component={PurchaseOrders} />
             <Route path="/purchase-orders/new" component={CreatePurchaseOrder} />
             <Route path="/purchase-orders/edit-draft/:id" component={CreatePurchaseOrder} />

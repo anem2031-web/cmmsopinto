@@ -219,7 +219,7 @@ export function ItTeamPanel({ ticket, departments, onChanged }: { ticket: any; d
     </section>}
     {team && departments.filter(d => d.department === DEPT.IT).map(d => {
       const claimedBy = users?.find((u: any) => u.id === d.claimedById);
-      return <section key={d.id} className="rounded-lg border p-4 space-y-3">
+      return <section key={d.id} id={`work-it-department-${d.id}`} className="rounded-lg border p-4 space-y-3">
         <p className="font-semibold">{t.workflow.ticket.itTeamLabel} — {d.claimedById ? format(t.workflow.ticket.claimedBy, { name: claimedBy?.name || claimedBy?.email || d.claimedById }) : t.workflow.ticket.waitingForClaim}</p>
         {!closed && !d.claimedById && <Button disabled={claim.isPending} onClick={() => claim.mutate({ ticketId: ticket.id, departmentId: d.id })}>{t.workflow.ticket.claimTicket}</Button>}
         {!closed && !!d.claimedById && (d.claimedById === user?.id || user?.role === APP_ROLE.IT_MANAGER) && <div className="space-y-2">
@@ -255,7 +255,7 @@ function NeedReview({ need, onChanged }: { need: any; onChanged: () => void }) {
     : need.status === "returned"
       ? format(t.workflow.ticket.needReturnedClarification, { note: need.reviewNote || "" })
       : format(t.workflow.ticket.needPoCreated, { po: need.purchaseOrderId || "" });
-  return <div className="rounded border p-3 space-y-2">
+  return <div id={`work-it-need-${need.id}`} className="rounded border p-3 space-y-2">
     <Button variant="link" onClick={() => navigate(`/tickets/${need.ticketId}`)}>{format(t.workflow.ticket.ticketNeedLink, { ticket: need.ticketId, need: need.id })}</Button>
     <p className="text-sm whitespace-pre-wrap">{need.reason}</p>
     <p className="text-sm">{statusText}</p>
@@ -300,7 +300,7 @@ export function ItPurchaseNeedsPanel({ ticket }: { ticket?: any }) {
   const submit = trpc.tickets.submitItPurchaseNeed.useMutation({ onSuccess: () => { setReason(""); changed(); }, onError: fail });
   const canSubmit = user?.role === APP_ROLE.IT_MEMBER && ticket?.assignedToId === user?.id && ticket?.maintenancePath === "B" && ticket?.status === "work_approved" && !materialAssignment.data && !needs.data?.some(n => n.status === "pending");
   if (!team || (!canSubmit && !needs.data?.length)) return null;
-  return <section className="rounded-lg border p-4 space-y-3">
+  return <section id="work-it-purchase" className="rounded-lg border p-4 space-y-3">
     <h3 className="font-semibold">{t.workflow.ticket.itPurchaseNeedsTitle}</h3>
     {canSubmit && <div className="space-y-2">
       {items.map((item,i) => <div key={i} className="flex flex-wrap gap-2">

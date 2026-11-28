@@ -6,6 +6,7 @@
  * below. Keep module-specific allow/deny decisions here instead of scattering
  * string comparisons across the application.
  */
+import { canAccessYourWork, YOUR_WORK_PATH } from "./your-work";
 import { canManageTicketTeams } from "./maintenance-team-tickets/team-management";
 import { canReadTicketTeamExecution } from "./maintenance-team-tickets/execution-permissions";
 import { OBSERVER_ROLE, isObserver } from "./observer-policy";
@@ -314,6 +315,7 @@ function matchesPrefix(path: string, prefix: string): boolean {
 export function canRoleAccessPath(role: string | null | undefined, path: string): boolean {
   if (!role) return false;
   const normalizedPath = path.split(/[?#]/, 1)[0] || "/";
+  if (matchesPrefix(normalizedPath, YOUR_WORK_PATH)) return normalizedPath === YOUR_WORK_PATH && canAccessYourWork(role);
   if (isDelegateRole(role) && matchesPrefix(normalizedPath, "/documents")) return false;
   if (normalizedPath === RETURNS_CENTER_PATH) return canAccessReturnsCenter(role);
   // Construction and legacy preventive maintenance are explicitly restricted

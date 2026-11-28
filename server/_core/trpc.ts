@@ -20,6 +20,7 @@ import { approvedPricingDocumentRpcAllowed } from "../../shared/approved-pricing
 import { externalDelegateRpcAllowed } from "../../shared/external-delegate-access";
 import { isDelegateRole, delegateManagerAssignmentRpcAllowed, delegateDocumentCenterRpcAllowed } from "../../shared/delegate-role";
 import { externalFollowupRpcAllowed } from "../../shared/external-maintenance-followup";
+import { yourWorkRpcAllowed } from "../../shared/your-work";
 import { supplyWaitRpcAllowed } from "../../shared/purchase-supply-wait";
 
 const t = initTRPC.context<TrpcContext>().create({
@@ -29,6 +30,7 @@ const t = initTRPC.context<TrpcContext>().create({
 export const router = t.router;
 const roleScopeGuard = t.middleware(async opts => {
   const user = opts.ctx.authenticatedUser ?? opts.ctx.user;
+  if (!yourWorkRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "صفحة أعمالك غير متاحة لهذا الحساب" });
   if (!delegateDocumentCenterRpcAllowed(user?.role, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "مركز المستندات غير متاح لهذا الدور" });
   if (!supplyWaitRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "غير مصرح بإجراء توضيح انتظار التوريد" });
   if (!externalFollowupRpcAllowed(user, opts.type, opts.path)) throw new TRPCError({ code: "FORBIDDEN", message: "ليس لديك صلاحية لمتابعة الصيانة الخارجية" });

@@ -32,6 +32,11 @@ export default function TicketWarehouseRequests({
   const section = returnsOnly ? "returns" : sectionState;
   const [limit, setLimit] = useState(20);
   const focused = useRef<number | null>(null);
+  const workFocused = useRef("");
+  const workQuery = typeof window === "undefined" ? null : new URLSearchParams(window.location?.search || "");
+  const workAssignment = Number(workQuery?.get("workAssignment")), workNeed = Number(workQuery?.get("workNeed"));
+  const hasWorkTarget = Number.isSafeInteger(workAssignment) && workAssignment > 0 && Number.isSafeInteger(workNeed) && workNeed > 0;
+  const workReference = hasWorkTarget ? workQuery?.get("workReference")?.trim().slice(0, 200) || "" : "";
   const sections: WarehouseSection[] = returnsOnly ? ["returns"] : ["waiting", "ready", "returns"];
   const labels = [
     l("تحتاج معالجة", "Needs processing", "کارروائی درکار"),
@@ -41,7 +46,7 @@ export default function TicketWarehouseRequests({
   const allowed =
     user?.isActive === 1 && ["warehouse", "owner", "admin", "senior_management"].includes(user.role);
   const requests = trpc.ticketTeamAssignments.warehouseRequests.useQuery(
-    !returnsOnly && search ? { search } : undefined,
+    !returnsOnly && (search || workReference) ? { search: search || workReference } : undefined,
     { enabled: !!allowed, retry: false, refetchOnWindowFocus: false }
   );
   const materials = (requests.data ?? []).flatMap(ticket =>
@@ -55,13 +60,29 @@ export default function TicketWarehouseRequests({
       Number(a.ticket.ticketId === ticketId)
   );
   useEffect(() => {
-    if (returnsOnly || !ticketId || focused.current === ticketId) return;
+    if (returnsOnly || hasWorkTarget || !ticketId || focused.current === ticketId) return;
     const ticket = requests.data?.find(t => t.ticketId === ticketId);
     if (!ticket) return;
     focused.current = ticketId;
     setSection(ticket.materialNeeds?.[0]?.section ?? "waiting");
     setLimit(20);
-  }, [ticketId, requests.data, returnsOnly]);
+  }, [ticketId, requests.data, returnsOnly, hasWorkTarget]);
+  useEffect(() => {
+    if (returnsOnly || !hasWorkTarget || !allowed || typeof document === "undefined") return;
+    const key = `${workAssignment}:${workNeed}`;
+    if (workFocused.current === key) return;
+    const row = sorted.find(({ ticket, need }) => Number(ticket.assignmentId) === workAssignment && Number(need.needId) === workNeed);
+    if (!row) return;
+    const sectionRows = sorted.filter(m => m.need.section === row.need.section);
+    const requiredLimit = Math.max(20, sectionRows.indexOf(row) + 1);
+    if (section !== row.need.section) { setSection(row.need.section); setLimit(requiredLimit); return; }
+    if (limit < requiredLimit) { setLimit(requiredLimit); return; }
+    const target = document.getElementById(`ticket-material-${workAssignment}-${workNeed}`);
+    if (!target) return;
+    workFocused.current = key; target.setAttribute("tabindex", "-1");
+    target.classList.add("ring-2", "ring-violet-400", "scroll-mt-6");
+    target.scrollIntoView?.({ block: "center" }); target.focus?.({ preventScroll: true });
+  }, [requests.data, section, limit, search, returnsOnly, allowed, hasWorkTarget, workAssignment, workNeed]);
   if (loading || (allowed && requests.isLoading))
     return <p className="p-6">{t.common.loading}</p>;
   if (!allowed)
@@ -145,6 +166,7 @@ export default function TicketWarehouseRequests({
               {rows.slice(0, limit).map(({ ticket, need }) => (
                 <div
                   key={`${ticket.assignmentId}:${need.needId}`}
+                  id={`ticket-material-${ticket.assignmentId}-${need.needId}`}
                   className={
                     ticket.ticketId === ticketId
                       ? "rounded-xl ring-2 ring-primary/40"
